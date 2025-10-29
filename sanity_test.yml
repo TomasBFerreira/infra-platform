@@ -1,6 +1,6 @@
 ---
 - name: Sanity Test
-  hosts: media_nodes
+  hosts: test_node
   become: yes
   tasks:
     - name: Ping node
