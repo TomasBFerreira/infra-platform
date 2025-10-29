@@ -1,0 +1,11 @@
+---
+- name: Sanity Test
+  hosts: media_nodes
+  become: yes
+  tasks:
+    - name: Ping node
+      ping:
+    - name: Show hostname
+      command: hostname
+      register: result
+    - debug: var=result.stdout
