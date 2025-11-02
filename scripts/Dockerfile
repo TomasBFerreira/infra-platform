@@ -31,10 +31,18 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs
 
-# Verify Node.js and create symlinks in common locations
-RUN node -v && npm -v && \
-    ln -sf /usr/bin/node /usr/local/bin/node && \
-    ln -sf /usr/bin/npm /usr/local/bin/npm
+# Create symlinks in multiple locations to ensure node is always found
+RUN ln -sf /usr/bin/node /usr/local/bin/node && \
+    ln -sf /usr/bin/npm /usr/local/bin/npm && \
+    ln -sf /usr/bin/node /bin/node && \
+    ln -sf /usr/bin/npm /bin/npm
+
+# Add node to system-wide PATH configuration
+RUN echo 'export PATH="/usr/bin:/usr/local/bin:$PATH"' >> /etc/profile && \
+    echo 'export PATH="/usr/bin:/usr/local/bin:$PATH"' >> /etc/bash.bashrc
+
+# Verify Node.js
+RUN which node && node -v && npm -v
 
 # -------------------------------
 # Python virtual environment
@@ -70,41 +78,17 @@ RUN curl -sLo /tmp/vault.zip \
 RUN mkdir -p /usr/local/lib/docker/cli-plugins && \
     curl -sSL https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 \
       -o /usr/local/lib/docker/cli-plugins/docker-buildx && \
-    chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx && \
-    ln -sf /usr/local/lib/docker/cli-plugins/docker-buildx /usr/local/bin/docker-buildx
+    chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
 
-# Also install in circleci user's home for compatibility
+# Install for circleci user
 RUN mkdir -p /home/circleci/.docker/cli-plugins && \
     cp /usr/local/lib/docker/cli-plugins/docker-buildx /home/circleci/.docker/cli-plugins/ && \
     chown -R circleci:circleci /home/circleci/.docker
 
+# Install for root user (for act compatibility)
+RUN mkdir -p /root/.docker/cli-plugins && \
+    cp /usr/local/lib/docker/cli-plugins/docker-buildx /root/.docker/cli-plugins/
+
 # -------------------------------
 # Switch to circleci user
-# -------------------------------
-USER circleci
-
-# Upgrade pip and install Python packages
-RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
-    /opt/venv/bin/pip install ansible hvac requests boto3
-
-# Install Ansible Galaxy collections
-RUN /opt/venv/bin/ansible-galaxy collection install community.hashi_vault
-
-# -------------------------------
-# Final setup
-# -------------------------------
-WORKDIR /home/circleci/project
-
-# Set environment variables
-ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH" \
-    DOCKER_CONFIG=/home/circleci/.docker
-
-# Verify all tools
-RUN node --version && \
-    npm --version && \
-    terraform --version && \
-    vault --version && \
-    ansible --version && \
-    docker buildx version
-
-SHELL ["/bin/bash", "-c"]
+# ---
