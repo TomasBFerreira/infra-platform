@@ -21,7 +21,7 @@ jobs:
           cp -r . /app
       - name: Write SSH Key to Vault
         run: |
-            vault kv put secret/ssh_keys/media-stack_worker public="@${HOME}/.ssh/id_ed25519.pub" private="@${HOME}/.ssh/id_ed25519"
+            vault kv put secret/ssh_keys/media-stack_worker public="@/app/.ssh/id_ed25519.pub" private="@/app/.ssh/id_ed25519"
         env:
           VAULT_TOKEN: $"root"  # set manually for act
 
