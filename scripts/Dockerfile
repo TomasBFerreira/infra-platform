@@ -8,7 +8,8 @@ RUN apk update && apk add --no-cache \
   wget \
   unzip \
   python3 \
-  py3-virtualenv
+  py3-virtualenv \
+  nodejs npm
 
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
