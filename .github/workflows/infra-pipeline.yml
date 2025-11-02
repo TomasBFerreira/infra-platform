@@ -11,36 +11,50 @@ env:
   VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
 
 jobs:
+  # ----------------------
+  # Secrets job: generate SSH keys & write to Vault
+  # ----------------------
   secrets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Prepare /app workspace
         run: |
           mkdir -p /app
           cp -r . /app
+
       - name: Generate SSH Key if not present
         run: |
           mkdir -p /app/.ssh
           [ -f /app/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f /app/.ssh/id_ed25519
+
       - name: Write SSH Key to Vault
         run: |
-          vault kv put secret/ssh_keys/media-stack_worker public=@/app/.ssh/id_ed25519.pub private=@/app/.ssh/id_ed25519
+          vault kv put secret/ssh_keys/media-stack_worker \
+            public=@/app/.ssh/id_ed25519.pub \
+            private=@/app/.ssh/id_ed25519
         env:
           VAULT_TOKEN: "root"
         working-directory: /app
 
+  # ----------------------
+  # Terraform job: provision infrastructure
+  # ----------------------
   terraform:
     needs: secrets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Prepare /app workspace
         run: |
           mkdir -p /app
           cp -r . /app
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+
       - name: Run Terraform Init/Plan/Apply
         working-directory: /app/terraform/media-stack
         run: |
@@ -48,19 +62,26 @@ jobs:
           terraform plan
           terraform apply -auto-approve
 
+  # ----------------------
+  # Ansible job: configure LXC worker nodes
+  # ----------------------
   ansible:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Prepare /app workspace
         run: |
           mkdir -p /app
           cp -r . /app
+
       - name: Install Ansible and requirements
         run: |
+          pip install --upgrade pip
           pip install ansible hvac
           ansible-galaxy collection install community.hashi_vault
+
       - name: Run Ansible playbook
         working-directory: /app
         run: |
