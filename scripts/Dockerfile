@@ -62,17 +62,7 @@ RUN mkdir -p ~/.docker/cli-plugins && \
     chmod +x ~/.docker/cli-plugins/docker-buildx && \
     docker buildx version || true
 
-# Ensure node is globally visible
-RUN ln -sf $(command -v node) /usr/local/bin/node || true && \
-    ln -sf $(command -v npm) /usr/local/bin/npm || true && \
-    echo "Node version: $(node -v)"
-    
-# --- Debug PATH and node ---
-RUN echo "PATH=$PATH" && \
-    which node || echo "node not found" && \
-    node -v || echo "node version failed" && \
-    echo "Listing /usr/bin /usr/local/bin /bin:" && \
-    ls -l /usr/bin/node /usr/local/bin/node /bin/node || true
+ENV PATH="/opt/venv/bin:/usr/bin:/bin:/usr/local/bin:$PATH"
     
 # --- Final setup ---
 WORKDIR /app
