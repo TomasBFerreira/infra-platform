@@ -1,19 +1,27 @@
 name: Infra Orchestration Pipeline
+
 on:
   push:
     branches: [main]
+    paths:
+      - 'terraform/**'
+      - 'ansible/**'
   pull_request:
     branches: [main]
 
 env:
-  VAULT_ADDR: http://192.168.50.169:8200  # Remove ${{ secrets.VAULT_ADDR }}
-  VAULT_TOKEN: root  # Remove ${{ secrets.VAULT_TOKEN }}
+  VAULT_ADDR: http://192.168.50.169:8200
+  VAULT_TOKEN: root
 
 jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        run: |
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE"
+          fi
       
       - name: Generate SSH Key if not present
         run: |
@@ -25,35 +33,42 @@ jobs:
           vault kv put secret/ssh_keys/media-stack_worker \
             public=@.ssh/id_ed25519.pub \
             private=@.ssh/id_ed25519
-        env:
-          VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
 
   terraform:
     needs: secrets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        run: |
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE"
+          fi
       
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-      
-      - name: Run Terraform Init/Plan/Apply
+      - name: Terraform Init
         working-directory: terraform/media-stack
         run: |
           terraform init
+      
+      - name: Terraform Plan
+        working-directory: terraform/media-stack
+        run: |
           terraform plan
+      
+      - name: Terraform Apply
+        working-directory: terraform/media-stack
+        run: |
           terraform apply -auto-approve
-        env:
-          VAULT_TOKEN: root
 
   ansible:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        run: |
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE"
+          fi
       
       - name: Run Ansible playbook
-        run: ansible-playbook ansible/media-stack/media-stack_pb.yml
-        env:
-          VAULT_TOKEN: root
+        run: |
+          ansible-playbook ansible/media-stack/media-stack_pb.yml
