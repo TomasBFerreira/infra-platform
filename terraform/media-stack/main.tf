@@ -13,7 +13,7 @@ data "vault_generic_secret" "ssh_key" {
   path = "secret/ssh_keys/media-stack_worker"
 }
 
-resource "proxmox_lxc" "media_worker" {
+resource "proxmox_lxc" "media-stack_worker" {
   vmid          = 200
   hostname      = "media-worker"
   ostemplate    = "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"
