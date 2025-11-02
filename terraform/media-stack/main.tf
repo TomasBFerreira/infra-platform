@@ -1,3 +1,8 @@
+variable "ssh_public_key" {
+  description = "The public SSH key for accessing the media worker"
+  type        = string
+}
+
 resource "proxmox_lxc" "media_worker" {
   vmid          = 200
   hostname      = "media-worker"
@@ -16,9 +21,9 @@ resource "proxmox_lxc" "media_worker" {
   }
   unprivileged  = true
   features {
-    nesting     = true     # required for Docker inside LXC!
+    nesting     = true
   }
-  ssh_public_keys = [file("/root/.ssh/id_ed25519.pub")]
+  ssh_public_keys = [var.ssh_public_key]
   start         = true
   target_node   = "betsy"
 }
