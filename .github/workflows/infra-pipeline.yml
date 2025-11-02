@@ -15,7 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      - name: Prepare /app workspace
+        run: |
+          mkdir -p /app
+          cp -r . /app
       - name: Run Vault secrets generator
+        working-directory: /app
         run: |
           bash scripts/vault-generate-secrets.sh
 
@@ -24,23 +29,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      - name: Prepare /app workspace
+        run: |
+          mkdir -p /app
+          cp -r . /app
       - name: Install Ansible
         run: |
           pip install ansible
       - name: Run Ansible playbook
+        working-directory: /app
         run: |
-          ansible-playbook ansible/media-stack/main.yml
+          ansible-playbook ansible/media-stack/media-stack_pb.yml
 
   terraform:
     needs: ansible
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      - name: Prepare /app workspace
+        run: |
+          mkdir -p /app
+          cp -r . /app
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
       - name: Run Terraform Init/Plan/Apply
+        working-directory: /app/terraform/media-stack
         run: |
-          cd terraform/media-stack
           terraform init
           terraform plan
           terraform apply -auto-approve
