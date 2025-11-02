@@ -1,0 +1,49 @@
+name: Infra Orchestration Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+  VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run Vault secrets generator
+        run: |
+          docker run --rm -e VAULT_ADDR -e VAULT_TOKEN \
+            -v ${{ github.workspace }}:/app \
+            tomasbps/semaphore-ci-base:latest \
+            bash /app/scripts/vault-generate-secrets.sh
+
+  ansible:
+    needs: secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Ansible
+        run: |
+          pip install ansible
+      - name: Run Ansible playbook
+        run: |
+          ansible-playbook ansible/media-stack/main.yml
+
+  terraform:
+    needs: ansible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Run Terraform Init/Plan/Apply
+        run: |
+          cd terraform/media-stack
+          terraform init
+          terraform plan
+          terraform apply -auto-approve
