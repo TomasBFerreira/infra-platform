@@ -7,10 +7,13 @@ RUN apk update && apk add --no-cache \
   curl \
   wget \
   unzip \
-  python3
+  python3 \
+  py3-virtualenv
 
-RUN python3 -m ensurepip && \
-    ln -s /usr/bin/pip3 /usr/bin/pip || true
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --upgrade pip setuptools wheel
 
 WORKDIR /app
 SHELL ["/bin/bash", "-c"]
