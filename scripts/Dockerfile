@@ -1,23 +1,24 @@
-FROM alpine:3.21
+FROM ubuntu:24.04
 
 # --- System dependencies ---
-RUN apk update && apk add --no-cache \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
   bash \
   openssl \
-  openssh \
+  openssh-client \
   curl \
   wget \
   unzip \
   git \
-  docker-cli \
-  build-base \
+  docker.io \
+  build-essential \
   python3 \
-  py3-pip \
-  py3-virtualenv \
+  python3-venv \
+  python3-pip \
   nodejs \
   npm \
   jq \
-  coreutils
+  coreutils \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # --- Python setup ---
 RUN python3 -m venv /opt/venv
