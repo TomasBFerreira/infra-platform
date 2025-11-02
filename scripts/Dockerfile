@@ -129,10 +129,3 @@ ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 # Final verification as root
 RUN which node && node --version
-```
-
-## Also Fix Your Workflow YAML - There's Another Bug!
-
-The Vault error shows:
-```
-failed to create client: parse "$\"192.168.50.169:8200\"": first path segment in URL cannot contain colon
