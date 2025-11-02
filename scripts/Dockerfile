@@ -62,12 +62,11 @@ RUN mkdir -p ~/.docker/cli-plugins && \
     chmod +x ~/.docker/cli-plugins/docker-buildx && \
     docker buildx version || true
 
-# Make node global
-RUN ln -sf $(which node) /usr/bin/node && \
-    ln -sf $(which node) /usr/local/bin/node && \
-    ln -sf $(which node) /bin/node && \
-    echo "export PATH=$PATH:/usr/bin:/usr/local/bin:/bin" >> /etc/profile && \
-    echo "Node version: $(node -v)"
+# Ensure node is globally visible
+RUN ln -sf /usr/bin/node /usr/local/bin/node && \
+    ln -sf /usr/bin/node /bin/node && \
+    echo 'export PATH=$PATH:/usr/bin:/usr/local/bin:/bin' >> /etc/profile && \
+    node -v
 
 # --- Final setup ---
 WORKDIR /app
