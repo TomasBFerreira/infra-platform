@@ -1,13 +1,18 @@
 FROM alpine:3.21
 
-# Install CI/automation tools
+# Install CI/automation tools and Python with pip
 RUN apk update && apk add --no-cache \
   bash \
   openssl \
   openssh \
   curl \
   wget \
-  unzip
+  unzip \
+  python3 \
+  py3-pip
+
+# Optional: Install Ansible system package for faster CI if preferred
+# RUN apk add --no-cache ansible
 
 WORKDIR /app
 
