@@ -90,4 +90,4 @@ WORKDIR /app
 SHELL ["/bin/bash", "-c"]
 
 # Set PATH for all subsequent steps
-ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+ENV PATH="/opt/venv/bin:$PATH"
