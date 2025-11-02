@@ -91,4 +91,48 @@ RUN mkdir -p /root/.docker/cli-plugins && \
 
 # -------------------------------
 # Switch to circleci user
-# ---
+# -------------------------------
+USER circleci
+
+# Upgrade pip and install Python packages
+RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install ansible hvac requests boto3
+
+# Install Ansible Galaxy collections
+RUN /opt/venv/bin/ansible-galaxy collection install community.hashi_vault
+
+# -------------------------------
+# Final setup
+# -------------------------------
+WORKDIR /home/circleci/project
+
+# Set environment variables - these will be inherited by all shells
+ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH" \
+    DOCKER_CONFIG=/home/circleci/.docker
+
+# Verify all tools
+RUN which node && \
+    node --version && \
+    npm --version && \
+    terraform --version && \
+    vault --version && \
+    ansible --version && \
+    docker buildx version
+
+SHELL ["/bin/bash", "-c"]
+
+# Switch back to root for act compatibility
+USER root
+
+# Ensure PATH is set for root user too
+ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+# Final verification as root
+RUN which node && node --version
+```
+
+## Also Fix Your Workflow YAML - There's Another Bug!
+
+The Vault error shows:
+```
+failed to create client: parse "$\"192.168.50.169:8200\"": first path segment in URL cannot contain colon
