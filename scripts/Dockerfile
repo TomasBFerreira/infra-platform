@@ -31,11 +31,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs
 
-# Create symlinks in multiple locations to ensure node is always found
-RUN ln -sf /usr/bin/node /usr/local/bin/node && \
-    ln -sf /usr/bin/npm /usr/local/bin/npm && \
-    ln -sf /usr/bin/node /bin/node && \
-    ln -sf /usr/bin/npm /bin/npm
+# Create symlinks only where needed
+RUN ln -sf /usr/bin/node /usr/local/bin/node || true && \
+    ln -sf /usr/bin/npm /usr/local/bin/npm || true
 
 # Add node to system-wide PATH configuration
 RUN echo 'export PATH="/usr/bin:/usr/local/bin:$PATH"' >> /etc/profile && \
