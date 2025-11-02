@@ -1,13 +1,13 @@
 # -------------------------------
-# Base Image: Python 3.12 + Node.js (CircleCI official)
+# Base Image: Python 3.12
 # -------------------------------
-FROM cimg/python:3.12-node
+FROM cimg/python:3.12
 
 # -------------------------------
 # System dependencies
 # -------------------------------
 USER root
-RUN sudo apt-get update && DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     bash \
     curl \
     wget \
@@ -21,21 +21,17 @@ RUN sudo apt-get update && DEBIAN_FRONTEND=noninteractive sudo apt-get install -
     ca-certificates \
     gnupg \
     lsb-release \
-    && sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
+    sudo \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 20.x
+# -------------------------------
+# Node.js 20.x installation
+# -------------------------------
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs
 
-RUN sudo apt-get update && \
-    sudo apt-get install -y ca-certificates curl gnupg lsb-release && \
-    sudo mkdir -p /etc/apt/keyrings && \
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-      | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null && \
-    sudo apt-get update && \
-    sudo apt-get install -y docker-ce-cli
+# Verify Node.js
+RUN node -v && npm -v
 
 # -------------------------------
 # Python virtual environment
