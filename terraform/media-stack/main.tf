@@ -1,6 +1,16 @@
-variable "ssh_public_key" {
-  description = "The public SSH key for accessing the media worker"
+provider "vault" {
+  address = "http://192.168.50.169:8200"
+  token   = var.vault_token
+}
+
+variable "vault_token" {
+  description = "Vault access token"
   type        = string
+  sensitive   = true
+}
+
+data "vault_generic_secret" "ssh_key" {
+  path = "secret/ssh_keys/media-stack_worker"
 }
 
 resource "proxmox_lxc" "media_worker" {
@@ -23,7 +33,7 @@ resource "proxmox_lxc" "media_worker" {
   features {
     nesting     = true
   }
-  ssh_public_keys = [var.ssh_public_key]
+  ssh_public_keys = [data.vault_generic_secret.ssh_key.data["public"]]
   start         = true
   target_node   = "betsy"
 }
