@@ -20,13 +20,13 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
 
 # --- Node.js installation (via NodeSource) ---
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    ln -sf /usr/bin/node /usr/local/bin/node && \
-    ln -sf /usr/bin/npm /usr/local/bin/npm
+    apt-get install -y nodejs npm
 
 # --- Python setup ---
 RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+
+# Ensure all binaries are in PATH
+ENV PATH="/opt/venv/bin:/usr/bin:/bin:/usr/local/bin:$PATH"
 
 # Upgrade pip and common tools
 RUN pip install --upgrade pip setuptools wheel
@@ -52,18 +52,5 @@ RUN pip install \
     requests \
     boto3
 
-# Install Ansible Galaxy collections (for Vault integration, etc.)
-RUN ansible-galaxy collection install community.hashi_vault
-
-# --- Docker Buildx plugin ---
-RUN mkdir -p ~/.docker/cli-plugins && \
-    curl -sSL https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 \
-      -o ~/.docker/cli-plugins/docker-buildx && \
-    chmod +x ~/.docker/cli-plugins/docker-buildx && \
-    docker buildx version || true
-
-ENV PATH="/opt/venv/bin:/usr/bin:/bin:/usr/local/bin:$PATH"
-    
-# --- Final setup ---
-WORKDIR /app
-SHELL ["/bin/bash", "-c"]
+# Install Ansible Galaxy collections
+RUN ansible-gal
