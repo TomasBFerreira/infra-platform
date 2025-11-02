@@ -15,21 +15,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Prepare /app workspace
         run: |
           mkdir -p /app
           cp -r . /app
+
       - name: Generate SSH Key if not present
         run: |
           mkdir -p /app/.ssh
+          # This command creates an ed25519 key if it does not exist
           [ -f /app/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f /app/.ssh/id_ed25519
+
       - name: Write SSH Key to Vault
         run: |
           vault kv put secret/ssh_keys/media-stack_worker public=@/app/.ssh/id_ed25519.pub private=@/app/.ssh/id_ed25519
         env:
           VAULT_TOKEN: "root"
         working-directory: /app
-  
+
+        
   ansible:
     needs: secrets
     runs-on: ubuntu-latest
