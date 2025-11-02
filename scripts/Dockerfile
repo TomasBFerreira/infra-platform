@@ -45,8 +45,10 @@ RUN pip install \
     ansible \
     hvac \
     requests \
-    boto3 \
-    community.hashi_vault
+    boto3
+
+# Install Ansible Galaxy collections (for Vault integration, etc.)
+RUN ansible-galaxy collection install community.hashi_vault
 
 # --- Docker Buildx plugin ---
 RUN mkdir -p ~/.docker/cli-plugins && \
