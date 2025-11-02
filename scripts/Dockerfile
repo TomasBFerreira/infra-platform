@@ -1,36 +1,37 @@
 FROM ubuntu:24.04
 
-# --- System dependencies ---
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    bash \
-    openssl \
-    openssh-client \
-    curl \
-    wget \
-    unzip \
-    git \
-    docker.io \
-    build-essential \
-    python3 \
-    python3-venv \
-    python3-pip \
-    jq \
-    coreutils \
-    apt-transport-https \
+# Set environment
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+WORKDIR /app
+
+# --- Install system dependencies, Python, Node.js, Docker CLI ---
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        bash \
+        openssl \
+        openssh-client \
+        curl \
+        wget \
+        unzip \
+        git \
+        docker.io \
+        build-essential \
+        python3 \
+        python3-venv \
+        python3-pip \
+        jq \
+        coreutils \
+        apt-transport-https \
+        ca-certificates \
+        gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# --- Node.js installation (via NodeSource) ---
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs
-
-# --- Python setup ---
-RUN python3 -m venv /opt/venv
-
-# Ensure all binaries are in PATH
-ENV PATH="/opt/venv/bin:/usr/bin:/bin:/usr/local/bin:$PATH"
-
-# Upgrade pip and common tools
-RUN pip install --upgrade pip setuptools wheel
+# --- Python venv setup and pip upgrades ---
+RUN python3 -m venv /opt/venv && \
+    pip install --upgrade pip setuptools wheel
 
 # --- Terraform installation ---
 ARG TERRAFORM_VERSION=1.9.8
@@ -46,15 +47,9 @@ RUN curl -sLo /tmp/vault.zip https://releases.hashicorp.com/vault/${VAULT_VERSIO
     rm /tmp/vault.zip && \
     vault --version
 
-# --- Ansible and Python libraries ---
-RUN pip install \
-    ansible \
-    hvac \
-    requests \
-    boto3
-
-# Install Ansible Galaxy collections
-RUN ansible-galaxy collection install community.hashi_vault
+# --- Python packages & Ansible Galaxy collections ---
+RUN pip install ansible hvac requests boto3 && \
+    ansible-galaxy collection install community.hashi_vault
 
 # --- Docker Buildx plugin ---
 RUN mkdir -p ~/.docker/cli-plugins && \
@@ -63,6 +58,5 @@ RUN mkdir -p ~/.docker/cli-plugins && \
     chmod +x ~/.docker/cli-plugins/docker-buildx && \
     docker buildx version || true
 
-# --- Final setup ---
-WORKDIR /app
+# --- Use bash by default ---
 SHELL ["/bin/bash", "-c"]
