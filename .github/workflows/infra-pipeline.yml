@@ -12,10 +12,25 @@ env:
 
 jobs:
   # ----------------------
+  # Setup Node.js for Docker Buildx / Node actions
+  # ----------------------
+  setup-node:
+    runs-on: ubuntu-latest
+    outputs:
+      node-path: ${{ steps.node-path.outputs.node-path }}
+    steps:
+      - name: Set up Node.js
+        id: node-path
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20.x"
+
+  # ----------------------
   # Secrets job: generate SSH keys & write to Vault
   # ----------------------
   secrets:
     runs-on: ubuntu-latest
+    needs: setup-node
     steps:
       - uses: actions/checkout@v3
 
