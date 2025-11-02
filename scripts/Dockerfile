@@ -63,10 +63,9 @@ RUN mkdir -p ~/.docker/cli-plugins && \
     docker buildx version || true
 
 # Ensure node is globally visible
-RUN ln -sf /usr/bin/node /usr/local/bin/node && \
-    ln -sf /usr/bin/node /bin/node && \
-    echo 'export PATH=$PATH:/usr/bin:/usr/local/bin:/bin' >> /etc/profile && \
-    node -v
+RUN ln -sf $(command -v node) /usr/local/bin/node || true && \
+    ln -sf $(command -v npm) /usr/local/bin/npm || true && \
+    echo "Node version: $(node -v)"
     
 # --- Debug PATH and node ---
 RUN echo "PATH=$PATH" && \
