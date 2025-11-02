@@ -21,5 +21,4 @@ resource "proxmox_lxc" "media_worker" {
   ssh_public_keys = [file("/root/.ssh/id_ed25519.pub")]
   start         = true
   target_node   = "betsy"
-  password      = "Tomtom123!"
 }
