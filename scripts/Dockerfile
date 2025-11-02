@@ -67,7 +67,14 @@ RUN ln -sf /usr/bin/node /usr/local/bin/node && \
     ln -sf /usr/bin/node /bin/node && \
     echo 'export PATH=$PATH:/usr/bin:/usr/local/bin:/bin' >> /etc/profile && \
     node -v
-
+    
+# --- Debug PATH and node ---
+RUN echo "PATH=$PATH" && \
+    which node || echo "node not found" && \
+    node -v || echo "node version failed" && \
+    echo "Listing /usr/bin /usr/local/bin /bin:" && \
+    ls -l /usr/bin/node /usr/local/bin/node /bin/node || true
+    
 # --- Final setup ---
 WORKDIR /app
 SHELL ["/bin/bash", "-c"]
