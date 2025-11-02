@@ -1,8 +1,12 @@
 ---
 - name: Media Stack Setup on Proxmox LXC Worker Node
-  hosts: media_worker
+  hosts: media-stack_worker
   become: true
   vars:
+    vault_addr: "http://192.168.50.169:8200"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+    ssh_private_key: "{{ lookup('community.hashi_vault.hashi_vault', 'secret=secret/ssh_keys/media-stack_worker:key=private token=' + vault_token + ' url=' + vault_addr) }}"
+    base_media_path: /mnt/media
     base_media_path: /mnt/media
     timezone: "UTC"
     media_containers:
@@ -52,6 +56,15 @@
           - "{{ base_media_path }}/config/jellyfin:/config"
           - "{{ base_media_path }}/tv:/data/tvshows"
           - "{{ base_media_path }}/movies:/data/movies"
+          
+  pre_tasks:
+    - name: Write SSH private key from Vault to file
+      copy:
+        content: "{{ ssh_private_key }}"
+        dest: "/tmp/ansible_media-stack_worker_id_ed25519"
+        mode: "0600"
+      delegate_to: localhost
+      run_once: true
 
   tasks:
     - name: Install required system packages
