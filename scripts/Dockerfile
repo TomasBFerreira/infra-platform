@@ -11,6 +11,9 @@ RUN apk update && apk add --no-cache \
   python3 \
   py3-pip
 
+# Create pip symlink
+RUN ln -s /usr/bin/pip3 /usr/bin/pip
+
 # Optional: Install Ansible system package for faster CI if preferred
 # RUN apk add --no-cache ansible
 
