@@ -23,6 +23,10 @@ RUN sudo apt-get update && DEBIAN_FRONTEND=noninteractive sudo apt-get install -
     lsb-release \
     && sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 20.x
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs
+
 RUN sudo apt-get update && \
     sudo apt-get install -y ca-certificates curl gnupg lsb-release && \
     sudo mkdir -p /etc/apt/keyrings && \
