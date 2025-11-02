@@ -17,10 +17,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Run Vault secrets generator
         run: |
-          docker run --rm -e VAULT_ADDR -e VAULT_TOKEN \
-            -v ${{ github.workspace }}:/app \
-            tomasbps/semaphore-ci-base:latest \
-            bash /app/scripts/vault-generate-secrets.sh
+          bash scripts/vault-generate-secrets.sh
 
   ansible:
     needs: secrets
