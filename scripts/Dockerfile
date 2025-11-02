@@ -2,25 +2,26 @@ FROM ubuntu:24.04
 
 # --- System dependencies ---
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  bash \
-  openssl \
-  openssh-client \
-  curl \
-  wget \
-  unzip \
-  git \
-  docker.io \
-  build-essential \
-  python3 \
-  python3-venv \
-  python3-pip \
-  jq \
-  coreutils \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+    bash \
+    openssl \
+    openssh-client \
+    curl \
+    wget \
+    unzip \
+    git \
+    docker.io \
+    build-essential \
+    python3 \
+    python3-venv \
+    python3-pip \
+    jq \
+    coreutils \
+    apt-transport-https \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # --- Node.js installation (via NodeSource) ---
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs npm
+    apt-get install -y nodejs
 
 # --- Python setup ---
 RUN python3 -m venv /opt/venv
@@ -53,4 +54,15 @@ RUN pip install \
     boto3
 
 # Install Ansible Galaxy collections
-RUN ansible-gal
+RUN ansible-galaxy collection install community.hashi_vault
+
+# --- Docker Buildx plugin ---
+RUN mkdir -p ~/.docker/cli-plugins && \
+    curl -sSL https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 \
+        -o ~/.docker/cli-plugins/docker-buildx && \
+    chmod +x ~/.docker/cli-plugins/docker-buildx && \
+    docker buildx version || true
+
+# --- Final setup ---
+WORKDIR /app
+SHELL ["/bin/bash", "-c"]
