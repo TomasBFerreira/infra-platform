@@ -51,6 +51,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y wget unzip
+          rm -rf terraform 
           wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
           ls -lh terraform_1.6.4_linux_amd64.zip
           file terraform_1.6.4_linux_amd64.zip
