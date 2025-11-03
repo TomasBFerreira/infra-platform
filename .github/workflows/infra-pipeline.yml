@@ -50,10 +50,14 @@ jobs:
       - name: Install Terraform
         run: |
           apt-get update
-          apt-get install -y wget unzip jq
+          apt-get install -y wget unzip
           wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
-          unzip terraform_1.6.4_linux_amd64.zip
+          ls -lh terraform_1.6.4_linux_amd64.zip
+          file terraform_1.6.4_linux_amd64.zip
+          unzip -o terraform_1.6.4_linux_amd64.zip
+          ls -lh
           mv terraform /usr/local/bin/
+          ls -lh /usr/local/bin/terraform
           terraform -version
       - name: Terraform Init
         run: |
