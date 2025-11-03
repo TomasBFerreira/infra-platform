@@ -21,29 +21,25 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Install Curl, Unzip, Vault CLI
         run: |
-          cd $GITHUB_WORKSPACE
-          ls -la
-
-      - name: Install Vault CLI (manual)
-        run: |
-          curl -fsSL https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip -o vault.zip
-          apt-get update && apt-get install -y unzip
-          unzip vault.zip -d /usr/local/bin
-          chmod +x /usr/local/bin/vault
+          apt-get update
+          apt-get install -y curl wget unzip
+          wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
+          unzip vault_1.21.0_linux_amd64.zip
+          mv vault /usr/local/bin/
           vault --version
-      
       - name: Generate SSH Key if not present
         run: |
           mkdir -p ~/.ssh
           [ -f ~/.ssh/media-stack_worker_id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/media-stack_worker_id_ed25519
-      
       - name: Write SSH Key to Vault
         run: |
           vault kv put secret/ssh_keys/media-stack_worker \
             public=@$HOME/.ssh/media-stack_worker_id_ed25519.pub \
             private=@$HOME/.ssh/media-stack_worker_id_ed25519
+        env:
+          VAULT_TOKEN: "root"
 
   terraform:
     needs: secrets
@@ -51,17 +47,22 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      - name: Install Terraform
+        run: |
+          apt-get update
+          apt-get install -y wget unzip jq
+          wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
+          unzip terraform_1.6.4_linux_amd64.zip
+          mv terraform /usr/local/bin/
+          terraform -version
       - name: Terraform Init
         run: |
           cd terraform/media-stack
           terraform init
-
       - name: Terraform Plan
         run: |
           cd terraform/media-stack
           terraform plan
-
       - name: Terraform Apply
         run: |
           cd terraform/media-stack
@@ -71,18 +72,24 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Install Ansible and dependencies
         run: |
-          cd $GITHUB_WORKSPACE
-          ls -la
-      
+          apt-get update
+          apt-get install -y python3-pip jq
+          pip3 install ansible hvac
+          ansible --version
       - name: Retrieve SSH key from Vault
         run: |
+          apt-get install -y wget unzip curl
+          wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
+          unzip vault_1.21.0_linux_amd64.zip
+          mv vault /usr/local/bin/
+          vault --version
           mkdir -p ~/.ssh
           vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
           chmod 600 ~/.ssh/media-stack_worker_id_ed25519
-      
+      - name: Checkout code
+        uses: actions/checkout@v4
       - name: Run Ansible playbook
         run: |
-          cd $GITHUB_WORKSPACE
           ansible-playbook -i inventory.yml ansible/media-stack/media-stack_pb.yml
