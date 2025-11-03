@@ -12,6 +12,10 @@ on:
 env:
   VAULT_ADDR: http://192.168.50.169:8200
   VAULT_TOKEN: root
+  TF_VAR_vault_token: root
+  TF_VAR_proxmox_api_url: "https://192.168.50.xxx:8006/api2/json"  # Update this
+  TF_VAR_proxmox_user: "root@pam"
+  TF_VAR_proxmox_password: "your-password"  # Update this
 
 jobs:
   secrets:
@@ -25,14 +29,14 @@ jobs:
       
       - name: Generate SSH Key if not present
         run: |
-          mkdir -p .ssh
-          [ -f .ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f .ssh/id_ed25519
+          mkdir -p ~/.ssh
+          [ -f ~/.ssh/media-stack_worker_id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/media-stack_worker_id_ed25519
       
       - name: Write SSH Key to Vault
         run: |
           vault kv put secret/ssh_keys/media-stack_worker \
-            public=@.ssh/id_ed25519.pub \
-            private=@.ssh/id_ed25519
+            public=@$HOME/.ssh/media-stack_worker_id_ed25519.pub \
+            private=@$HOME/.ssh/media-stack_worker_id_ed25519
 
   terraform:
     needs: secrets
@@ -46,18 +50,15 @@ jobs:
       
       - name: Terraform Init
         working-directory: terraform/media-stack
-        run: |
-          terraform init
+        run: terraform init
       
       - name: Terraform Plan
         working-directory: terraform/media-stack
-        run: |
-          terraform plan
+        run: terraform plan
       
       - name: Terraform Apply
         working-directory: terraform/media-stack
-        run: |
-          terraform apply -auto-approve
+        run: terraform apply -auto-approve
 
   ansible:
     needs: terraform
@@ -69,6 +70,12 @@ jobs:
             cd "$GITHUB_WORKSPACE"
           fi
       
+      - name: Retrieve SSH key from Vault
+        run: |
+          mkdir -p ~/.ssh
+          vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
+          chmod 600 ~/.ssh/media-stack_worker_id_ed25519
+      
       - name: Run Ansible playbook
         run: |
-          ansible-playbook ansible/media-stack/media-stack_pb.yml
+          ansible-playbook -i inventory.yml ansible/media-stack/media-stack_pb.yml
