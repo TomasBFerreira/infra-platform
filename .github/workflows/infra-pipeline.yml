@@ -92,11 +92,14 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Install Ansible and dependencies
+      - name: Install Ansible and dependencies (virtualenv)
         run: |
           apt-get update
-          apt-get install -y python3-pip jq
-          pip3 install ansible hvac
+          apt-get install -y python3-pip python3-venv jq
+          python3 -m venv /tmp/ansible-venv
+          source /tmp/ansible-venv/bin/activate
+          pip install --upgrade pip wheel
+          pip install ansible hvac
           ansible --version
       - name: Retrieve SSH key from Vault
         run: |
@@ -112,4 +115,5 @@ jobs:
         uses: actions/checkout@v4
       - name: Run Ansible playbook
         run: |
+          source /tmp/ansible-venv/bin/activate
           ansible-playbook -i inventory.yml ansible/media-stack/media-stack_pb.yml
