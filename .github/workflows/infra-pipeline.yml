@@ -23,9 +23,8 @@ jobs:
     steps:
       - name: Checkout code
         run: |
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            cd "$GITHUB_WORKSPACE"
-          fi
+          cd $GITHUB_WORKSPACE
+          ls -la
       
       - name: Generate SSH Key if not present
         run: |
@@ -44,21 +43,25 @@ jobs:
     steps:
       - name: Checkout code
         run: |
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            cd "$GITHUB_WORKSPACE"
-          fi
+          cd $GITHUB_WORKSPACE
+          ls -la
+          echo "Contents of workspace:"
+          find . -type d -maxdepth 2
       
       - name: Terraform Init
-        working-directory: terraform/media-stack
-        run: terraform init
+        run: |
+          cd $GITHUB_WORKSPACE/terraform/media-stack
+          terraform init
       
       - name: Terraform Plan
-        working-directory: terraform/media-stack
-        run: terraform plan
+        run: |
+          cd $GITHUB_WORKSPACE/terraform/media-stack
+          terraform plan
       
       - name: Terraform Apply
-        working-directory: terraform/media-stack
-        run: terraform apply -auto-approve
+        run: |
+          cd $GITHUB_WORKSPACE/terraform/media-stack
+          terraform apply -auto-approve
 
   ansible:
     needs: terraform
@@ -66,9 +69,8 @@ jobs:
     steps:
       - name: Checkout code
         run: |
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            cd "$GITHUB_WORKSPACE"
-          fi
+          cd $GITHUB_WORKSPACE
+          ls -la
       
       - name: Retrieve SSH key from Vault
         run: |
@@ -78,4 +80,5 @@ jobs:
       
       - name: Run Ansible playbook
         run: |
+          cd $GITHUB_WORKSPACE
           ansible-playbook -i inventory.yml ansible/media-stack/media-stack_pb.yml
