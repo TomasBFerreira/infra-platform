@@ -42,25 +42,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        run: |
-          cd $GITHUB_WORKSPACE
-          ls -la
-          echo "Contents of workspace:"
-          find . -type d -maxdepth 2
-      
+        uses: actions/checkout@v4
+
       - name: Terraform Init
         run: |
-          cd $GITHUB_WORKSPACE/terraform/media-stack
+          cd terraform/media-stack
           terraform init
-      
+
       - name: Terraform Plan
         run: |
-          cd $GITHUB_WORKSPACE/terraform/media-stack
+          cd terraform/media-stack
           terraform plan
-      
+
       - name: Terraform Apply
         run: |
-          cd $GITHUB_WORKSPACE/terraform/media-stack
+          cd terraform/media-stack
           terraform apply -auto-approve
 
   ansible:
