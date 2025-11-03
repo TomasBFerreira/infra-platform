@@ -41,12 +41,12 @@ jobs:
         env:
           VAULT_TOKEN: "root"
 
-terraform:
-  needs: secrets
+  terraform:
+    needs: secrets
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-      uses: actions/checkout@v4
+        uses: actions/checkout@v4
 
       - name: Debug workspace layout
         run: |
