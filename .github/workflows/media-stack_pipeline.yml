@@ -42,6 +42,10 @@ jobs:
   terraform:
     needs: secrets
     runs-on: ubuntu-latest
+    env:
+      VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -89,6 +93,9 @@ jobs:
   ansible:
     needs: terraform
     runs-on: ubuntu-latest
+    env:
+      VAULT_ADDR: ${{ env.VAULT_ADDR }}
+      VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
     steps:
       - name: Install Ansible and dependencies (virtualenv)
         run: |
