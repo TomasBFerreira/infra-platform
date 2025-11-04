@@ -131,4 +131,4 @@ jobs:
           VAULT_TOKEN: root
         run: |
           source /tmp/ansible-venv/bin/activate
-          ansible-playbook -i inventory.yml ansible/dev/media-stack/media-stack_pb.yml
+          ansible-playbook -i inventory.yml ansible/dev/media-stack/media-stack_setup.yml
