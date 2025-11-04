@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     paths:
-      - 'ansible/media-stack/tailscale.yml'
       - 'terraform/**'
       - 'ansible/**'
   pull_request:
@@ -61,7 +60,7 @@ jobs:
           pwd
           ls -l
           ls -l terraform
-          ls -l terraform/media-stack
+          ls -l terraform/dev/media-stack
 
       - name: Install Terraform
         run: |
@@ -79,21 +78,21 @@ jobs:
         run: |
           pwd
           ls -l
-          ls -l terraform/media-stack
+          ls -l terraform/dev/media-stack
           
       - name: Terraform Init
         run: |
-          cd terraform/media-stack
+          cd terraform/dev/media-stack
           terraform init
 
       - name: Terraform Plan
         run: |
-          cd terraform/media-stack
+          cd terraform/dev/media-stack
           terraform plan
 
       - name: Terraform Apply
         run: |
-          cd terraform/media-stack
+          cd terraform/dev/media-stack
           terraform apply -auto-approve
 
   ansible:
@@ -124,4 +123,4 @@ jobs:
       - name: Run Ansible playbook
         run: |
           source /tmp/ansible-venv/bin/activate
-          ansible-playbook -i inventory.yml ansible/media-stack/media-stack_pb.yml
+          ansible-playbook -i inventory.yml ansible/dev/media-stack/media-stack_pb.yml
