@@ -26,13 +26,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Tailscale Ansible Playbook
-        env:
-          TAILSCALE_AUTHKEY: ${{ env.TAILSCALE_AUTHKEY }} # inherited from .env.local/act
-        run: |
-          source /tmp/ansible-venv/bin/activate
-          ansible-playbook -i inventory.yml ansible/media-stack/tailscale.yml
-
   secrets:
     runs-on: ubuntu-latest
     steps:
