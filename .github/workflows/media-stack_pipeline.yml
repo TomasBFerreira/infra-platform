@@ -123,6 +123,12 @@ jobs:
           mkdir -p ~/.ssh
           vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
           chmod 600 ~/.ssh/media-stack_worker_id_ed25519
+      - name: Check for SSH key file and path
+        run: |
+          echo "HOME is $HOME"
+          ls -l $HOME/.ssh/
+          cat $HOME/.ssh/media-stack_worker_id_ed25519 || true
+          cat $HOME/.ssh/media-stack-worker_id_ed25519 || true
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Run Ansible playbook
