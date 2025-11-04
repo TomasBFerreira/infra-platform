@@ -108,7 +108,8 @@ jobs:
           python3 -m venv /tmp/ansible-venv
           source /tmp/ansible-venv/bin/activate
           pip install --upgrade pip wheel
-          pip install ansible hvac community.hashi_vault
+          pip install ansible hvac
+          ansible-galaxy collection install community.hashi_vault
       - name: Retrieve SSH key from Vault
         env:
           VAULT_ADDR: http://192.168.50.169:8200
