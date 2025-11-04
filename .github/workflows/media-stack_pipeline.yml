@@ -26,6 +26,9 @@ jobs:
           mkdir -p ~/.ssh
           [ -f ~/.ssh/media-stack_worker_id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/media-stack_worker_id_ed25519
       - name: Write SSH Key to Vault
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
         run: |
           echo "VAULT_ADDR = $VAULT_ADDR"
           echo "VAULT_TOKEN = $VAULT_TOKEN"
@@ -62,14 +65,26 @@ jobs:
           ls -l
           ls -l terraform/dev/media-stack
       - name: Terraform Init
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+          TF_VAR_vault_token: root
         run: |
           cd terraform/dev/media-stack
           terraform init
       - name: Terraform Plan
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+          TF_VAR_vault_token: root
         run: |
           cd terraform/dev/media-stack
           terraform plan
       - name: Terraform Apply
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+          TF_VAR_vault_token: root
         run: |
           cd terraform/dev/media-stack
           terraform apply -auto-approve
@@ -87,6 +102,9 @@ jobs:
           pip install --upgrade pip wheel
           pip install ansible hvac community.hashi_vault
       - name: Retrieve SSH key from Vault
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
         run: |
           apt-get install -y wget unzip curl
           wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
@@ -99,6 +117,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Run Ansible playbook
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
         run: |
           source /tmp/ansible-venv/bin/activate
           ansible-playbook -i inventory.yml ansible/dev/media-stack/media-stack_pb.yml
