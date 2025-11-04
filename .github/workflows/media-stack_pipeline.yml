@@ -12,6 +12,9 @@ on:
 jobs:
   secrets:
     runs-on: ubuntu-latest
+    env:
+      VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+      VAULT_ADDR: ${{ env.VAULT_ADDR }}
     steps:
       - name: Install Curl, Unzip, Vault CLI
         run: |
@@ -29,23 +32,20 @@ jobs:
 
       - name: Write SSH Key to Vault
         env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+          VAULT_ADDR: ${{ env.VAULT_ADDR }}
         run: |
           vault kv put secret/ssh_keys/media-stack_worker \
             public=@$HOME/.ssh/media-stack_worker_id_ed25519.pub \
             private=@$HOME/.ssh/media-stack_worker_id_ed25519
 
-      # Add more vault seeding steps here for media passwords:
-      # e.g. vault kv put secret/qbittorrent username=admin password=adminadmin
-      # repeat for other containers needing secrets!
-
   terraform:
     needs: secrets
     runs-on: ubuntu-latest
     env:
-      VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-      TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+      VAULT_ADDR: ${{ env.VAULT_ADDR }}
+      VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+      TF_VAR_vault_token: ${{ env.VAULT_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -108,7 +108,8 @@ jobs:
 
       - name: Retrieve SSH key from Vault
         env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+          VAULT_ADDR: ${{ env.VAULT_ADDR }}
         run: |
           apt-get install -y wget unzip curl
           wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
@@ -124,7 +125,8 @@ jobs:
 
       - name: Run Ansible playbook
         env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+          VAULT_ADDR: ${{ env.VAULT_ADDR }}
         run: |
           source /tmp/ansible-venv/bin/activate
           ansible-playbook -i inventory.yml ansible/dev/media-stack/media-stack_pb.yml
