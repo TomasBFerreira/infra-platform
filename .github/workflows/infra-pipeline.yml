@@ -72,7 +72,13 @@ jobs:
           pwd
           ls -l
           ls -l terraform/media-stack
-
+          
+      - name: Terraform Import if resource exists
+        run: |
+          if pvesh get /nodes/betsy/lxc | grep -q '"vmid": 200'; then
+          terraform import proxmox_lxc.media_stack_worker betsy/200
+          fi
+          
       - name: Terraform Init
         run: |
           cd terraform/media-stack
