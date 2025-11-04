@@ -73,12 +73,6 @@ jobs:
           ls -l
           ls -l terraform/media-stack
           
-      - name: Terraform Destroy (force clean)
-        run: |
-          cd terraform/media-stack
-          terraform init
-          terraform destroy -auto-approve || true
-          
       - name: Terraform Init
         run: |
           cd terraform/media-stack
