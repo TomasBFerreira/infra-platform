@@ -9,14 +9,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  VAULT_ADDR: http://192.168.50.169:8200
-  VAULT_TOKEN: root
-  TF_VAR_vault_token: root
-  TF_VAR_proxmox_api_url: "https://192.168.50.2:8006/api2/json"
-  TF_VAR_proxmox_user: "root@pam"
-  TF_VAR_proxmox_password: "Tomtom22!"
-
 jobs:
   secrets:
     runs-on: ubuntu-latest
