@@ -1,0 +1,45 @@
+---
+- name: Setup Tailscale on media-stack VM/container
+  hosts: media-stack
+  become: true
+  tasks:
+
+    - name: Install dependencies
+      apt:
+        name:
+          - curl
+          - gnupg2
+        state: present
+        update_cache: yes
+
+    - name: Add Tailscale apt key and repo
+      apt_key:
+        url: https://pkgs.tailscale.com/stable/ubuntu/focal.noarmor.gpg
+        state: present
+      when: ansible_distribution == 'Ubuntu'
+    - name: Add Tailscale apt repository
+      apt_repository:
+        repo: deb https://pkgs.tailscale.com/stable/ubuntu focal main
+        state: present
+      when: ansible_distribution == 'Ubuntu'
+
+    - name: Install Tailscale
+      apt:
+        name: tailscale
+        state: present
+        update_cache: yes
+
+    - name: Bring up Tailscale and login with auth key
+      environment:
+        TAILSCALE_AUTHKEY: "{{ lookup('env', 'TAILSCALE_AUTHKEY') }}"
+      command: tailscale up --authkey {{ lookup('env', 'TAILSCALE_AUTHKEY') }} --hostname media-worker
+      args:
+        creates: /var/lib/tailscale/tailscaled.state
+
+    - name: Confirm tailscale IP
+      shell: tailscale ip -4
+      register: tailscale_ip
+      changed_when: false
+
+    - debug:
+        msg: "Tailscale setup complete! IP: {{ tailscale_ip.stdout }}"
