@@ -1,0 +1,4 @@
+---
+- name: Placeholder Vault role
+  debug:
+    msg: "Vault role included - add vault-related logic here as needed."
