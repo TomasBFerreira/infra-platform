@@ -1,4 +1,4 @@
-name: Infra Orchestration Pipeline
+name: Media-Stack pipeline
 
 on:
   push:
@@ -10,21 +10,6 @@ on:
     branches: [main]
 
 jobs:
-  tailscale:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install Ansible and dependencies (virtualenv)
-        run: |
-          apt-get update
-          apt-get install -y python3-pip python3-venv jq
-          python3 -m venv /tmp/ansible-venv
-          source /tmp/ansible-venv/bin/activate
-          pip install --upgrade pip wheel
-          pip install ansible
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
   secrets:
     runs-on: ubuntu-latest
     steps:
@@ -34,19 +19,25 @@ jobs:
           apt-get install -y curl wget unzip
           wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
           unzip vault_1.21.0_linux_amd64.zip
-          mv vault /usr/local/bin/
+          sudo mv vault /usr/local/bin/
           vault --version
+
       - name: Generate SSH Key if not present
         run: |
           mkdir -p ~/.ssh
           [ -f ~/.ssh/media-stack_worker_id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/media-stack_worker_id_ed25519
+
       - name: Write SSH Key to Vault
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           vault kv put secret/ssh_keys/media-stack_worker \
             public=@$HOME/.ssh/media-stack_worker_id_ed25519.pub \
             private=@$HOME/.ssh/media-stack_worker_id_ed25519
-        env:
-          VAULT_TOKEN: "root"
+
+      # Add more vault seeding steps here for media passwords:
+      # e.g. vault kv put secret/qbittorrent username=admin password=adminadmin
+      # repeat for other containers needing secrets!
 
   terraform:
     needs: secrets
@@ -70,7 +61,7 @@ jobs:
           cd /tmp/terraform-bin
           wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
           unzip terraform_1.6.4_linux_amd64.zip
-          mv terraform /usr/local/bin/
+          sudo mv terraform /usr/local/bin/
           terraform -version
           cd -
 
@@ -79,7 +70,7 @@ jobs:
           pwd
           ls -l
           ls -l terraform/dev/media-stack
-          
+
       - name: Terraform Init
         run: |
           cd terraform/dev/media-stack
@@ -106,21 +97,27 @@ jobs:
           python3 -m venv /tmp/ansible-venv
           source /tmp/ansible-venv/bin/activate
           pip install --upgrade pip wheel
-          pip install ansible hvac
-          ansible --version
+          pip install ansible hvac community.hashi_vault
+
       - name: Retrieve SSH key from Vault
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           apt-get install -y wget unzip curl
           wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
           unzip vault_1.21.0_linux_amd64.zip
-          mv vault /usr/local/bin/
+          sudo mv vault /usr/local/bin/
           vault --version
           mkdir -p ~/.ssh
           vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
           chmod 600 ~/.ssh/media-stack_worker_id_ed25519
+
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Run Ansible playbook
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           source /tmp/ansible-venv/bin/activate
           ansible-playbook -i inventory.yml ansible/dev/media-stack/media-stack_pb.yml
