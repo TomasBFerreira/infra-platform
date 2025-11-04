@@ -1,0 +1,9 @@
+---
+- name: Modular Media Stack Setup
+  hosts: media-stack_worker
+  become: true
+  roles:
+    - role: common
+    - role: docker
+    - role: vault
+    - role: media-containers
