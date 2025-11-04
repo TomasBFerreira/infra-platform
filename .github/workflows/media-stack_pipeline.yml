@@ -12,9 +12,6 @@ on:
 jobs:
   secrets:
     runs-on: ubuntu-latest
-    env:
-      VAULT_TOKEN: VAULT_TOKEN
-      VAULT_ADDR: VAULT_ADDR
     steps:
       - name: Install Curl, Unzip, Vault CLI
         run: |
@@ -24,17 +21,14 @@ jobs:
           unzip vault_1.21.0_linux_amd64.zip
           sudo mv vault /usr/local/bin/
           vault --version
-
       - name: Generate SSH Key if not present
         run: |
           mkdir -p ~/.ssh
           [ -f ~/.ssh/media-stack_worker_id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/media-stack_worker_id_ed25519
-
       - name: Write SSH Key to Vault
-        env:
-          VAULT_TOKEN: VAULT_TOKEN
-          VAULT_ADDR: VAULT_ADDR
         run: |
+          echo "VAULT_ADDR = $VAULT_ADDR"
+          echo "VAULT_TOKEN = $VAULT_TOKEN"
           vault kv put secret/ssh_keys/media-stack_worker \
             public=@$HOME/.ssh/media-stack_worker_id_ed25519.pub \
             private=@$HOME/.ssh/media-stack_worker_id_ed25519
@@ -42,21 +36,15 @@ jobs:
   terraform:
     needs: secrets
     runs-on: ubuntu-latest
-    env:
-      VAULT_ADDR: VAULT_ADDR
-      VAULT_TOKEN: VAULT_TOKEN
-      TF_VAR_vault_token: TF_VAR_vault_token
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Debug workspace layout
         run: |
           pwd
           ls -l
           ls -l terraform
           ls -l terraform/dev/media-stack
-
       - name: Install Terraform
         run: |
           apt-get update
@@ -68,23 +56,19 @@ jobs:
           sudo mv terraform /usr/local/bin/
           terraform -version
           cd -
-
       - name: Debug pwd before Terraform steps
         run: |
           pwd
           ls -l
           ls -l terraform/dev/media-stack
-
       - name: Terraform Init
         run: |
           cd terraform/dev/media-stack
           terraform init
-
       - name: Terraform Plan
         run: |
           cd terraform/dev/media-stack
           terraform plan
-
       - name: Terraform Apply
         run: |
           cd terraform/dev/media-stack
@@ -93,9 +77,6 @@ jobs:
   ansible:
     needs: terraform
     runs-on: ubuntu-latest
-    env:
-      VAULT_ADDR: VAULT_ADDR
-      VAULT_TOKEN: VAULT_TOKEN
     steps:
       - name: Install Ansible and dependencies (virtualenv)
         run: |
@@ -105,11 +86,7 @@ jobs:
           source /tmp/ansible-venv/bin/activate
           pip install --upgrade pip wheel
           pip install ansible hvac community.hashi_vault
-
       - name: Retrieve SSH key from Vault
-        env:
-          VAULT_TOKEN: VAULT_TOKEN
-          VAULT_ADDR: VAULT_ADDR
         run: |
           apt-get install -y wget unzip curl
           wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
@@ -119,14 +96,9 @@ jobs:
           mkdir -p ~/.ssh
           vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
           chmod 600 ~/.ssh/media-stack_worker_id_ed25519
-
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Run Ansible playbook
-        env:
-          VAULT_TOKEN: VAULT_TOKEN
-          VAULT_ADDR: VAULT_ADDR
         run: |
           source /tmp/ansible-venv/bin/activate
           ansible-playbook -i inventory.yml ansible/dev/media-stack/media-stack_pb.yml
