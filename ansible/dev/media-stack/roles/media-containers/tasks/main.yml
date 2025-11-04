@@ -1,0 +1,59 @@
+- name: Create media directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: 1000
+    group: 1000
+    mode: '0775'
+  loop:
+    - "{{ base_media_path }}/tv"
+    - "{{ base_media_path }}/movies"
+    - "{{ base_media_path }}/downloads/complete"
+    - "{{ base_media_path }}/config/sonarr"
+    - "{{ base_media_path }}/config/radarr"
+    - "{{ base_media_path }}/config/prowlarr"
+    - "{{ base_media_path }}/config/qbittorrent"
+    - "{{ base_media_path }}/config/jellyfin"
+
+- name: Deploy media stack containers
+  community.docker.docker_container:
+    name: "{{ item.name }}"
+    image: "{{ item.image }}"
+    state: started
+    restart_policy: unless-stopped
+    ports: "{{ item.ports | default(omit) }}"
+    volumes: "{{ item.volumes | default(omit) }}"
+    env:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: "{{ timezone }}"
+      WEBUI_PORT: "{{ item.env.WEBUI_PORT | default(omit) }}"
+      WEBUI_USER: "{{ item.env.WEBUI_USER | default(omit) }}"
+      WEBUI_PASSWORD: "{{ item.env.WEBUI_PASSWORD | default(omit) }}"
+  loop: "{{ media_containers }}"
+
+- name: Wait for services to start
+  pause:
+    seconds: 10
+
+- name: Verify accessibility of exposed ports
+  uri:
+    url: "http://localhost:{{ item }}"
+    return_content: no
+    status_code: 200, 302, 401
+    timeout: 10
+  loop:
+    - 8989
+    - 7878
+    - 9696
+    - 8080
+    - 8096
+  register: service_check
+  ignore_errors: yes
+
+- name: Display service statuses
+  debug:
+    msg: >
+      Service on port {{ item.item }}:
+      {% if item.failed is defined and item.failed %}FAILED{% else %}OK{% endif %}
+  loop: "{{ service_check.results }}"
