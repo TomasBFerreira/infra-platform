@@ -73,11 +73,11 @@ jobs:
           ls -l
           ls -l terraform/media-stack
           
-      - name: Terraform Import if resource exists
+      - name: Terraform Destroy (force clean)
         run: |
-          if pvesh get /nodes/betsy/lxc | grep -q '"vmid": 200'; then
-          terraform import proxmox_lxc.media_stack_worker betsy/200
-          fi
+          cd terraform/media-stack
+          terraform init
+          terraform destroy -auto-approve || true
           
       - name: Terraform Init
         run: |
