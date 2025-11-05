@@ -54,13 +54,6 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Generate Vault secrets for network VM
-        run: |
-          export VAULT_ADDR=http://192.168.50.169:8200
-          export VAULT_TOKEN=root
-          chmod +x scripts/dev/network-vm/vault-generate-secrets.sh
-          scripts/dev/network-vm/vault-generate-secrets.sh
-          
       - name: Install Ansible and Python deps
         run: |
           sudo apt-get update
@@ -85,6 +78,13 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Generate Vault secrets for network VM
+        run: |
+          export VAULT_ADDR=http://192.168.50.169:8200
+          export VAULT_TOKEN=root
+          chmod +x scripts/dev/network-vm/vault-generate-secrets.sh
+          scripts/dev/network-vm/vault-generate-secrets.sh
 
       - name: Run Ansible playbook
         env:
