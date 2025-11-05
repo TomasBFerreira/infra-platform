@@ -99,6 +99,19 @@ jobs:
           apt-get install -y netcat-openbsd
           nc -zv 192.168.50.200 22 || echo "Port 22 unreachable"
 
+      - name: Wait for SSH to be ready on network VM
+        run: |
+          for i in {1..30}; do
+            if nc -z -w3 192.168.50.220 22; then
+              echo "SSH is up! Proceeding."
+              exit 0
+            fi
+            echo "Waiting for SSH…"
+            sleep 5
+          done
+          echo "SSH is NOT up after waiting. Exiting."
+          exit 1
+
       - name: Run Ansible playbook
         env:
           VAULT_ADDR: http://192.168.50.169:8200
