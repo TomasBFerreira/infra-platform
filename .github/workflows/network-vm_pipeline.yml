@@ -73,7 +73,7 @@ jobs:
           wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
           unzip vault_1.21.0_linux_amd64.zip
           sudo mv vault /usr/local/bin/
-          vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/network_vm_id_ed25519
+          vault kv get -field=private secret/ssh_keys/network-vm > ~/.ssh/network_vm_id_ed25519
           chmod 600 ~/.ssh/network_vm_id_ed25519
 
       - name: Checkout code
@@ -90,8 +90,8 @@ jobs:
         run: |
           echo "HOME is $HOME"
           ls -l $HOME/.ssh/
-          cat $HOME/.ssh/media-stack_worker_id_ed25519 || true
-          cat $HOME/.ssh/media-stack-worker_id_ed25519 || true
+          cat $HOME/.ssh/network_vm_id_ed25519 || true
+          cat $HOME/.ssh/network_vm_id_ed25519 || true
           
       - name: Check SSH port connectivity
         run: |
