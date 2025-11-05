@@ -41,26 +41,24 @@ jobs:
           PVE_NODE: betsy
           VMID: '220'
         run: |
-          login=$(curl -sk -d "username=$PVE_USER&password=$PVE_PASS" "$PVE_API/access/ticket")
+          login=$(curl -sk -d "username=$PVE_USER&password=$PVE_PASS" "${PVE_API}/access/ticket/")
           echo "Login response: $login"
 
           ticket=$(echo $login | jq -r '.data.ticket')
           csrftoken=$(echo $login | jq -r '.data.CSRFPreventionToken')
 
           if [[ -z "$ticket" || "$ticket" == "null" ]]; then
-            echo "Failed to get Proxmox API ticket."
-            exit 1
+          echo "Failed to get Proxmox API ticket."
+          exit 1
           fi
 
-          # Stop container (ignore errors)
           curl -sk -X POST "$PVE_API/nodes/$PVE_NODE/lxc/$VMID/status/stop" \
-            --header "Cookie: PVEAuthCookie=$ticket" \
-            --header "CSRFPreventionToken: $csrftoken" || true
+          --header "Cookie: PVEAuthCookie=$ticket" \
+          --header "CSRFPreventionToken: $csrftoken" || true
 
-          # Destroy container (ignore errors)
           curl -sk -X DELETE "$PVE_API/nodes/$PVE_NODE/lxc/$VMID" \
-            --header "Cookie: PVEAuthCookie=$ticket" \
-            --header "CSRFPreventionToken: $csrftoken" || true
+          --header "Cookie: PVEAuthCookie=$ticket" \
+          --header "CSRFPreventionToken: $csrftoken" || true
 
       - name: Remove Terraform resource from state
         run: |
