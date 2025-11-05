@@ -129,6 +129,10 @@ jobs:
           ls -l $HOME/.ssh/
           cat $HOME/.ssh/media-stack_worker_id_ed25519 || true
           cat $HOME/.ssh/media-stack-worker_id_ed25519 || true
+      - name: Check SSH port connectivity
+        run: |
+          apt-get install -y netcat
+          nc -zv 192.168.50.200 22
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Run Ansible playbook
