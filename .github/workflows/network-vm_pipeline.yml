@@ -33,6 +33,19 @@ jobs:
           sudo mv terraform /usr/local/bin/
           terraform -version
           cd -
+
+      - name: Cleanup Proxmox VM
+        env:
+          PROXMOX_NODE: betsy
+          VMID: '220'
+          run: |
+            echo "Stopping and destroying Proxmox VM $VMID on $PROXMOX_NODE"
+            ssh root@$PROXMOX_NODE "pct stop $VMID || true; pct destroy $VMID || true"
+    
+      - name: Remove Terraform resource from state
+        run: |
+          cd terraform/dev/network-vm
+          terraform state rm proxmox_lxc.network_vm || true
       
       - name: Terraform Init
         env:
