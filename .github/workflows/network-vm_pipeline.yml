@@ -28,7 +28,7 @@ jobs:
 
       - name: Cleanup Proxmox VM via API
         env:
-          PVE_API: https://192.168.50.2:8006/api2/json
+          PVE_API: http://192.168.50.2:8006/api2/json
           PVE_USER: root@pam
           PVE_PASS: Tomtom22!
           PVE_NODE: betsy
