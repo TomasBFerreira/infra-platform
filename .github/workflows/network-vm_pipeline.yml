@@ -38,9 +38,9 @@ jobs:
         env:
           PROXMOX_NODE: betsy
           VMID: '220'
-          run: |
-            echo "Stopping and destroying Proxmox VM $VMID on $PROXMOX_NODE"
-            ssh root@$PROXMOX_NODE "pct stop $VMID || true; pct destroy $VMID || true"
+        run: |
+          echo "Stopping and destroying Proxmox VM $VMID on $PROXMOX_NODE"
+          ssh root@$PROXMOX_NODE "pct stop $VMID || true; pct destroy $VMID || true"
     
       - name: Remove Terraform resource from state
         run: |
