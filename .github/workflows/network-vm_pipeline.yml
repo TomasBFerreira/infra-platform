@@ -1,0 +1,85 @@
+name: Network-VM pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/dev/network-vm/**'
+      - 'ansible/dev/network-vm/**'
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Terraform
+        run: |
+          sudo apt-get update &&
+          sudo apt-get install -y wget unzip
+          wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
+          unzip terraform_1.6.4_linux_amd64.zip
+          sudo mv terraform /usr/local/bin/
+          terraform -version
+
+      - name: Terraform Init
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+          TF_VAR_proxmox_api_url: http://192.168.50.2:8006/api2/json
+          TF_VAR_proxmox_user: root@pam
+          TF_VAR_proxmox_password: Tomtom22!
+          TF_VAR_vault_token: root
+        run: |
+          cd terraform/dev/network-vm
+          terraform init
+
+      - name: Terraform Apply
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+          TF_VAR_proxmox_api_url: http://192.168.50.2:8006/api2/json
+          TF_VAR_proxmox_user: root@pam
+          TF_VAR_proxmox_password: Tomtom22!
+          TF_VAR_vault_token: root
+        run: |
+          cd terraform/dev/network-vm
+          terraform apply -auto-approve
+
+  ansible:
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Ansible and Python deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-venv jq
+          python3 -m venv /tmp/ansible-venv
+          source /tmp/ansible-venv/bin/activate
+          pip install --upgrade pip wheel
+          pip install ansible hvac
+          ansible-galaxy collection install community.hashi_vault community.docker
+
+      - name: Retrieve SSH key from Vault
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+        run: |
+          apt-get install -y wget unzip curl
+          wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
+          unzip vault_1.21.0_linux_amd64.zip
+          sudo mv vault /usr/local/bin/
+          vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/network_vm_id_ed25519
+          chmod 600 ~/.ssh/network_vm_id_ed25519
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Ansible playbook
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+        run: |
+          source /tmp/ansible-venv/bin/activate
+          ansible-playbook -i inventory_network_vm.yml ansible/dev/network-vm/network-vm_setup.yml
