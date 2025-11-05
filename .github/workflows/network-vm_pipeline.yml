@@ -59,11 +59,6 @@ jobs:
           curl -sk -X DELETE "$PVE_API/nodes/$PVE_NODE/lxc/$VMID" \
           --header "Cookie: PVEAuthCookie=$ticket" \
           --header "CSRFPreventionToken: $csrftoken" || true
-
-      - name: Remove Terraform resource from state
-        run: |
-          cd terraform/dev/network-vm
-          terraform state rm proxmox_lxc.network_vm || true
       
       - name: Terraform Init
         env:
