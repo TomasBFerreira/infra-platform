@@ -11,8 +11,9 @@ terraform {
     }
   }
   
-  backend "local" {
-    path = "terraform.tfstate"
+  backend "vault" {
+    address = "http://192.168.50.169:8200"
+    path    = "terraform/state/network-vm"
   }
 }
 
