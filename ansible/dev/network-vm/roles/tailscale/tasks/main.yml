@@ -16,6 +16,27 @@
   apt:
     name: tailscale
     state: present
+
+- name: Ensure tun module is loaded
+  modprobe:
+    name: tun
+    state: present
+
+- name: Ensure /dev/net/tun device exists
+  file:
+    path: /dev/net/tun
+    state: touch
+    mode: '0600'
+  when: ansible_facts['devices']['tun'] is not defined
+
+- name: Check /dev/net/tun exists
+  stat:
+    path: /dev/net/tun
+  register: tun_stat
+
+- fail:
+    msg: "/dev/net/tun device is missing. Please ensure it is enabled and accessible."
+  when: not tun_stat.stat.exists
     
 - name: Enable and start tailscaled service
   systemd:
