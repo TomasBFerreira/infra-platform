@@ -22,7 +22,14 @@
     name: tailscaled
     enabled: yes
     state: started
-    
+
+- name: Wait for tailscaled to be active
+  command: systemctl is-active tailscaled
+  register: tailscaled_status
+  retries: 10
+  delay: 3
+  until: tailscaled_status.stdout == "active"
+  
 - name: Authenticate with Tailscale
   command: "tailscale up --authkey={{ tailscale_authkey }}"
   args:
