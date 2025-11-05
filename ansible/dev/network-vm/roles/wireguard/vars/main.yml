@@ -1,9 +1,9 @@
 # Example: Pull WireGuard keys/config from Vault
 wg_private_key: >-
   {{ lookup('community.hashi_vault.hashi_vault',
-    'secret=secret/data/secret/wireguard:private_key token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
+    'secret=secret/secret/wireguard:private_key token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
 wg_public_key_peer: >-
   {{ lookup('community.hashi_vault.hashi_vault',
-    'secret=secret/data/secret/wireguard:peer_public_key token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
+    'secret=secret/secret/wireguard:peer_public_key token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
 vault_addr: "http://192.168.50.169:8200"
 vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
