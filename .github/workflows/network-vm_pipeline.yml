@@ -53,6 +53,8 @@ jobs:
     steps:
       - name: Generate Vault secrets for network VM
         run: |
+          export VAULT_ADDR=http://192.168.50.169:8200
+          export VAULT_TOKEN=root
           chmod +x scripts/dev/network-vm/vault-generate-secrets.sh
           scripts/dev/network-vm/vault-generate-secrets.sh
           
