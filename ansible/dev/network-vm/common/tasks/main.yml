@@ -29,6 +29,16 @@
   loop:
     - /opt/scripts
     - /var/log/myapp
+    
+- name: Ensure tun device is available
+  command: ls /dev/net/tun
+  register: tun_check
+  failed_when: tun_check.rc != 0
+
+- name: Load tun module if not loaded
+  modprobe:
+    name: tun
+    state: present
 
 - name: Disable unattended upgrades (optional)
   apt:
