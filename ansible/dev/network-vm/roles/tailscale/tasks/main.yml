@@ -16,7 +16,13 @@
   apt:
     name: tailscale
     state: present
-
+    
+- name: Enable and start tailscaled service
+  systemd:
+    name: tailscaled
+    enabled: yes
+    state: started
+    
 - name: Authenticate with Tailscale
   command: "tailscale up --authkey={{ tailscale_authkey }}"
   args:
