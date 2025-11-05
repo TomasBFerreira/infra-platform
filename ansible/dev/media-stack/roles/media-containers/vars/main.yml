@@ -1,14 +1,70 @@
 base_media_path: /mnt/media
 timezone: "UTC"
-media_containers: []
 
+# Vault secrets (keep these as you have)
 vault_addr: "http://192.168.50.169:8200"
 vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
 
 qbittorrent_user: >-
   {{ lookup('community.hashi_vault.hashi_vault',
     'secret=secret/data/qbittorrent:username token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
-
 qbittorrent_password: >-
   {{ lookup('community.hashi_vault.hashi_vault',
     'secret=secret/data/qbittorrent:password token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
+
+media_containers:
+  - name: sonarr
+    image: linuxserver/sonarr:latest
+    ports:
+      - "8989:8989"
+    volumes:
+      - "{{ base_media_path }}/config/sonarr:/config"
+      - "{{ base_media_path }}/tv:/tv"
+      - "{{ base_media_path }}/downloads/complete:/downloads"
+    env:
+      WEBUI_PORT: "8989"
+
+  - name: radarr
+    image: linuxserver/radarr:latest
+    ports:
+      - "7878:7878"
+    volumes:
+      - "{{ base_media_path }}/config/radarr:/config"
+      - "{{ base_media_path }}/movies:/movies"
+      - "{{ base_media_path }}/downloads/complete:/downloads"
+    env:
+      WEBUI_PORT: "7878"
+
+  - name: prowlarr
+    image: linuxserver/prowlarr:latest
+    ports:
+      - "9696:9696"
+    volumes:
+      - "{{ base_media_path }}/config/prowlarr:/config"
+    env:
+      WEBUI_PORT: "9696"
+
+  - name: qbittorrent
+    image: linuxserver/qbittorrent:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - "{{ base_media_path }}/config/qbittorrent:/config"
+      - "{{ base_media_path }}/downloads/complete:/downloads"
+    env:
+      WEBUI_PORT: "8080"
+      WEBUI_USER: "{{ qbittorrent_user }}"
+      WEBUI_PASSWORD: "{{ qbittorrent_password }}"
+
+  - name: jellyfin
+    image: linuxserver/jellyfin:latest
+    ports:
+      - "8096:8096"
+    volumes:
+      - "{{ base_media_path }}/config/jellyfin:/config"
+      - "{{ base_media_path }}/tv:/media/tv"
+      - "{{ base_media_path }}/movies:/media/movies"
+    env:
+      WEBUI_PORT: "8096"
+
+timezone: "Europe/London"
