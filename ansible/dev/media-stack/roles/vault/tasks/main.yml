@@ -7,13 +7,9 @@
   register: qbittorrent_secret
   ignore_errors: true
 
-- name: Generate qBittorrent credentials and store in Vault
+- name: Create qBittorrent Vault secret if missing
   when: qbittorrent_secret.failed
   block:
-    - name: Generate random username
-      set_fact:
-        qbittorrent_generated_user: "admin"
-
     - name: Generate random password
       community.general.password:
         length: 16
@@ -27,5 +23,17 @@
         path: "secret/data/secret/qbittorrent"
         data:
           data:
-            username: "{{ qbittorrent_generated_user }}"
+            username: "admin"
             password: "{{ qbittorrent_generated_password.password }}"
+
+- name: Load qBittorrent Vault secret into variables
+  community.hashi_vault.hashi_vault:
+    url: "{{ vault_addr }}"
+    token: "{{ vault_token }}"
+    secret: "secret/data/secret/qbittorrent"
+  register: qbittorrent_secret_final
+
+- name: Set qBittorrent credentials as facts
+  set_fact:
+    qbittorrent_user: "{{ qbittorrent_secret_final.value.username }}"
+    qbittorrent_password: "{{ qbittorrent_secret_final.value.password }}"
