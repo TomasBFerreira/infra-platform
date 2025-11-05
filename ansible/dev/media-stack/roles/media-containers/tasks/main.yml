@@ -32,9 +32,17 @@
       WEBUI_PASSWORD: "{{ item.env.WEBUI_PASSWORD | default(omit) }}"
   loop: "{{ media_containers }}"
 
-- name: Wait for services to start
-  pause:
-    seconds: 10
+- name: Wait for services to fully start
+  wait_for:
+    port: "{{ item }}"
+    delay: 5
+    timeout: 30
+  with_items:
+    - 8989
+    - 7878
+    - 9696
+    - 8080
+    - 8096
 
 - name: Verify accessibility of exposed ports
   uri:
