@@ -14,14 +14,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Terraform and tools
+      - name: Install Terraform
         run: |
           apt-get update
-          apt-get install -y wget unzip curl jq
+          apt-get install -y wget unzip
+          mkdir -p /tmp/terraform-bin
+          cd /tmp/terraform-bin
           wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
           unzip terraform_1.6.4_linux_amd64.zip
-          mv terraform /usr/local/bin/
+          sudo mv terraform /usr/local/bin/
           terraform -version
+          cd -
 
       - name: Cleanup Proxmox VM via API
         env:
