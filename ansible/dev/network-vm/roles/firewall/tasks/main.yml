@@ -1,0 +1,19 @@
+- name: Ensure UFW installed
+  apt:
+    name: ufw
+    update_cache: yes
+
+- name: Set up UFW rules
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+  loop: "{{ firewall_allowed_ports }}"
+
+- name: Set UFW default deny
+  ufw:
+    rule: deny
+    direction: incoming
+
+- name: Enable UFW
+  ufw:
+    state: enabled
