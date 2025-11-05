@@ -16,12 +16,15 @@ jobs:
 
       - name: Install Terraform
         run: |
-          sudo apt-get update &&
-          sudo apt-get install -y wget unzip
+          apt-get update
+          apt-get install -y wget unzip
+          mkdir -p /tmp/terraform-bin
+          cd /tmp/terraform-bin
           wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
           unzip terraform_1.6.4_linux_amd64.zip
           sudo mv terraform /usr/local/bin/
           terraform -version
+          cd -
 
       - name: Terraform Init
         env:
