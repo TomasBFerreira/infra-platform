@@ -1,0 +1,10 @@
+- name: Deploy AdGuard Home via Docker
+  community.docker.docker_container:
+    name: adguard-home
+    image: adguard/adguardhome
+    state: started
+    restart_policy: unless-stopped
+    ports:
+      - "{{ adguard_port }}:3000"
+    volumes:
+      - "{{ adguard_data_path }}:/opt/adguardhome/work"

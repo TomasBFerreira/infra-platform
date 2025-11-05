@@ -1,0 +1,11 @@
+---
+- name: Network Services VM Setup
+  hosts: network_vm
+  become: yes
+  roles:
+    - role: common
+    - role: tailscale
+    - role: wireguard
+    - role: firewall
+    - role: adguard
+    - role: dns
