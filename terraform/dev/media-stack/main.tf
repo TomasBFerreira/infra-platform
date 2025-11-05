@@ -56,37 +56,42 @@ data "vault_generic_secret" "ssh_key" {
   path = "secret/ssh_keys/media-stack_worker"
 }
 
-# Create LXC container
-resource "proxmox_lxc" "media_stack_worker" {
-  vmid        = 200
-  hostname    = "media-worker"
-  ostemplate  = "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"
-  cores       = 4
-  memory      = 4096
-  
-  rootfs {
+resource "proxmox_vm_qemu" "network_vm" {
+  name         = "network-vm"
+  target_node  = "betsy"
+  vmid         = 220           
+  memory       = 4096          
+  cores        = 4
+
+  iso          = "local:iso/ubuntu-24.04.3-live-server-amd64.iso"
+
+  disk {
+    type   = "scsi"
     storage = "local-lvm"
     size    = "32G"
   }
-  
+
   network {
-    name   = "eth0"
+    model  = "virtio"
     bridge = "vmbr0"
-    ip     = "192.168.50.200/24"
-    gw     = "192.168.50.1"
   }
-  
-  unprivileged = true
-  
-  features {
-    nesting = true
-  }
-  
-  ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
-  start           = true
-  target_node     = "betsy"
+
+  # Static IP via cloud-init customization:
+  ipconfig0 = "ip=192.168.50.200/24,gw=192.168.50.1"
+
+  # SSH public key injection (with cloud-init template):
+  sshkeys = data.vault_generic_secret.ssh_key.data["public"]
+
+  # Boot on creation
+  boot        = "c"
+  onboot      = true
+  start       = true
+
+  # Optional: Additional features
+  agent       = 1
 }
 
-output "media_worker_ip" {
-  value = "192.168.50.200"
+output "network_vm_ip" {
+  value = "192.168.50.220"
 }
+
