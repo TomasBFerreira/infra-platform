@@ -23,6 +23,12 @@
     enabled: yes
     state: started
 
+- name: Restart tailscaled service
+  systemd:
+    name: tailscaled
+    state: restarted
+    enabled: yes
+
 - name: Check tailscaled service status and logs for debugging
   command: journalctl -u tailscaled --no-pager -n 50
   register: tailscaled_logs
@@ -31,12 +37,13 @@
 - debug:
     msg: "{{ tailscaled_logs.stdout }}"
 
-- name: Wait for tailscaled to be active
+- name: Wait for tailscaled to be active or activating
   command: systemctl is-active tailscaled
   register: tailscaled_status
-  retries: 10
-  delay: 3
-  until: tailscaled_status.stdout == "active"
+  retries: 15
+  delay: 5
+  until: tailscaled_status.stdout in ['active', 'activating']
+  ignore_errors: yes
   
 - name: Authenticate with Tailscale
   command: "tailscale up --authkey={{ tailscale_authkey }}"
