@@ -51,6 +51,11 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
+      - name: Generate Vault secrets for network VM
+        run: |
+          chmod +x scripts/dev/network-vm/vault-generate-secrets.sh
+          scripts/dev/network-vm/vault-generate-secrets.sh
+          
       - name: Install Ansible and Python deps
         run: |
           sudo apt-get update
