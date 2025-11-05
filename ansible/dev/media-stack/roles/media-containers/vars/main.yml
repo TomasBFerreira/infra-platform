@@ -5,36 +5,6 @@ timezone: "UTC"
 vault_addr: "http://192.168.50.169:8200"
 vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
 
-- name: Check if qBittorrent Vault secret exists
-  community.hashi_vault.hashi_vault:
-    url: "{{ vault_addr }}"
-    token: "{{ vault_token }}"
-    secret: "secret/data/secret/qbittorrent"
-  register: qbittorrent_secret
-  ignore_errors: true
-
-- name: Generate qBittorrent credentials and store in Vault
-  when: qbittorrent_secret.failed
-  block:
-    - name: Generate random username
-      set_fact:
-        qbittorrent_generated_user: "admin"
-
-    - name: Generate random password
-      community.general.password:
-        length: 16
-        special: true
-      register: qbittorrent_generated_password
-
-    - name: Write qBittorrent secret to Vault
-      community.hashi_vault.hashi_vault_write:
-        url: "{{ vault_addr }}"
-        token: "{{ vault_token }}"
-        path: "secret/data/secret/qbittorrent"
-        data:
-          data:
-            username: "{{ qbittorrent_generated_user }}"
-            password: "{{ qbittorrent_generated_password.password }}"
 
 qbittorrent_user: >-
   {{ lookup('community.hashi_vault.hashi_vault',
