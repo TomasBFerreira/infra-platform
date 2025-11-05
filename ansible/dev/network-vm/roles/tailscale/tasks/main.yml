@@ -23,6 +23,14 @@
     enabled: yes
     state: started
 
+- name: Check tailscaled service status and logs for debugging
+  command: journalctl -u tailscaled --no-pager -n 50
+  register: tailscaled_logs
+  ignore_errors: yes
+
+- debug:
+    msg: "{{ tailscaled_logs.stdout }}"
+
 - name: Wait for tailscaled to be active
   command: systemctl is-active tailscaled
   register: tailscaled_status
