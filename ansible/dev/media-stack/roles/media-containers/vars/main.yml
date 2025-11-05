@@ -7,11 +7,11 @@ vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
 
 qbittorrent_user: >-
   {{ lookup('community.hashi_vault.hashi_vault',
-    'secret=secret/data/qbittorrent:username token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
+    'secret=secret/data/secret/qbittorrent:username token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
 qbittorrent_password: >-
   {{ lookup('community.hashi_vault.hashi_vault',
-    'secret=secret/data/qbittorrent:password token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
-
+    'secret=secret/data/secret/qbittorrent:password token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
+    
 media_containers:
   - name: sonarr
     image: linuxserver/sonarr:latest
