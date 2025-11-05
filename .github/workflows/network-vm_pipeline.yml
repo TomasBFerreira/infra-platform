@@ -37,19 +37,19 @@ jobs:
       - name: Terraform Init
         env:
           VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
+          VAULT_TOKEN: hvs.CAESIB2zftqrgOhmHowvC_CIkxo8bJHLh7ai69dIan60Y05hGh4KHGh2cy40emRkN3M3ZzcyNHVZd1RiYjdLek5yS1A
           TF_VAR_proxmox_api_url: http://192.168.50.2:8006/api2/json
           TF_VAR_proxmox_user: root@pam
           TF_VAR_proxmox_password: Tomtom22!
           TF_VAR_vault_token: root
         run: |
           cd terraform/dev/network-vm
-          terraform init
+          terraform init -reconfigure
           
       - name: Terraform Destroy
         env:
           VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
+          VAULT_TOKEN: hvs.CAESIB2zftqrgOhmHowvC_CIkxo8bJHLh7ai69dIan60Y05hGh4KHGh2cy40emRkN3M3ZzcyNHVZd1RiYjdLek5yS1A
           TF_VAR_proxmox_api_url: http://192.168.50.2:8006/api2/json
           TF_VAR_proxmox_user: root@pam
           TF_VAR_proxmox_password: Tomtom22!
@@ -61,7 +61,7 @@ jobs:
       - name: Terraform Apply
         env:
           VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
+          VAULT_TOKEN: hvs.CAESIB2zftqrgOhmHowvC_CIkxo8bJHLh7ai69dIan60Y05hGh4KHGh2cy40emRkN3M3ZzcyNHVZd1RiYjdLek5yS1A
           TF_VAR_proxmox_api_url: http://192.168.50.2:8006/api2/json
           TF_VAR_proxmox_user: root@pam
           TF_VAR_proxmox_password: Tomtom22!
@@ -87,7 +87,7 @@ jobs:
       - name: Retrieve SSH key from Vault
         env:
           VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
+          VAULT_TOKEN: hvs.CAESIB2zftqrgOhmHowvC_CIkxo8bJHLh7ai69dIan60Y05hGh4KHGh2cy40emRkN3M3ZzcyNHVZd1RiYjdLek5yS1A
         run: |
           apt-get install -y wget unzip curl
           wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
