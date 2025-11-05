@@ -1,5 +1,6 @@
 terraform {
   required_version = ">= 1.0"
+
   required_providers {
     proxmox = {
       source  = "telmate/proxmox"
@@ -10,10 +11,9 @@ terraform {
       version = "~> 3.0"
     }
   }
-  
-  backend "vault" {
-    address = "http://192.168.50.169:8200"
-    path    = "terraform/state/network-vm"
+
+  backend "local" {
+    path = "terraform.tfstate"
   }
 }
 
