@@ -56,7 +56,7 @@ data "vault_generic_secret" "ssh_key" {
   path = "secret/ssh_keys/media-stack_worker"
 }
 
-resource "proxmox_vm_qemu" "network_vm" {
+resource "proxmox_lxc" "network_vm" {
   vmid        = 220
   hostname    = "network-vm"
   ostemplate  = "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"
