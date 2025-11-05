@@ -1,0 +1,16 @@
+- name: Install Tailscale
+  apt:
+    name: tailscale
+    update_cache: yes
+
+- name: Authenticate with Tailscale
+  command: "tailscale up --authkey={{ tailscale_authkey }}"
+  args:
+    creates: /var/lib/tailscale/tailscaled.state
+
+- name: Wait for Tailscale to come online
+  shell: tailscale status | grep '100.64'
+  register: tailscale_status
+  retries: 6
+  delay: 5
+  until: tailscale_status.stdout | length > 0
