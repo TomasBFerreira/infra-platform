@@ -22,26 +22,39 @@ jobs:
           restore-keys: |
             terraform-state-${{ runner.os }}-
 
-      - name: Install Terraform
+      - name: Install Terraform and tools
         run: |
           apt-get update
-          apt-get install -y wget unzip
+          apt-get install -y wget unzip curl jq
           mkdir -p /tmp/terraform-bin
           cd /tmp/terraform-bin
           wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
           unzip terraform_1.6.4_linux_amd64.zip
           sudo mv terraform /usr/local/bin/
           terraform -version
-          cd -
 
-      - name: Cleanup Proxmox VM
+      - name: Cleanup Proxmox VM via API
         env:
-          PROXMOX_NODE: betsy
+          PVE_API: http://192.168.50.2:8006/api2/json
+          PVE_USER: root@pam
+          PVE_PASS: Tomtom22!
+          PVE_NODE: betsy
           VMID: '220'
         run: |
-          echo "Stopping and destroying Proxmox VM $VMID on $PROXMOX_NODE"
-          ssh root@$PROXMOX_NODE "pct stop $VMID || true; pct destroy $VMID || true"
-    
+          login=$(curl -sk -d "username=$PVE_USER&password=$PVE_PASS" $PVE_API/access/ticket)
+          ticket=$(echo $login | jq -r '.data.ticket')
+          csrftoken=$(echo $login | jq -r '.data.CSRFPreventionToken')
+
+          # Stop container (ignore errors)
+          curl -sk -X POST "$PVE_API/nodes/$PVE_NODE/lxc/$VMID/status/stop" \
+            --header "Cookie: PVEAuthCookie=$ticket" \
+            --header "CSRFPreventionToken: $csrftoken" || true
+
+          # Destroy container (ignore errors)
+          curl -sk -X DELETE "$PVE_API/nodes/$PVE_NODE/lxc/$VMID" \
+            --header "Cookie: PVEAuthCookie=$ticket" \
+            --header "CSRFPreventionToken: $csrftoken" || true
+
       - name: Remove Terraform resource from state
         run: |
           cd terraform/dev/network-vm
