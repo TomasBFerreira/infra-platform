@@ -36,7 +36,7 @@
   wait_for:
     port: "{{ item }}"
     delay: 5
-    timeout: 30
+    timeout: 15
   with_items:
     - 8989
     - 7878
@@ -47,21 +47,22 @@
 - name: Verify accessibility of exposed ports
   uri:
     url: "http://localhost:{{ item }}"
-    return_content: no
-    status_code: 200, 302, 401
+    status_code: [200, 302, 401]
     timeout: 10
+  register: health_results
   loop:
     - 8989
     - 7878
     - 9696
     - 8080
     - 8096
-  register: service_check
   ignore_errors: yes
 
-- name: Display service statuses
-  debug:
-    msg: >
-      Service on port {{ item.item }}:
-      {% if item.failed is defined and item.failed %}FAILED{% else %}OK{% endif %}
-  loop: "{{ service_check.results }}"
+- name: Aggregate health check failures
+  set_fact:
+    failed_ports: "{{ health_results.results | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item') | list }}"
+
+- name: Fail playbook if any port checks failed
+  fail:
+    msg: "Services on ports {{ failed_ports }} failed health check!"
+  when: failed_ports | length > 0
