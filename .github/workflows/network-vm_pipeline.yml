@@ -33,7 +33,7 @@ jobs:
           sudo mv terraform /usr/local/bin/
           terraform -version
 
-      - name: Cleanup Proxmox VM via API
+      - name: Cleanup Proxmox VM via API with debugging
         env:
           PVE_API: http://192.168.50.2:8006/api2/json
           PVE_USER: root@pam
@@ -41,9 +41,16 @@ jobs:
           PVE_NODE: betsy
           VMID: '220'
         run: |
-          login=$(curl -sk -d "username=$PVE_USER&password=$PVE_PASS" $PVE_API/access/ticket)
+          login=$(curl -sk -d "username=$PVE_USER&password=$PVE_PASS" "$PVE_API/access/ticket")
+          echo "Login response: $login"
+
           ticket=$(echo $login | jq -r '.data.ticket')
           csrftoken=$(echo $login | jq -r '.data.CSRFPreventionToken')
+
+          if [[ -z "$ticket" || "$ticket" == "null" ]]; then
+            echo "Failed to get Proxmox API ticket."
+            exit 1
+          fi
 
           # Stop container (ignore errors)
           curl -sk -X POST "$PVE_API/nodes/$PVE_NODE/lxc/$VMID/status/stop" \
