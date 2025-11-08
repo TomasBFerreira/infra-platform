@@ -64,6 +64,9 @@ resource "proxmox_lxc" "media_stack_worker" {
   cores       = 4
   memory      = 4096
   
+  # Explicit DNS configuration
+  nameserver = "1.1.1.1 8.8.8.8"
+  
   rootfs {
     storage = "local-lvm"
     size    = "32G"
@@ -85,6 +88,23 @@ resource "proxmox_lxc" "media_stack_worker" {
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
   start           = true
   target_node     = "betsy"
+
+  # Provisioner to ensure SSH key is properly set up
+  provisioner "remote-exec" {
+    inline = [
+      "mkdir -p /root/.ssh",
+      "echo '${data.vault_generic_secret.ssh_key.data["public"]}' > /root/.ssh/authorized_keys",
+      "chmod 700 /root/.ssh",
+      "chmod 600 /root/.ssh/authorized_keys"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = "root"
+      private_key = data.vault_generic_secret.ssh_key.data["private"]
+      host        = "192.168.50.200"
+    }
+  }
 }
 
 output "media_worker_ip" {

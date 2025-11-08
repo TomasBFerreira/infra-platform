@@ -1,0 +1,60 @@
+---
+- name: Test SSH Connection and Basic Commands
+  hosts: media-stack_worker
+  gather_facts: no
+  tasks:
+    - name: Test basic SSH connection
+      ping:
+      register: ping_result
+
+    - name: Show ping result
+      debug:
+        var: ping_result
+
+    - name: Check system information
+      command: uname -a
+      register: uname_result
+      changed_when: false
+
+    - name: Show system information
+      debug:
+        var: uname_result
+
+    - name: Check disk space
+      command: df -h
+      register: df_result
+      changed_when: false
+
+    - name: Show disk space
+      debug:
+        var: df_result
+
+    - name: Check network connectivity
+      command: ping -c 4 8.8.8.8
+      register: ping_google
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Show network connectivity result
+      debug:
+        var: ping_google
+
+    - name: Check DNS resolution
+      command: host google.com
+      register: dns_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Show DNS check result
+      debug:
+        var: dns_check
+
+    - name: Check apt sources
+      command: cat /etc/apt/sources.list
+      register: apt_sources
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Show apt sources
+      debug:
+        var: apt_sources
