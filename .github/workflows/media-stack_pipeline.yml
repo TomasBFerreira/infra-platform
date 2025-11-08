@@ -104,12 +104,20 @@ jobs:
       - name: Install Ansible and dependencies (virtualenv)
         run: |
           apt-get update
-          apt-get install -y python3-pip python3-venv jq
+          apt-get install -y python3-pip python3-venv jq git
           python3 -m venv /tmp/ansible-venv
           source /tmp/ansible-venv/bin/activate
           pip install --upgrade pip wheel
           pip install ansible hvac
-          ansible-galaxy collection install community.hashi_vault
+          
+          # Install only the required collections
+          ansible-galaxy collection install community.general --force
+          
+          # Create a simple ansible.cfg
+          mkdir -p /etc/ansible
+          echo '[defaults]' > /etc/ansible/ansible.cfg
+          echo 'host_key_checking = False' >> /etc/ansible/ansible.cfg
+          echo 'timeout = 60' >> /etc/ansible/ansible.cfg
       - name: Retrieve SSH key from Vault
         env:
           VAULT_ADDR: http://192.168.50.169:8200
@@ -136,10 +144,52 @@ jobs:
           nc -zv 192.168.50.200 22 || echo "Port 22 unreachable"
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Run Ansible playbook
+      - name: Run Ansible playbook with debug info
         env:
           VAULT_ADDR: http://192.168.50.169:8200
           VAULT_TOKEN: root
+          ANSIBLE_COLLECTIONS_PATH: /tmp/ansible-collections
+          ANSIBLE_SSH_ARGS: "-o ConnectTimeout=30 -o ConnectionAttempts=3 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
         run: |
           source /tmp/ansible-venv/bin/activate
-          ansible-playbook -i inventory.yml ansible/dev/media-stack/media-stack_setup.yml
+          
+          # Ensure the SSH key has the correct permissions
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/media-stack_worker_id_ed25519
+          
+          # Debug information
+          echo "=== Debug Information ==="
+          echo "Current directory: $(pwd)"
+          echo "Ansible version: $(ansible --version | head -1)"
+          echo "Python version: $(python3 --version)"
+          echo "SSH key path: $HOME/.ssh/media-stack_worker_id_ed25519"
+          echo "SSH key permissions: $(ls -l $HOME/.ssh/media-stack_worker_id_ed25519)"
+          echo "Inventory file contents:"
+          cat ansible/dev/media-stack/inventory.ini || echo "No inventory.ini found"
+          echo "======================="
+          
+          # Test SSH connection
+          echo "=== Testing SSH connection ==="
+          ssh -i ~/.ssh/media-stack_worker_id_ed25519 -o StrictHostKeyChecking=no root@192.168.50.200 'echo "SSH connection successful!"' || echo "SSH connection failed"
+          
+          # Run the playbook with verbose output and timeout
+          ANSIBLE_COMMAND_TIMEOUT=300 \
+          ANSIBLE_SSH_RETRIES=3 \
+          ansible-playbook \
+            -i ansible/dev/media-stack/inventory.ini \
+            -vvvv \
+            --private-key ~/.ssh/media-stack_worker_id_ed25519 \
+            -e "ansible_ssh_private_key_file=~/.ssh/media-stack_worker_id_ed25519" \
+            ansible/dev/media-stack/media-stack_setup.yml
+            
+          # If playbook fails, collect debug info
+          if [ $? -ne 0 ]; then
+            echo "=== Playbook failed, collecting debug info ==="
+            ansible -i ansible/dev/media-stack/inventory.ini all -m ping -vvvv \
+              --private-key ~/.ssh/media-stack_worker_id_ed25519
+            echo "SSH debug info:"
+            ssh -v -i ~/.ssh/media-stack_worker_id_ed25519 -o StrictHostKeyChecking=no root@192.168.50.200 exit || true
+            echo "============================================"
+            exit 1
+          fi
