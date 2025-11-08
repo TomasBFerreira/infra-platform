@@ -1,39 +1,51 @@
 ---
 - name: Check if qBittorrent Vault secret exists
-  community.hashi_vault.hashi_vault:
-    url: "{{ vault_addr }}"
-    token: "{{ vault_token }}"
-    secret: "secret/data/secret/qbittorrent"
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/secret/data/secret/qbittorrent"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vault_token }}"
+    status_code: 200, 404
+    validate_certs: no
   register: qbittorrent_secret
   ignore_errors: true
+  changed_when: false
 
 - name: Create qBittorrent Vault secret if missing
-  when: qbittorrent_secret.failed
+  when: qbittorrent_secret.status == 404
   block:
     - name: Generate random password
-      community.general.password:
-        length: 16
-        special: true
-      register: qbittorrent_generated_password
+      ansible.builtin.set_fact:
+        qbittorrent_generated_password: "{{ lookup('community.general.random_string', length=16, special=true) }}"
 
     - name: Write qBittorrent secret to Vault
-      community.hashi_vault.hashi_vault_write:
-        url: "{{ vault_addr }}"
-        token: "{{ vault_token }}"
-        path: "secret/data/secret/qbittorrent"
-        data:
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/secret/data/secret/qbittorrent"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+        body_format: json
+        body:
           data:
             username: "admin"
-            password: "{{ qbittorrent_generated_password.password }}"
+            password: "{{ qbittorrent_generated_password }}"
+        status_code: 200
+        validate_certs: no
+      register: vault_write_result
 
-- name: Load qBittorrent Vault secret into variables
-  community.hashi_vault.hashi_vault:
-    url: "{{ vault_addr }}"
-    token: "{{ vault_token }}"
-    secret: "secret/data/secret/qbittorrent"
-  register: qbittorrent_secret_final
+- name: Get qBittorrent Vault secret
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/secret/data/secret/qbittorrent"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vault_token }}"
+    status_code: 200
+    validate_certs: no
+  register: qbittorrent_secret
+  when: qbittorrent_secret.status != 404
 
-- name: Set qBittorrent credentials as facts
-  set_fact:
-    qbittorrent_user: "{{ qbittorrent_secret_final.value.username }}"
-    qbittorrent_password: "{{ qbittorrent_secret_final.value.password }}"
+- name: Set qBittorrent credentials fact
+  ansible.builtin.set_fact:
+    qbittorrent_user: "{{ qbittorrent_secret.json.data.data.username }}"
+    qbittorrent_password: "{{ qbittorrent_secret.json.data.data.password }}"
+  when: qbittorrent_secret.status == 200
