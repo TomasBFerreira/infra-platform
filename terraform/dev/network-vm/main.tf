@@ -24,7 +24,7 @@ resource "proxmox_lxc" "network_vm" {
     nesting = true
   }
   
-  ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
+  ssh_public_keys = var.ssh_public_key != "" ? var.ssh_public_key : file("~/.ssh/id_rsa.pub")
   start           = true
   target_node     = "betsy"
 }

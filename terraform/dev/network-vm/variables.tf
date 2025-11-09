@@ -11,18 +11,29 @@ variable "vault_address" {
   default     = "http://192.168.50.169:8200"
 }
 
-variable "proxmox_api_url" {
+variable "pve_api" {
   description = "Proxmox API URL"
   type        = string
 }
 
-variable "proxmox_user" {
+variable "pve_user" {
   description = "Proxmox user"
   type        = string
 }
 
-variable "proxmox_password" {
+variable "pve_pass" {
   description = "Proxmox password"
   type        = string
   sensitive   = true
+}
+
+variable "ssh_user" {
+  description = "SSH user for the VM"
+  type        = string
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key for the VM"
+  type        = string
+  default     = ""
 }
