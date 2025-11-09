@@ -1,0 +1,79 @@
+- name: Add Tailscale official APT repository key
+  apt_key:
+    url: https://pkgs.tailscale.com/stable/ubuntu/focal.noarmor.gpg
+    state: present
+
+- name: Add Tailscale official APT repository
+  apt_repository:
+    repo: "deb https://pkgs.tailscale.com/stable/ubuntu focal main"
+    state: present
+
+- name: Update apt cache after adding repo
+  apt:
+    update_cache: yes
+
+- name: Install Tailscale
+  apt:
+    name: tailscale
+    state: present
+
+- name: Ensure tun module is loaded
+  modprobe:
+    name: tun
+    state: present
+
+- name: Ensure /dev/net/tun device exists
+  file:
+    path: /dev/net/tun
+    state: touch
+    mode: '0600'
+  when: ansible_facts['devices']['tun'] is not defined
+
+- name: Check /dev/net/tun exists
+  stat:
+    path: /dev/net/tun
+  register: tun_stat
+
+- fail:
+    msg: "/dev/net/tun device is missing. Please ensure it is enabled and accessible."
+  when: not tun_stat.stat.exists
+    
+- name: Enable and start tailscaled service
+  systemd:
+    name: tailscaled
+    enabled: yes
+    state: started
+
+- name: Restart tailscaled service
+  systemd:
+    name: tailscaled
+    state: restarted
+    enabled: yes
+
+- name: Check tailscaled service status and logs for debugging
+  command: journalctl -u tailscaled --no-pager -n 50
+  register: tailscaled_logs
+  ignore_errors: yes
+
+- debug:
+    msg: "{{ tailscaled_logs.stdout }}"
+
+- name: Wait for tailscaled to be active or activating
+  command: systemctl is-active tailscaled
+  register: tailscaled_status
+  retries: 15
+  delay: 5
+  until: tailscaled_status.stdout in ['active', 'activating']
+  ignore_errors: yes
+  
+- name: Authenticate with Tailscale
+  command: "tailscale up --authkey={{ tailscale_authkey }}"
+  args:
+    creates: /var/lib/tailscale/tailscaled.state
+
+- name: Wait for Tailscale to come online
+  shell: tailscale status | grep '100.64'
+  register: tailscale_status
+  retries: 6
+  delay: 5
+  until: tailscale_status.stdout | length > 0

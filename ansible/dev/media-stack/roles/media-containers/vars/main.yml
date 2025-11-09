@@ -1,17 +1,11 @@
 base_media_path: /mnt/media
 timezone: "UTC"
 
-# Vault secrets (keep these as you have)
+
 vault_addr: "http://192.168.50.169:8200"
 vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
 
-qbittorrent_user: >-
-  {{ lookup('community.hashi_vault.hashi_vault',
-    'secret=secret/data/secret/qbittorrent:username token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
-qbittorrent_password: >-
-  {{ lookup('community.hashi_vault.hashi_vault',
-    'secret=secret/data/secret/qbittorrent:password token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
-    
+
 media_containers:
   - name: sonarr
     image: linuxserver/sonarr:latest

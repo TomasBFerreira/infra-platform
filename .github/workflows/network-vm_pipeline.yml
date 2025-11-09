@@ -1,0 +1,126 @@
+name: Network-VM pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/dev/network-vm/**'
+      - 'ansible/dev/network-vm/**'
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Terraform
+        run: |
+          apt-get update
+          apt-get install -y wget unzip
+          mkdir -p /tmp/terraform-bin
+          cd /tmp/terraform-bin
+          wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
+          unzip terraform_1.6.4_linux_amd64.zip
+          sudo mv terraform /usr/local/bin/
+          terraform -version
+          cd -
+
+      - name: Cleanup Proxmox VM via API
+        env:
+          PVE_API: http://192.168.50.2:8006/api2/json
+          PVE_USER: root@pam
+          PVE_PASS: Tomtom22!
+          PVE_NODE: betsy
+          VMID: '220'
+        run: |
+          login=$(curl -skL -d "username=$PVE_USER&password=$PVE_PASS" "$PVE_API/access/ticket/")
+          ticket=$(echo $login | jq -r '.data.ticket')
+          csrftoken=$(echo $login | jq -r '.data.CSRFPreventionToken')
+          if [[ -z "$ticket" || "$ticket" == "null" ]]; then
+            echo "Failed to get Proxmox API ticket."
+            exit 1
+          fi
+          curl -sk -X POST "$PVE_API/nodes/$PVE_NODE/lxc/$VMID/status/stop" \
+            -H "Cookie: PVEAuthCookie=$ticket" \
+            -H "CSRFPreventionToken: $csrftoken"
+          curl -sk -X DELETE "$PVE_API/nodes/$PVE_NODE/lxc/$VMID" \
+            -H "Cookie: PVEAuthCookie=$ticket" \
+            -H "CSRFPreventionToken: $csrftoken"
+
+      - name: Terraform Init
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+        run: |
+          cd terraform/dev/network-vm
+          terraform init -reconfigure
+
+      - name: Terraform Apply
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+        run: |
+          cd terraform/dev/network-vm
+          terraform apply -auto-approve
+
+  vault:
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Vault CLI
+        run: |
+          wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
+          unzip vault_1.21.0_linux_amd64.zip
+          mv vault /usr/local/bin/
+
+      - name: Generate Vault secrets for network VM
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+        run: |
+          chmod +x scripts/dev/network-vm/vault-generate-secrets.sh
+          scripts/dev/network-vm/vault-generate-secrets.sh
+
+  ansible:
+    needs: [terraform, vault]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Ansible and Python deps
+        run: |
+          apt-get update
+          apt-get install -y python3-pip python3-venv jq netcat-openbsd
+          python3 -m venv /tmp/ansible-venv
+          source /tmp/ansible-venv/bin/activate
+          pip install --upgrade pip wheel
+          pip install ansible hvac
+          ansible-galaxy collection install community.hashi_vault community.docker
+
+      - name: Retrieve SSH key from Vault
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+        run: |
+          vault kv get -field=private secret/ssh_keys/network-vm > ~/.ssh/network_vm_id_ed25519
+          chmod 600 ~/.ssh/network_vm_id_ed25519
+
+      - name: Wait for SSH to be ready
+        run: |
+          for i in {1..30}; do
+            if nc -z -w3 192.168.50.220 22; then
+              echo "SSH is up! Proceeding."
+              exit 0
+            fi
+            echo "Waiting for SSH…"
+            sleep 5
+          done
+          echo "SSH is NOT up after waiting. Exiting."
+          exit 1
+
+      - name: Run Ansible playbook
+        env:
+          VAULT_ADDR: http://192.168.50.169:8200
+          VAULT_TOKEN: root
+        run: |
+          source /tmp/ansible-venv/bin/activate
+          ansible-playbook -i inventory_network_vm.yml ansible/dev/network-vm/network-vm_setup.yml
