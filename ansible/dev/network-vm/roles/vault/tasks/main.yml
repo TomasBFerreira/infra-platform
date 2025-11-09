@@ -1,0 +1,54 @@
+---
+- name: Install required packages
+  apt:
+    name: "{{ item }}"
+    state: present
+    update_cache: yes
+  loop:
+    - curl
+    - gnupg
+    - software-properties-common
+
+- name: Add HashiCorp GPG key
+  apt_key:
+    url: https://apt.releases.hashicorp.com/gpg
+    state: present
+
+- name: Add HashiCorp repository
+  apt_repository:
+    repo: "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+    state: present
+    filename: hashicorp
+
+- name: Install Vault
+  apt:
+    name: vault
+    state: present
+    update_cache: yes
+
+- name: Create Vault configuration directory
+  file:
+    path: /etc/vault.d
+    state: directory
+    mode: '0755'
+
+- name: Create Vault data directory
+  file:
+    path: /opt/vault/data
+    state: directory
+    owner: vault
+    group: vault
+    mode: '0755'
+
+- name: Configure Vault
+  template:
+    src: vault.hcl.j2
+    dest: /etc/vault.d/vault.hcl
+    mode: '0640'
+    owner: vault
+    group: vault
+  notify: restart vault
+
+- name: Include Tailscale-specific configuration
+  include_tasks: tailscale.yml
+  when: "'tailscale' in group_names"

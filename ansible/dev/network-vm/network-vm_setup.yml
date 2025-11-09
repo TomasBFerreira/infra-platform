@@ -1,11 +1,52 @@
----
 - name: Network Services VM Setup
   hosts: network_vm
   become: yes
+  pre_tasks:
+    - name: Ensure Vault user exists
+      user:
+        name: vault
+        system: yes
+        shell: /usr/sbin/nologin
+        home: /usr/sbin
+        create_home: no
+
   roles:
     - role: common
     - role: tailscale
+    - role: vault
     - role: wireguard
     - role: firewall
     - role: adguard
     - role: dns
+
+  post_tasks:
+    - name: Check if Vault is initialized
+      command: vault status -format=json
+      register: vault_status
+      changed_when: false
+      failed_when: false
+      environment:
+        VAULT_ADDR: "http://127.0.0.1:8200"
+
+    - name: Initialize Vault if not already
+      block:
+        - name: Initialize Vault
+          command: >
+            vault operator init -key-shares=5 -key-threshold=3
+          register: vault_init
+          environment:
+            VAULT_ADDR: "http://127.0.0.1:8200"
+          changed_when: false
+
+        - name: Save Vault keys
+          copy:
+            content: "{{ vault_init.stdout }}"
+            dest: "/root/vault-keys.txt"
+            mode: '0600'
+            owner: root
+            group: root
+
+        - debug:
+            msg: "Vault initialized. Save these keys securely: {{ vault_init.stdout }}"
+
+      when: vault_status.rc != 0
