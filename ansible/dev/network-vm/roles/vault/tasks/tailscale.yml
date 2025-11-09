@@ -1,0 +1,12 @@
+---
+- name: Update Vault config with Tailscale IP
+  template:
+    src: vault.hcl.j2
+    dest: /etc/vault.d/vault.hcl
+    mode: '0640'
+    owner: vault
+    group: vault
+  vars:
+    vault_api_addr: "http://{{ ansible_facts.tailscale_ip }}:8200"
+  notify: restart vault
+  when: ansible_facts.tailscale_ip is defined
