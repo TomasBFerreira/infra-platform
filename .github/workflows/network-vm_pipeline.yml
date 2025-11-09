@@ -1,4 +1,4 @@
-name: Network-VM pipeline
+name: Network-VM Pipeline
 
 on:
   push:
@@ -6,108 +6,154 @@ on:
     paths:
       - 'terraform/dev/network-vm/**'
       - 'ansible/dev/network-vm/**'
+  workflow_dispatch:
 
+# Set environment variables that can be used across jobs
+env:
+  TF_VERSION: 1.6.4
+  VAULT_VERSION: 1.21.0
+  TAILSCALE_VERSION: 1.56.1
+  PVE_NODE: betsy
+  VMID: '220'
+
+# Define job outputs to share data between jobs
 jobs:
-  terraform:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      tf_plan: ${{ steps.plan.outputs.tf_plan }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        id: init
+        working-directory: terraform/dev/network-vm
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE }}
+        run: |
+          terraform init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform/dev/network-vm
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE }}
+        run: |
+          terraform plan -no-color -input=false -out=tfplan
+          echo "tf_plan=$(base64 -w0 tfplan)" >> $GITHUB_OUTPUT
+
+  terraform-apply:
+    needs: setup
+    if: github.ref == 'refs/heads/main' && needs.setup.outputs.tf_plan != ''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Terraform
-        run: |
-          apt-get update
-          apt-get install -y wget unzip
-          mkdir -p /tmp/terraform-bin
-          cd /tmp/terraform-bin
-          wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
-          unzip terraform_1.6.4_linux_amd64.zip
-          sudo mv terraform /usr/local/bin/
-          terraform -version
-          cd -
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Setup Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ secrets.VAULT_ADDR }}
+          method: jwt
+          jwtGithubAudience: ${{ secrets.VAULT_AUDIENCE }}
+          secrets: |
+            secret/data/network-vm PVE_CREDS | PVE_USER PVE_PASS ;
+            secret/data/network-vm/ssh SSH_PRIVATE_KEY | SSH_PRIVATE_KEY ;
 
       - name: Cleanup Proxmox VM via API
         env:
-          PVE_API: http://192.168.50.2:8006/api2/json
-          PVE_USER: root@pam
-          PVE_PASS: Tomtom22!
-          PVE_NODE: betsy
-          VMID: '220'
+          PVE_API: ${{ secrets.PVE_API }}
+          PVE_USER: ${{ env.PVE_USER }}
+          PVE_PASS: ${{ env.PVE_PASS }}
+          PVE_NODE: ${{ env.PVE_NODE }}
+          VMID: ${{ env.VMID }}
         run: |
-          login=$(curl -skL -d "username=$PVE_USER&password=$PVE_PASS" "$PVE_API/access/ticket/")
-          ticket=$(echo $login | jq -r '.data.ticket')
-          csrftoken=$(echo $login | jq -r '.data.CSRFPreventionToken')
-          if [[ -z "$ticket" || "$ticket" == "null" ]]; then
-            echo "Failed to get Proxmox API ticket."
-            exit 1
-          fi
-          curl -sk -X POST "$PVE_API/nodes/$PVE_NODE/lxc/$VMID/status/stop" \
-            -H "Cookie: PVEAuthCookie=$ticket" \
-            -H "CSRFPreventionToken: $csrftoken"
-          curl -sk -X DELETE "$PVE_API/nodes/$PVE_NODE/lxc/$VMID" \
-            -H "Cookie: PVEAuthCookie=$ticket" \
-            -H "CSRFPreventionToken: $csrftoken"
-
-      - name: Terraform Init
-        env:
-          VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
-        run: |
-          cd terraform/dev/network-vm
-          terraform init -reconfigure
+          # Cleanup script will be called here
+          echo "VM cleanup would happen here"
 
       - name: Terraform Apply
+        working-directory: terraform/dev/network-vm
         env:
-          VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE }}
         run: |
-          cd terraform/dev/network-vm
           terraform apply -auto-approve
 
-  vault:
-    needs: terraform
+  vault-secrets:
+    needs: terraform-apply
     runs-on: ubuntu-latest
     steps:
-      - name: Install Vault CLI
-        run: |
-          wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
-          unzip vault_1.21.0_linux_amd64.zip
-          mv vault /usr/local/bin/
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ secrets.VAULT_ADDR }}
+          method: jwt
+          jwtGithubAudience: ${{ secrets.VAULT_AUDIENCE }}
+          secrets: |
+            secret/data/network-vm env | ;
+            secret/data/network-vm/ssh SSH_PRIVATE_KEY | SSH_PRIVATE_KEY ;
 
       - name: Generate Vault secrets for network VM
-        env:
-          VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
         run: |
           chmod +x scripts/dev/network-vm/vault-generate-secrets.sh
           scripts/dev/network-vm/vault-generate-secrets.sh
 
   ansible:
-    needs: [terraform, vault]
+    needs: [terraform-apply, vault-secrets]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Install Ansible and Python deps
         run: |
-          apt-get update
-          apt-get install -y python3-pip python3-venv jq netcat-openbsd
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-venv jq netcat-openbsd sshpass
           python3 -m venv /tmp/ansible-venv
           source /tmp/ansible-venv/bin/activate
           pip install --upgrade pip wheel
           pip install ansible hvac
           ansible-galaxy collection install community.hashi_vault community.docker
 
-      - name: Retrieve SSH key from Vault
-        env:
-          VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
+      - name: Setup Vault for Ansible
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ secrets.VAULT_ADDR }}
+          method: jwt
+          jwtGithubAudience: ${{ secrets.VAULT_AUDIENCE }}
+          secrets: |
+            secret/data/network-vm/ssh SSH_PRIVATE_KEY | SSH_PRIVATE_KEY ;
+
+      - name: Configure SSH
         run: |
-          vault kv get -field=private secret/ssh_keys/network-vm > ~/.ssh/network_vm_id_ed25519
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/network_vm_id_ed25519
           chmod 600 ~/.ssh/network_vm_id_ed25519
+          echo "$TF_OUTPUT_IP" > /tmp/vm_ip.txt
+          echo "$TF_OUTPUT_IP $(cat /tmp/vm_ip.txt) $(hostname)" | sudo tee -a /etc/hosts
 
       - name: Wait for SSH to be ready
         run: |
           for i in {1..30}; do
-            if nc -z -w3 192.168.50.220 22; then
+            if nc -z -w3 $TF_OUTPUT_IP 22; then
               echo "SSH is up! Proceeding."
               exit 0
             fi
@@ -119,8 +165,26 @@ jobs:
 
       - name: Run Ansible playbook
         env:
-          VAULT_ADDR: http://192.168.50.169:8200
-          VAULT_TOKEN: root
+          ANSIBLE_HOST_KEY_CHECKING: false
+          ANSIBLE_FORCE_COLOR: 1
+          TF_OUTPUT_IP: ${{ steps.get-outputs.outputs.vm_ip }}
         run: |
           source /tmp/ansible-venv/bin/activate
-          ansible-playbook -i inventory_network_vm.yml ansible/dev/network-vm/network-vm_setup.yml
+          ansible-playbook \
+            -i "$TF_OUTPUT_IP," \
+            -u ${{ secrets.SSH_USER }} \
+            --private-key ~/.ssh/network_vm_id_ed25519 \
+            ansible/dev/network-vm/network-vm_setup.yml
+
+  tailscale:
+    needs: ansible
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          hostname: network-vm-pipeline
+          tags: tag:ci,env:prod
