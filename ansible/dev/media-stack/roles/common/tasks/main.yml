@@ -1,10 +1,88 @@
-- name: Install required system packages
-  apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - gnupg
-      - lsb-release
-    state: present
-    update_cache: yes
+- name: Check if package manager is available
+  command: which apt-get
+  register: apt_get_available
+  changed_when: false
+  failed_when: false
+  tags: [packages, system]
+
+- name: Fail if apt-get is not available
+  fail:
+    msg: "apt-get is not available on the target system"
+  when: apt_get_available.rc != 0
+  tags: [packages, system]
+
+- name: Install minimal required packages
+  block:
+    - name: Update apt cache and install packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+        install_recommends: no
+      register: package_install
+      retries: 3
+      delay: 5
+      until: package_install is success
+      async: 300  # 5 minute timeout
+      poll: 30    # check every 30 seconds
+
+  rescue:
+    - name: Debug package installation failure
+      debug:
+        msg: "Package installation failed. Last status: {{ package_install | default('undefined') }}"
+      
+    - name: Check network connectivity
+      command: ping -c 4 8.8.8.8
+      register: ping_test
+      ignore_errors: yes
+      changed_when: false
+      
+    - name: Debug network connectivity
+      debug:
+        var: ping_test
+        verbosity: 1
+        
+    - name: Check DNS resolution
+      command: host google.com
+      register: dns_test
+      ignore_errors: yes
+      changed_when: false
+      
+    - name: Debug DNS resolution
+      debug:
+        var: dns_test
+        verbosity: 1
+        
+    - name: Check apt sources
+      command: cat /etc/apt/sources.list
+      register: apt_sources
+      ignore_errors: yes
+      changed_when: false
+      
+    - name: Debug apt sources
+      debug:
+        var: apt_sources
+        verbosity: 1
+        
+    - fail:
+        msg: |
+          Failed to install required packages after multiple attempts.
+          Check network connectivity, DNS resolution, and apt sources.
+
+- name: Verify installed packages
+  command: dpkg -s apt-transport-https ca-certificates curl gnupg
+  register: pkg_check
+  changed_when: false
+  failed_when: false
+  tags: [packages, system]
+
+- name: Fail if packages are not installed
+  fail:
+    msg: "Failed to verify package installation. dpkg check returned: {{ pkg_check.rc }}"
+  when: pkg_check.rc != 0
+  tags: [packages, system]
