@@ -71,18 +71,10 @@ resource "proxmox_lxc" "media_stack_worker" {
     storage = "local-lvm"
     size    = "32G"
   }
-  
+
   network {
-    name   = "eth0"
+    model  = "virtio"
     bridge = "vmbr0"
-    ip     = "192.168.50.200/24"
-    gw     = "192.168.50.1"
-  }
-  
-  unprivileged = true
-  
-  features {
-    nesting = true
   }
   
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
@@ -107,6 +99,7 @@ resource "proxmox_lxc" "media_stack_worker" {
   }
 }
 
-output "media_worker_ip" {
-  value = "192.168.50.200"
+output "network_vm_ip" {
+  value = "192.168.50.220"
 }
+
