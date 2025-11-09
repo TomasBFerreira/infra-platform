@@ -36,8 +36,11 @@ jobs:
         id: init
         working-directory: terraform/dev/network-vm
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE }}
+          TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+          TF_VAR_proxmox_user: ${{ secrets.PROXMOX_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PROXMOX_PASSWORD }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR || 'http://localhost:8200' }}
+          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE || '' }}
         run: |
           terraform init -input=false
 
@@ -45,8 +48,11 @@ jobs:
         id: plan
         working-directory: terraform/dev/network-vm
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE }}
+          TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+          TF_VAR_proxmox_user: ${{ secrets.PROXMOX_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PROXMOX_PASSWORD }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR || 'http://localhost:8200' }}
+          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE || '' }}
         run: |
           terraform plan -no-color -input=false -out=tfplan
           echo "tf_plan=$(base64 -w0 tfplan)" >> $GITHUB_OUTPUT
@@ -89,8 +95,11 @@ jobs:
       - name: Terraform Apply
         working-directory: terraform/dev/network-vm
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE }}
+          TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+          TF_VAR_proxmox_user: ${{ secrets.PROXMOX_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PROXMOX_PASSWORD }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR || 'http://localhost:8200' }}
+          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE || '' }}
         run: |
           terraform apply -auto-approve
 
