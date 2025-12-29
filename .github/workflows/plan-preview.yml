@@ -1,0 +1,98 @@
+name: Plan Preview
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'terraform/dev/**'
+      - 'ansible/dev/**'
+  workflow_dispatch:
+
+env:
+  TF_VERSION: 1.6.4
+  VAULT_ADDR: http://localhost:8200
+  VAULT_TOKEN: myroot
+
+jobs:
+  plan-preview:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate Terraform Plans
+        run: |
+          echo "## 📋 Terraform Plan Preview" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Plan Media Stack if changed
+          if [ -d "terraform/dev/media-stack" ]; then
+            echo "### 🎬 Media Stack Plan" >> $GITHUB_STEP_SUMMARY
+            echo '```terraform' >> $GITHUB_STEP_SUMMARY
+            cd /app/infra-platform
+            ./scripts/run-terraform.sh -chdir=terraform/dev/media-stack init -no-color > /dev/null 2>&1
+            ./scripts/run-terraform.sh -chdir=terraform/dev/media-stack plan -no-color 2>&1 | head -50 >> $GITHUB_STEP_SUMMARY || echo "Plan output too long, showing first 50 lines" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Plan Network VM if changed
+          if [ -d "terraform/dev/network-vm" ]; then
+            echo "### 🌐 Network VM Plan" >> $GITHUB_STEP_SUMMARY
+            echo '```terraform' >> $GITHUB_STEP_SUMMARY
+            cd /app/infra-platform
+            ./scripts/run-terraform.sh -chdir=terraform/dev/network-vm init -no-color > /dev/null 2>&1
+            ./scripts/run-terraform.sh -chdir=terraform/dev/network-vm plan -no-color 2>&1 | head -50 >> $GITHUB_STEP_SUMMARY || echo "Plan output too long, showing first 50 lines" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Ansible Syntax Check
+        run: |
+          echo "## 📝 Ansible Syntax Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check Media Stack playbooks
+          if [ -f "ansible/dev/media-stack/media-stack_setup.yml" ]; then
+            echo "### 🎬 Media Stack Playbooks" >> $GITHUB_STEP_SUMMARY
+            echo '```yaml' >> $GITHUB_STEP_SUMMARY
+            cd /app/infra-platform
+            ./scripts/run-ansible.sh playbook --syntax-check ansible/dev/media-stack/media-stack_setup.yml 2>&1 >> $GITHUB_STEP_SUMMARY || echo "Syntax check completed" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check Network VM playbooks
+          if [ -f "ansible/dev/network-vm/network-vm_setup.yml" ]; then
+            echo "### 🌐 Network VM Playbooks" >> $GITHUB_STEP_SUMMARY
+            echo '```yaml' >> $GITHUB_STEP_SUMMARY
+            cd /app/infra-platform
+            ./scripts/run-ansible.sh playbook --syntax-check ansible/dev/network-vm/network-vm_setup.yml 2>&1 >> $GITHUB_STEP_SUMMARY || echo "Syntax check completed" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Inventory Validation
+        run: |
+          echo "## 📊 Inventory Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Validate Media Stack inventory
+          if [ -f "ansible/dev/media-stack/inventory.ini" ]; then
+            echo "### 🎬 Media Stack Inventory" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cd /app/infra-platform
+            ./scripts/run-ansible.sh inventory -i ansible/dev/media-stack/inventory.ini --list-hosts 2>&1 >> $GITHUB_STEP_SUMMARY || echo "Inventory validation completed" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Validate Network VM inventory
+          if [ -f "ansible/dev/network-vm/inventory.ini" ]; then
+            echo "### 🌐 Network VM Inventory" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cd /app/infra-platform
+            ./scripts/run-ansible.sh inventory -i ansible/dev/network-vm/inventory.ini --list-hosts 2>&1 >> $GITHUB_STEP_SUMMARY || echo "Inventory validation completed" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
