@@ -1,0 +1,120 @@
+name: Network-VM Pipeline (Self-Hosted)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/dev/network-vm/**'
+      - 'ansible/dev/network-vm/**'
+  workflow_dispatch:
+
+env:
+  TF_VERSION: 1.6.4
+  VAULT_VERSION: 1.21.0
+  PVE_NODE: betsy
+  VMID: '220'
+
+jobs:
+  setup:
+    runs-on: self-hosted
+    outputs:
+      tf_plan: ${{ steps.plan.outputs.tf_plan }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        id: init
+        working-directory: terraform/dev/network-vm
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: myroot
+          TF_VAR_vault_address: http://localhost:8200
+        run: |
+          terraform init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform/dev/network-vm
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: myroot
+          TF_VAR_vault_address: http://localhost:8200
+        run: |
+          terraform plan -no-color -input=false -out=tfplan
+          echo "tf_plan=$(base64 -w0 tfplan)" >> $GITHUB_OUTPUT
+
+  terraform-apply:
+    needs: setup
+    if: github.ref == 'refs/heads/main' && needs.setup.outputs.tf_plan != ''
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cleanup Proxmox VM via API
+        env:
+          PVE_API: ${{ secrets.PVE_API }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+          PVE_PASS: ${{ secrets.PVE_PASS }}
+          PVE_NODE: ${{ env.PVE_NODE }}
+          VMID: ${{ env.VMID }}
+        run: |
+          # Add your cleanup logic here if needed
+          echo "Cleaning up VM $VMID on node $PVE_NODE"
+
+      - name: Terraform Init
+        working-directory: terraform/dev/network-vm
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: myroot
+          TF_VAR_vault_address: http://localhost:8200
+        run: |
+          terraform init -input=false
+
+      - name: Terraform Apply
+        working-directory: terraform/dev/network-vm
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: myroot
+          TF_VAR_vault_address: http://localhost:8200
+        run: |
+          terraform apply -auto-approve tfplan
+
+  ansible:
+    needs: terraform-apply
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Ensure Ansible is installed
+        run: |
+          if ! command -v ansible &> /dev/null; then
+            echo "Ansible not found. Please install ansible on the runner."
+            exit 1
+          fi
+          ansible --version
+
+      - name: Run Ansible playbook
+        env:
+          VAULT_ADDR: http://localhost:8200
+          VAULT_TOKEN: myroot
+        working-directory: ansible/dev/network-vm
+        run: |
+          ansible-playbook \
+            -i ../../inventory.yml \
+            -v \
+            network-vm_setup.yml

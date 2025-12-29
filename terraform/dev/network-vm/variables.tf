@@ -2,13 +2,13 @@ variable "vault_token" {
   description = "Vault access token"
   type        = string
   sensitive   = true
-  default     = "root"
+  default     = "myroot"
 }
 
 variable "vault_address" {
   description = "Vault server address"
   type        = string
-  default     = "http://192.168.50.169:8200"
+  default     = "http://localhost:8200"
 }
 
 variable "pve_api" {
