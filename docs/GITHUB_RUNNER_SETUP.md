@@ -1,52 +1,70 @@
-# GitHub Actions Self-Hosted Runner Setup Guide
+# GitHub Actions Self-Hosted Runner Setup Guide (Container-Based)
 
 ## Overview
-This guide helps you set up a GitHub Actions self-hosted runner on your l-ct-dev1 host to run CI/CD pipelines locally with access to your HashiCorp Vault instance.
+This guide helps you set up a GitHub Actions self-hosted runner on your l-ct-dev1 host using Docker containers for Terraform and Ansible. This approach provides better isolation, version management, and consistency for your CI/CD pipelines with access to your separate HashiCorp Vault instance.
 
 ## Prerequisites
 
 - Ubuntu/Debian Linux system (l-ct-dev1)
 - Root/sudo access
-- Docker installed (if needed for workflows)
-- Terraform installed
-- Ansible installed
-- Vault CLI installed
-- HashiCorp Vault running at http://localhost:8200
+- Docker and Docker Compose installed
+- **Separate Vault instance** running at http://localhost:8200 (managed in its own repository)
+- GitHub repository access
+
+## Architecture
+
+- **GitHub Runner**: Runs on host system
+- **Terraform**: Runs in Docker container (hashicorp/terraform:1.6.4)
+- **Ansible**: Runs in Docker container (quay.io/ansible/ansible-core:latest)
+- **Vault**: **Separate system** - running independently at http://localhost:8200
+- **Shared Network**: Terraform/Ansible containers communicate via Docker bridge network
 
 ## Installation Steps
 
-### 1. Install Prerequisites on Runner Host
+### 1. Install Docker and Prerequisites
 
 ```bash
 # Update system
 sudo apt update && sudo apt upgrade -y
 
 # Install required packages
-sudo apt install -y curl wget git jq unzip
+sudo apt install -y curl wget git jq
 
-# Install Terraform (if not already installed)
-wget https://releases.hashicorp.com/terraform/1.6.4/terraform_1.6.4_linux_amd64.zip
-unzip terraform_1.6.4_linux_amd64.zip
-sudo mv terraform /usr/local/bin/
-terraform --version
-
-# Install Vault CLI (if not already installed)
-wget https://releases.hashicorp.com/vault/1.21.0/vault_1.21.0_linux_amd64.zip
-unzip vault_1.21.0_linux_amd64.zip
-sudo mv vault /usr/local/bin/
-vault --version
-
-# Install Ansible
-sudo apt install -y python3-pip
-pip3 install ansible hvac
-ansible-galaxy collection install community.general community.hashi_vault
-
-# Install Docker (if needed)
+# Install Docker
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
+
+# Install Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+
+# Add current user to docker group (optional, for manual testing)
+sudo usermod -aG docker $USER
+
+# Verify installation
+docker --version
+docker-compose --version
 ```
 
-### 2. Run Runner Installation Script
+### 2. Setup Container-Based Infrastructure Tools
+
+```bash
+# Navigate to project
+cd /app/infra-platform
+
+# Start infrastructure containers (Terraform, Ansible)
+docker compose --profile tools pull terraform ansible
+
+# Verify containers can be accessed (they run on-demand)
+./scripts/run-terraform.sh version
+./scripts/run-ansible.sh --version
+
+# Note: Vault is managed separately and should already be running
+# Verify Vault connectivity
+curl http://localhost:8200/v1/sys/health
+```
+
+### 3. Run Runner Installation Script
 
 ```bash
 cd /app/infra-platform
@@ -54,7 +72,7 @@ chmod +x scripts/setup-github-runner.sh
 sudo ./scripts/setup-github-runner.sh
 ```
 
-### 3. Register Runner with GitHub
+### 4. Register Runner with GitHub
 
 1. Go to your GitHub repository
 2. Navigate to: **Settings** → **Actions** → **Runners** → **New self-hosted runner**
@@ -79,7 +97,7 @@ cd /opt/github-runner
 exit
 ```
 
-### 4. Install Runner as a Service
+### 5. Install Runner as a Service
 
 ```bash
 # Install the service (as root)
@@ -96,7 +114,37 @@ sudo ./svc.sh status
 sudo journalctl -u actions.runner.* -f
 ```
 
-### 5. Configure Environment Variables (Optional)
+### 6. Configure Container Access for Runner
+
+The runner needs access to Docker to run Terraform and Ansible containers:
+
+```bash
+# Add runner user to docker group
+sudo usermod -aG docker github-runner
+
+# Create wrapper scripts for runner
+sudo tee /opt/github-runner/terraform << 'EOF'
+#!/bin/bash
+cd /app/infra-platform
+./scripts/run-terraform.sh "$@"
+EOF
+
+sudo tee /opt/github-runner/ansible << 'EOF'
+#!/bin/bash
+cd /app/infra-platform
+./scripts/run-ansible.sh "$@"
+EOF
+
+# Make scripts executable
+sudo chmod +x /opt/github-runner/terraform /opt/github-runner/ansible
+sudo chown github-runner:github-runner /opt/github-runner/terraform /opt/github-runner/ansible
+
+# Restart runner service to apply group changes
+sudo ./svc.sh stop
+sudo ./svc.sh start
+```
+
+### 7. Configure Environment Variables
 
 If you want to set persistent environment variables for the runner:
 
@@ -111,7 +159,7 @@ EOF
 sudo chown github-runner:github-runner /opt/github-runner/.env/vault.env
 ```
 
-### 6. Update Workflows
+### 8. Update Workflows
 
 The new workflow files have been created:
 - `.github/workflows/media-stack_pipeline_self_hosted.yml`
@@ -134,21 +182,43 @@ vault kv list secret/
 exit
 ```
 
-### Test Terraform
+### Test Terraform Container
 
 ```bash
 sudo su - github-runner
-cd /opt/github-runner/_work/YOUR_REPO/YOUR_REPO
-terraform --version
+cd /app/infra-platform
+./scripts/run-terraform.sh version
+./scripts/run-terraform.sh init -help
 exit
 ```
 
-### Test Ansible
+### Test Ansible Container
 
 ```bash
 sudo su - github-runner
-ansible --version
-ansible-galaxy collection list
+cd /app/infra-platform
+./scripts/run-ansible.sh --version
+./scripts/run-ansible.sh galaxy list
+exit
+```
+
+### Test Container Integration
+
+```bash
+# Test that containers can access external Vault
+sudo su - github-runner
+cd /app/infra-platform
+export VAULT_ADDR=http://localhost:8200
+export VAULT_TOKEN=myroot
+
+# Test from Terraform container
+./scripts/run-terraform.sh version && echo "Terraform container works"
+
+# Test from Ansible container
+./scripts/run-ansible.sh --version && echo "Ansible container works"
+
+# Test Vault connectivity
+curl -s http://localhost:8200/v1/sys/health && echo "Vault accessible"
 exit
 ```
 
@@ -180,14 +250,80 @@ sudo su - github-runner
 curl http://localhost:8200/v1/sys/health
 ```
 
-### Docker Permission Issues (if using Docker)
+### Docker Permission Issues
 ```bash
-# Add runner to docker group
-sudo usermod -aG docker github-runner
+# Check if runner is in docker group
+groups github-runner | grep docker
 
-# Restart runner service
+# If not, add and restart
+sudo usermod -aG docker github-runner
 sudo ./svc.sh stop
 sudo ./svc.sh start
+
+# Test container access
+sudo -u github-runner docker ps
+```
+
+### Container Network Issues
+```bash
+# Check container network
+docker network ls
+
+# Test connectivity between containers
+docker network inspect infra-platform_infra-network
+
+# Restart containers if needed
+docker-compose down
+docker-compose --profile services up -d
+```
+
+### Volume Mount Issues
+```bash
+# Check volume mounts
+docker-compose config | grep -A5 -B5 volumes
+
+# Test SSH key access
+docker-compose run --rm terraform ls -la /root/.ssh
+```
+
+## Container Management
+
+### Start/Stop Infrastructure Containers
+```bash
+# Note: Terraform and Ansible containers run on-demand via wrapper scripts
+# They don't need to be running continuously
+
+# Test container access
+./scripts/run-terraform.sh version
+./scripts/run-ansible.sh --version
+
+# View running containers (should only see Vault from separate system)
+docker ps
+
+# Clean up any stopped containers
+docker container prune
+```
+
+### Update Container Images
+```bash
+# Pull latest versions
+docker compose pull terraform ansible
+
+# Test updated versions
+./scripts/run-terraform.sh version
+./scripts/run-ansible.sh --version
+```
+
+### Clean Up Containers
+```bash
+# Remove stopped containers
+docker container prune
+
+# Remove unused images
+docker image prune
+
+# Remove unused volumes (careful!)
+docker volume prune
 ```
 
 ## Maintenance
@@ -230,19 +366,43 @@ sudo userdel -r github-runner
 4. **Network**: Ensure proper firewall rules are in place
 5. **Updates**: Keep the runner software updated
 
-## Benefits of Self-Hosted Runner
+## Benefits of Container-Based Approach
 
-- ✅ Direct access to local Vault instance (no network exposure needed)
-- ✅ Access to local network resources (Proxmox, VMs, etc.)
-- ✅ Faster builds (no need to download tools each time)
-- ✅ No GitHub Actions minutes consumption
-- ✅ Better integration with local infrastructure
-- ✅ Persistent environment and caching
+- ✅ **Version Isolation**: Exact Terraform/Ansible versions pinned in containers
+- ✅ **Clean Host**: No system-wide installations required
+- ✅ **Consistent Environment**: Same containers work across different machines
+- ✅ **Better Security**: Tools isolated from host system
+- ✅ **Easy Updates**: Update by changing container versions
+- ✅ **Persistent Caching**: Volume mounts preserve plugins and collections
+- ✅ **Network Isolation**: Containers communicate via dedicated network
+- ✅ **Resource Management**: Container resource limits available
+- ✅ **Parallel Execution**: Multiple container instances can run simultaneously
 
-## Next Steps
+## Container Configuration Details
 
-1. Test the runner with a simple workflow
-2. Monitor the first few pipeline runs
-3. Adjust runner resources if needed
-4. Consider setting up multiple runners for parallel jobs
-5. Set up monitoring/alerting for runner health
+### Terraform Container
+- **Image**: hashicorp/terraform:1.6.4
+- **Features**: Plugin caching, SSH key mounting, workspace mounting
+- **Cache**: Persistent volume for provider plugins
+
+### Ansible Container
+- **Image**: quay.io/ansible/ansible-core:latest
+- **Features**: Collection cache, SSH key mounting, workspace mounting
+- **Cache**: Persistent volume for collections and roles
+
+### Vault Container
+- **Image**: **Separate system** - not managed in this compose file
+- **Features**: Data persistence, configuration mounting
+- **Network**: Exposed on host port 8200 (accessible from Terraform/Ansible containers)
+- **Management**: See separate Vault repository for configuration
+
+## Security Considerations
+
+1. **Vault Token**: Consider using GitHub Secrets for production tokens
+2. **Docker Socket**: Runner has Docker access - ensure proper security
+3. **SSH Keys**: Mounted read-only into containers
+4. **Network Isolation**: Containers on dedicated bridge network, Vault accessible via host
+5. **Volume Permissions**: Proper ownership of mounted volumes
+6. **Container Images**: Use specific version tags, not `latest`
+7. **Runner Access**: Runner has access to local network and containers
+8. **Vault Separation**: Vault is managed separately - ensure proper access controls

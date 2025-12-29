@@ -23,7 +23,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Terraform Init
+      - name: Terraform Init via container
         id: init
         working-directory: terraform/dev/network-vm
         env:
@@ -34,9 +34,10 @@ jobs:
           TF_VAR_vault_token: myroot
           TF_VAR_vault_address: http://localhost:8200
         run: |
-          terraform init -input=false
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh init -input=false
 
-      - name: Terraform Plan
+      - name: Terraform Plan via container
         id: plan
         working-directory: terraform/dev/network-vm
         env:
@@ -47,7 +48,8 @@ jobs:
           TF_VAR_vault_token: myroot
           TF_VAR_vault_address: http://localhost:8200
         run: |
-          terraform plan -no-color -input=false -out=tfplan
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh plan -no-color -input=false -out=tfplan
           echo "tf_plan=$(base64 -w0 tfplan)" >> $GITHUB_OUTPUT
 
   terraform-apply:
@@ -69,7 +71,7 @@ jobs:
           # Add your cleanup logic here if needed
           echo "Cleaning up VM $VMID on node $PVE_NODE"
 
-      - name: Terraform Init
+      - name: Terraform Init via container
         working-directory: terraform/dev/network-vm
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
@@ -79,9 +81,10 @@ jobs:
           TF_VAR_vault_token: myroot
           TF_VAR_vault_address: http://localhost:8200
         run: |
-          terraform init -input=false
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh init -input=false
 
-      - name: Terraform Apply
+      - name: Terraform Apply via container
         working-directory: terraform/dev/network-vm
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
@@ -91,7 +94,8 @@ jobs:
           TF_VAR_vault_token: myroot
           TF_VAR_vault_address: http://localhost:8200
         run: |
-          terraform apply -auto-approve tfplan
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh apply -auto-approve tfplan
 
   ansible:
     needs: terraform-apply
@@ -100,21 +104,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Ensure Ansible is installed
+      - name: Ensure Ansible dependencies are available
         run: |
-          if ! command -v ansible &> /dev/null; then
-            echo "Ansible not found. Please install ansible on the runner."
-            exit 1
-          fi
-          ansible --version
+          # Install Ansible collections if needed
+          cd /app/infra-platform
+          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault || true
 
-      - name: Run Ansible playbook
+      - name: Run Ansible playbook via container
         env:
           VAULT_ADDR: http://localhost:8200
           VAULT_TOKEN: myroot
         working-directory: ansible/dev/network-vm
         run: |
-          ansible-playbook \
-            -i ../../inventory.yml \
+          cd /app/infra-platform
+          ./scripts/run-ansible.sh playbook \
+            -i ansible/dev/network-vm/inventory.ini \
             -v \
-            network-vm_setup.yml
+            ansible/dev/network-vm/network-vm_setup.yml

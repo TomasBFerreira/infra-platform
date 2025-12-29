@@ -89,13 +89,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Ensure Ansible and dependencies are installed
+      - name: Ensure Ansible dependencies are available
         run: |
-          if ! command -v ansible &> /dev/null; then
-            echo "Ansible not found. Please install ansible on the runner."
-            exit 1
-          fi
-          ansible --version
+          # Install Ansible collections if needed
+          cd /app/infra-platform
+          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault || true
 
       - name: Retrieve SSH key from Vault
         env:
@@ -106,7 +104,7 @@ jobs:
           vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
           chmod 600 ~/.ssh/media-stack_worker_id_ed25519
 
-      - name: Run Ansible playbook
+      - name: Run Ansible playbook via container
         env:
           VAULT_ADDR: http://localhost:8200
           VAULT_TOKEN: myroot
@@ -115,8 +113,9 @@ jobs:
           # Ensure the SSH key has the correct permissions
           chmod 600 ~/.ssh/media-stack_worker_id_ed25519
           
-          # Run the playbook
-          ansible-playbook \
+          # Run the playbook via container
+          cd /app/infra-platform
+          ./scripts/run-ansible.sh playbook \
             -i ansible/dev/media-stack/inventory.ini \
             -v \
             --private-key ~/.ssh/media-stack_worker_id_ed25519 \
