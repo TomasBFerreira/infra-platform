@@ -50,5 +50,13 @@ run_terraform() {
 # Change to project root
 cd "$PROJECT_ROOT"
 
+# Set environment variables for Vault and Proxmox
+if [ -f ".env" ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
+# Override Vault address for containers
+export TF_VAR_vault_address="http://host.docker.internal:8200"
+
 # Run the terraform command
 run_terraform "$@"

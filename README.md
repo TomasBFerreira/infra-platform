@@ -213,3 +213,4 @@ For issues and questions:
 2. Verify network connectivity: `docker network inspect`
 3. Test tool access: `./scripts/run-terraform.sh version`
 4. Review documentation in `docs/` directory
+# Test change

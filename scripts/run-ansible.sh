@@ -28,11 +28,7 @@ run_ansible() {
     case "$cmd" in
         "--version")
             echo "Running: ansible --version"
-            $DOCKER_COMPOSE_CMD run --rm ansible ansible --version
-            ;;
-        "playbook"|"inventory"|"vault"|"config"|"console"|"doc"|"galaxy"|"ansible-inventory"|"ansible-vault"|"ansible-config"|"ansible-console"|"ansible-doc"|"ansible-galaxy")
-            echo "Running: ansible-$cmd $@"
-            $DOCKER_COMPOSE_CMD run --rm ansible "ansible-$cmd" "$@"
+            $DOCKER_COMPOSE_CMD run --rm ansible ansible --version --help | head -5
             ;;
         "playbook"|"play")
             echo "Running: ansible-playbook $@"
@@ -42,13 +38,17 @@ run_ansible() {
             echo "Running: ansible-inventory $@"
             $DOCKER_COMPOSE_CMD run --rm ansible ansible-inventory "$@"
             ;;
-        "vault")
-            echo "Running: ansible-vault $@"
-            $DOCKER_COMPOSE_CMD run --rm ansible ansible-vault "$@"
+        *)
+            echo "Running: ansible $@"
+            $DOCKER_COMPOSE_CMD run --rm ansible ansible "$@"
             ;;
         "config")
             echo "Running: ansible-config $@"
             $DOCKER_COMPOSE_CMD run --rm ansible ansible-config "$@"
+            ;;
+        "vault")
+            echo "Running: ansible-vault $@"
+            $DOCKER_COMPOSE_CMD run --rm ansible ansible-vault "$@"
             ;;
         "console")
             echo "Running: ansible-console $@"

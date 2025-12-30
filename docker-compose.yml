@@ -11,6 +11,10 @@ services:
       - TF_CACHE_PLUGIN_CACHE_DIR=/root/.terraform.d/plugin-cache
     networks:
       - infra-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep infinity"]
     profiles:
       - tools
 
@@ -24,6 +28,10 @@ services:
       - ansible_cache:/root/.ansible
     networks:
       - infra-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep infinity"]
     profiles:
       - tools
 
