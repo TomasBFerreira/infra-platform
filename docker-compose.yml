@@ -13,8 +13,6 @@ services:
       - infra-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["sleep infinity"]
     profiles:
       - tools
 
@@ -30,8 +28,6 @@ services:
       - infra-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["sleep infinity"]
     profiles:
       - tools
 
