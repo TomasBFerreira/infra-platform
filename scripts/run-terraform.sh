@@ -73,6 +73,7 @@ fi
 
 # Override Vault address for containers
 export TF_VAR_vault_address="http://host.docker.internal:8200"
+export VAULT_ADDR="http://host.docker.internal:8200"
 
 # Check for -chdir flag first
 CHDIR_DIR=""
