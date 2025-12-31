@@ -28,7 +28,7 @@ run_terraform() {
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@"
-            $DOCKER_COMPOSE_CMD run --rm terraform "$cmd" "$@"
+            $DOCKER_COMPOSE_CMD run --rm -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR terraform "$cmd" "$@"
             ;;
         "help"|"-h"|"--help")
             $DOCKER_COMPOSE_CMD run --rm terraform help
@@ -50,7 +50,7 @@ run_terraform_with_chdir() {
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@ (in directory: $chdir)"
-            $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" terraform "$cmd" "$@"
+            $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR terraform "$cmd" "$@"
             ;;
         "help"|"-h"|"--help")
             $DOCKER_COMPOSE_CMD run --rm terraform help
