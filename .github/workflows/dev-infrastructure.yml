@@ -78,7 +78,7 @@ jobs:
           TF_VAR_vault_token: ${{ env.VAULT_TOKEN }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir=terraform/dev/media-stack init
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack init
 
       - name: Terraform Plan
         env:
@@ -88,7 +88,7 @@ jobs:
           TF_VAR_vault_token: ${{ env.VAULT_TOKEN }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir=terraform/dev/media-stack plan -out=tfplan
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack plan -out=tfplan
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/dev' && (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == '')
@@ -99,7 +99,7 @@ jobs:
           TF_VAR_vault_token: ${{ env.VAULT_TOKEN }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir=terraform/dev/media-stack apply -auto-approve tfplan
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack apply -auto-approve tfplan
 
   terraform-network-vm:
     needs: detect-changes
@@ -119,7 +119,7 @@ jobs:
           TF_VAR_vault_address: ${{ env.VAULT_ADDR }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir=terraform/dev/network-vm init
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init
 
       - name: Terraform Plan
         env:
@@ -131,7 +131,7 @@ jobs:
           TF_VAR_vault_address: ${{ env.VAULT_ADDR }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir=terraform/dev/network-vm plan -out=tfplan
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm plan -out=tfplan
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/dev' && (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == '')
@@ -144,7 +144,7 @@ jobs:
           TF_VAR_vault_address: ${{ env.VAULT_ADDR }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir=terraform/dev/network-vm apply -auto-approve tfplan
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply -auto-approve tfplan
 
   ansible-media-stack:
     needs: [detect-changes, terraform-media-stack]

@@ -33,11 +33,27 @@ run_terraform() {
         "help"|"-h"|"--help")
             $DOCKER_COMPOSE_CMD run --rm terraform help
             ;;
-        "")
-            echo "Error: No command specified"
-            echo "Usage: $0 <terraform_command> [options]"
-            echo "Available commands: init, plan, apply, destroy, validate, fmt, show, output, import, state, taint, untaint, force-unlock, workspace, version"
+        *)
+            echo "Error: Unknown terraform command '$cmd'"
+            echo "Run '$0 help' for available commands"
             exit 1
+            ;;
+    esac
+}
+
+# Function to run terraform command with directory
+run_terraform_with_chdir() {
+    local chdir="$1"
+    local cmd="$2"
+    shift 2
+    
+    case "$cmd" in
+        "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
+            echo "Running: terraform $cmd $@ (in directory: $chdir)"
+            $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" terraform "$cmd" "$@"
+            ;;
+        "help"|"-h"|"--help")
+            $DOCKER_COMPOSE_CMD run --rm terraform help
             ;;
         *)
             echo "Error: Unknown terraform command '$cmd'"
@@ -58,5 +74,27 @@ fi
 # Override Vault address for containers
 export TF_VAR_vault_address="http://host.docker.internal:8200"
 
+# Check for -chdir flag first
+CHDIR_DIR=""
+ARGS=()
+
+# Parse arguments properly
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -chdir)
+            CHDIR_DIR="$2"
+            shift 2
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
 # Run the terraform command
-run_terraform "$@"
+if [ -n "$CHDIR_DIR" ]; then
+    run_terraform_with_chdir "$CHDIR_DIR" "${ARGS[@]}"
+else
+    run_terraform "${ARGS[@]}"
+fi
