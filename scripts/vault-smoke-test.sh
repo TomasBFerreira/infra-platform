@@ -102,13 +102,11 @@ fi
 # Test 6: Ansible Container Access
 echo ""
 echo "🔍 Test 6: Ansible Container Vault Access"
-# Note: Ansible container is minimal and doesn't have curl/wget
-# We'll test Ansible functionality instead
-if ./scripts/run-ansible.sh --version > /dev/null 2>&1; then
-    echo "✅ Ansible container is working"
+if docker exec ansible-runner sh -c "wget -q -O - http://host.docker.internal:8200/v1/sys/health" > /dev/null 2>&1; then
+    echo "✅ Ansible container can access Vault"
 else
-    echo "❌ Ansible container is not working"
-    echo "   Check Ansible container setup"
+    echo "❌ Ansible container cannot access Vault"
+    echo "   Check Vault connectivity from container"
     exit 1
 fi
 
