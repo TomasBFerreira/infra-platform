@@ -24,7 +24,7 @@ provider "proxmox" {
 }
 
 provider "vault" {
-  address = "http://localhost:8200"
+  address = var.vault_address
   token   = var.vault_token
 }
 
@@ -33,6 +33,12 @@ variable "vault_token" {
   type        = string
   sensitive   = true
   default     = "myroot"
+}
+
+variable "vault_address" {
+  description = "Vault server address"
+  type        = string
+  default     = "http://localhost:8200"
 }
 
 variable "proxmox_api_url" {
