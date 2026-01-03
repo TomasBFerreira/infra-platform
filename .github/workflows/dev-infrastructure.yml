@@ -32,8 +32,6 @@ on:
 
 env:
   TF_VERSION: 1.6.4
-  VAULT_ADDR: http://localhost:8200
-  VAULT_TOKEN: myroot
 
 jobs:
   detect-changes:
@@ -76,7 +74,9 @@ jobs:
           TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
           TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack init
@@ -87,7 +87,9 @@ jobs:
           TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
           TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack plan -out=tfplan
@@ -99,7 +101,9 @@ jobs:
           TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
           TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack apply -auto-approve tfplan

@@ -32,12 +32,13 @@ variable "vault_token" {
   description = "Vault access token"
   type        = string
   sensitive   = true
-  default     = "myroot"
+  default     = ""
 }
 
 variable "vault_address" {
   description = "Vault server address"
   type        = string
+  default     = ""
   default     = "http://localhost:8200"
 }
 
