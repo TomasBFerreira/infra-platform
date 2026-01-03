@@ -34,3 +34,4 @@ terraform.rc
 # Log files
 *.logvault
 vault_1.15.2_linux_amd64.zip
+vault
