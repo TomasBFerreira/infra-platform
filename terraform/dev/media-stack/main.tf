@@ -66,7 +66,7 @@ data "vault_generic_secret" "ssh_key" {
 resource "proxmox_lxc" "media_stack_worker" {
   vmid        = 200
   hostname    = "media-worker"
-  ostemplate  = "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"
+  ostemplate  = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   cores       = 4
   memory      = 4096
   
