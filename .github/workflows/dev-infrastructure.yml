@@ -144,10 +144,11 @@ jobs:
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm state rm proxmox_lxc.network_vm || true
-            - name: Remove missing media-stack_worker from Terraform state (if needed)
-              run: |
-                cd /app/infra-platform
-                ./scripts/run-terraform.sh -chdir terraform/dev/media-stack state rm proxmox_lxc.media_stack_worker || true
+
+      - name: Remove missing media-stack_worker from Terraform state (if needed)
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack state rm proxmox_lxc.media_stack_worker || true
       - name: Checkout code
         uses: actions/checkout@v4
 
