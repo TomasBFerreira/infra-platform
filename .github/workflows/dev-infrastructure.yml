@@ -239,7 +239,9 @@ jobs:
           chmod +x ~/.local/bin/vault
           rm /tmp/vault.zip
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          vault --version
+
+      - name: Check Vault CLI version
+        run: vault --version
 
       - name: Retrieve SSH key from Vault
         env:
@@ -298,7 +300,9 @@ jobs:
           chmod +x ~/.local/bin/vault
           rm /tmp/vault.zip
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          vault --version
+
+      - name: Check Vault CLI version
+        run: vault --version
 
       - name: Retrieve SSH key from Vault
         env:
