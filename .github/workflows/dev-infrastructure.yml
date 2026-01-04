@@ -138,8 +138,16 @@ jobs:
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
         run: |
           cd /app/infra-platform
-          chmod +x ./scripts/delete-network-vm.sh
           ./scripts/delete-network-vm.sh
+
+      - name: Remove missing network-vm from Terraform state (if needed)
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm state rm proxmox_lxc.network_vm || true
+            - name: Remove missing media-stack_worker from Terraform state (if needed)
+              run: |
+                cd /app/infra-platform
+                ./scripts/run-terraform.sh -chdir terraform/dev/media-stack state rm proxmox_lxc.media_stack_worker || true
       - name: Checkout code
         uses: actions/checkout@v4
 
