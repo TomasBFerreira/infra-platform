@@ -242,10 +242,6 @@ jobs:
       - name: Check Vault CLI version
         run: vault --version
 
-      - name: Fix .ssh directory ownership
-        run: |
-          sudo chown -R $USER:$USER ~/.ssh || true
-
       - name: Retrieve SSH key from Vault
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
@@ -253,7 +249,11 @@ jobs:
         run: |
           mkdir -p "$HOME/ssh"
           rm -f "$HOME/ssh/media-stack_worker_id_ed25519"
-          vault kv get -field=private secret/ssh_keys/media-stack_worker | tee "$HOME/ssh/media-stack_worker_id_ed25519" > /dev/null
+          vault kv get -field=private secret/ssh_keys/media-stack_worker > "$HOME/ssh/media-stack_worker_id_ed25519"
+          if [ ! -s "$HOME/ssh/media-stack_worker_id_ed25519" ]; then
+            echo "Error: SSH key file is empty or could not be retrieved"
+            exit 1
+          fi
           chmod 600 "$HOME/ssh/media-stack_worker_id_ed25519"
 
       - name: Debug SSH key file (media-stack)
@@ -314,10 +314,6 @@ jobs:
       - name: Check Vault CLI version
         run: vault --version
 
-      - name: Fix .ssh directory ownership
-        run: |
-          sudo chown -R $USER:$USER ~/.ssh || true
-
       - name: Retrieve SSH key from Vault
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
@@ -325,7 +321,11 @@ jobs:
         run: |
           mkdir -p "$HOME/ssh"
           rm -f "$HOME/ssh/network-vm_worker_id_ed25519"
-          vault kv get -field=private secret/ssh_keys/network-vm_worker | tee "$HOME/ssh/network-vm_worker_id_ed25519" > /dev/null
+          vault kv get -field=private secret/ssh_keys/network-vm_worker > "$HOME/ssh/network-vm_worker_id_ed25519"
+          if [ ! -s "$HOME/ssh/network-vm_worker_id_ed25519" ]; then
+            echo "Error: SSH key file is empty or could not be retrieved"
+            exit 1
+          fi
           chmod 600 "$HOME/ssh/network-vm_worker_id_ed25519"
 
       - name: Debug SSH key file (network-vm)
