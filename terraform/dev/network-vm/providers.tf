@@ -15,8 +15,8 @@ terraform {
 
 provider "proxmox" {
   pm_api_url          = var.pve_api
-  pm_user             = var.pve_user
-  pm_password         = var.pve_pass
+  pm_api_token_id     = var.pve_user
+  pm_api_token_secret = var.pve_pass
   pm_tls_insecure     = true
   pm_log_enable       = true
   pm_log_file         = "terraform-plugin-proxmox.log"
