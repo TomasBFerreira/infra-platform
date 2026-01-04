@@ -18,7 +18,10 @@ services:
       - tools
 
   ansible:
-    image: quay.io/ansible/ansible-core:latest
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile
+    image: custom-ansible:latest
     container_name: ansible-runner
     restart: unless-stopped
     working_dir: /workspace
