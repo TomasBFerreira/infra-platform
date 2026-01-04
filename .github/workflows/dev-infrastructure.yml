@@ -131,24 +131,6 @@ jobs:
     if: needs.detect-changes.outputs.network_vm_changed == 'true'
     runs-on: self-hosted
     steps:
-      - name: Delete old network-vm LXC (vmid 220) on all nodes
-        env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
-        run: |
-          cd /app/infra-platform
-          ./scripts/delete-network-vm.sh
-
-      - name: Remove missing network-vm from Terraform state (if needed)
-        run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm state rm proxmox_lxc.network_vm || true
-
-      - name: Remove missing media-stack_worker from Terraform state (if needed)
-        run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack state rm proxmox_lxc.media_stack_worker || true
       - name: Checkout code
         uses: actions/checkout@v4
 
