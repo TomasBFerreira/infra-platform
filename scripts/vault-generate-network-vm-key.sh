@@ -7,7 +7,7 @@ set -euo pipefail
 
 VAULT_ADDR="$1"
 VAULT_TOKEN="$2"
-VAULT_PATH="secret/ssh_keys/network_vm_worker"
+VAULT_PATH="secret/ssh_keys/network-vm_worker"
 TMPDIR=$(mktemp -d)
 KEYNAME="network_vm_worker_id_ed25519"
 
@@ -15,7 +15,7 @@ export VAULT_ADDR
 export VAULT_TOKEN
 
 # Check if key already exists in Vault
-if vault kv get -field=public_key "$VAULT_PATH" >/dev/null 2>&1; then
+if vault kv get -field=private "$VAULT_PATH" >/dev/null 2>&1; then
   echo "SSH key already exists in Vault at $VAULT_PATH. Skipping generation."
   exit 0
 fi
@@ -27,7 +27,7 @@ PUB_KEY=$(cat "$TMPDIR/$KEYNAME.pub")
 PRIV_KEY=$(cat "$TMPDIR/$KEYNAME")
 
 # Upload both keys to Vault
-vault kv put "$VAULT_PATH" public_key="$PUB_KEY" private_key="$PRIV_KEY"
+vault kv put "$VAULT_PATH" public="$PUB_KEY" private="$PRIV_KEY"
 
 echo "SSH keypair generated and uploaded to Vault at $VAULT_PATH."
 # Clean up

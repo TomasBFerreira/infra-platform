@@ -63,9 +63,12 @@ if ! "${VAULT_BIN}" kv get -field=private "${SSH_SECRET_PATH}" 2>/dev/null; then
   echo "DEBUG: No SSH key found—generating new SSH keypair"
   rm -f /tmp/${PROJECT}_worker /tmp/${PROJECT}_worker.pub
   ssh-keygen -t ed25519 -f /tmp/${PROJECT}_worker -N '' -q
+  # Store the SSH key with newlines preserved
+  PRIVATE_KEY=$(cat /tmp/${PROJECT}_worker)
+  PUBLIC_KEY=$(cat /tmp/${PROJECT}_worker.pub)
   "${VAULT_BIN}" kv put "${SSH_SECRET_PATH}" \
-    private="$(cat /tmp/${PROJECT}_worker)" \
-    public="$(cat /tmp/${PROJECT}_worker.pub)" || { echo "ERROR: Failed to store SSH key in Vault"; exit 1; }
+    private="${PRIVATE_KEY}" \
+    public="${PUBLIC_KEY}" || { echo "ERROR: Failed to store SSH key in Vault"; exit 1; }
   rm /tmp/${PROJECT}_worker*
   echo "SSH key created and stored in Vault under ${SSH_SECRET_PATH}."
 else
