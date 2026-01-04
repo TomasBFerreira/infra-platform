@@ -236,10 +236,9 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          sudo mkdir -p ~/.ssh
-          sudo vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
-          sudo chmod 600 ~/.ssh/media-stack_worker_id_ed25519
-          sudo chown $(whoami):$(whoami) ~/.ssh/media-stack_worker_id_ed25519
+          mkdir -p ~/.ssh
+          vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
+          chmod 600 ~/.ssh/media-stack_worker_id_ed25519
 
       - name: Run Ansible playbook via container
         env:
@@ -280,6 +279,15 @@ jobs:
           cd /app/infra-platform
           docker compose build --no-cache ansible
 
+      - name: Retrieve SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          mkdir -p ~/.ssh
+          vault kv get -field=private secret/ssh_keys/network-vm_worker > ~/.ssh/network-vm_worker_id_ed25519
+          chmod 600 ~/.ssh/network-vm_worker_id_ed25519
+
       - name: Ensure Ansible dependencies are available
         run: |
           cd /app/infra-platform
@@ -297,11 +305,13 @@ jobs:
               -i ansible/dev/network-vm/inventory.ini \
               --check \
               -v \
+              --private-key ~/.ssh/network-vm_worker_id_ed25519 \
               ansible/dev/network-vm/network-vm_setup.yml
           else
             ./scripts/run-ansible.sh playbook \
               -i ansible/dev/network-vm/inventory.ini \
               -v \
+              --private-key ~/.ssh/network-vm_worker_id_ed25519 \
               ansible/dev/network-vm/network-vm_setup.yml
           fi
 
