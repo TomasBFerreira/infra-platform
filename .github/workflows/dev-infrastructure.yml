@@ -77,6 +77,8 @@ jobs:
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack init
@@ -90,9 +92,17 @@ jobs:
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack plan -out=tfplan
+
+      - name: Print Terraform Debug Log (media-stack)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/dev' && (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == '')
@@ -104,9 +114,17 @@ jobs:
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack apply -auto-approve tfplan
+
+      - name: Print Terraform Debug Log (media-stack apply)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
 
   terraform-network-vm:
     needs: detect-changes
@@ -138,9 +156,17 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm plan -out=tfplan
+
+      - name: Print Terraform Debug Log (network-vm)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/dev' && (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == '')
@@ -152,9 +178,17 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply -auto-approve tfplan
+
+      - name: Print Terraform Debug Log (network-vm apply)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
 
   ansible-media-stack:
     needs: [detect-changes, terraform-media-stack]
