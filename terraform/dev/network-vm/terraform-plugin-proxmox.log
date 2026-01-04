@@ -231,3 +231,319 @@ Pragma: no-cache
 Server: pve-api-daemon/3.0
 
 {"data":[]}
+[90mSun, 04 Jan 2026 11:26:57 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:159[0m[36m >[0m Enabling the capture of log-library logs as ithe _capturelog flag was detected
+[90mSun, 04 Jan 2026 11:26:57 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:192[0m[36m >[0m Logging Started. Root Logger Set to level debug
+[90mSun, 04 Jan 2026 11:26:59 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:159[0m[36m >[0m Enabling the capture of log-library logs as ithe _capturelog flag was detected
+[90mSun, 04 Jan 2026 11:26:59 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:192[0m[36m >[0m Logging Started. Root Logger Set to level debug
+2026/01/04 11:26:59 [DEBUG] setting computed for "unused" from ComputedKeys
+2026/01/04 11:26:59 >>>>>>>>>> REQUEST:
+GET /api2/json/cluster/nextid HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 11:26:59 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Content-Length: 14
+Cache-Control: max-age=0
+Connection: Keep-Alive
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 11:26:59 GMT
+Expires: Sun, 04 Jan 2026 11:26:59 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":"103"}
+2026/01/04 11:26:59 >>>>>>>>>> REQUEST:
+POST /api2/json/nodes/benedict/lxc HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Content-Length: 487
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Content-Type: application/x-www-form-urlencoded
+Accept-Encoding: gzip
+
+arch=amd64&cmode=tty&console=1&cores=2&cpulimit=0&cpuunits=1024&features=nesting%3D1&hostname=network-vm&memory=2048&net0=name%3Deth0%2Cip%3D192.168.50.220%2F24%2Cbridge%3Dvmbr0%2Cgw%3D192.168.50.1&onboot=0&ostemplate=local%3Avztmpl%2Fdebian-12-standard_12.7-1_amd64.tar.zst&protection=0&rootfs=local-lvm%3A25&ssh-public-keys=ssh-ed25519+AAAAC3NzaC1lZDI1NTE5AAAAIDu45hIQnkn2B7d%2BGw7RTXvlEP4kVU1FKOqYMRHv%2F2Lw+network-vm-worker&start=1&storage=local&swap=0&tty=2&unprivileged=1&vmid=220
+2026/01/04 11:26:59 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 84
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 11:26:59 GMT
+Expires: Sun, 04 Jan 2026 11:26:59 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":"UPID:benedict:0007B22F:007BE2D8:695A4E83:vzcreate:220:root@pam!terraform:"}
+2026/01/04 11:26:59 >>>>>>>>>> REQUEST:
+GET /api2/json/nodes/benedict/tasks/UPID:benedict:0007B22F:007BE2D8:695A4E83:vzcreate:220:root@pam!terraform:/status HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 11:26:59 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 252
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 11:26:59 GMT
+Expires: Sun, 04 Jan 2026 11:26:59 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":{"id":"220","type":"vzcreate","status":"running","tokenid":"terraform","starttime":1767526019,"node":"benedict","user":"root@pam","pid":504367,"upid":"UPID:benedict:0007B22F:007BE2D8:695A4E83:vzcreate:220:root@pam!terraform:","pstart":8119000}}
+2026/01/04 11:27:01 >>>>>>>>>> REQUEST:
+GET /api2/json/nodes/benedict/tasks/UPID:benedict:0007B22F:007BE2D8:695A4E83:vzcreate:220:root@pam!terraform:/status HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 11:27:01 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 370
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 11:27:01 GMT
+Expires: Sun, 04 Jan 2026 11:27:01 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":{"exitstatus":"unable to create CT 220 - volume 'local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst' does not exist","node":"benedict","upid":"UPID:benedict:0007B22F:007BE2D8:695A4E83:vzcreate:220:root@pam!terraform:","pstart":8119000,"user":"root@pam","pid":504367,"type":"vzcreate","id":"220","status":"stopped","starttime":1767526019,"tokenid":"terraform"}}
+[90mSun, 04 Jan 2026 13:04:48 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:159[0m[36m >[0m Enabling the capture of log-library logs as ithe _capturelog flag was detected
+[90mSun, 04 Jan 2026 13:04:48 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:192[0m[36m >[0m Logging Started. Root Logger Set to level debug
+[90mSun, 04 Jan 2026 13:04:50 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:159[0m[36m >[0m Enabling the capture of log-library logs as ithe _capturelog flag was detected
+[90mSun, 04 Jan 2026 13:04:50 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:192[0m[36m >[0m Logging Started. Root Logger Set to level debug
+2026/01/04 13:04:50 [DEBUG] setting computed for "unused" from ComputedKeys
+2026/01/04 13:04:50 >>>>>>>>>> REQUEST:
+GET /api2/json/cluster/nextid HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:50 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Content-Length: 14
+Cache-Control: max-age=0
+Connection: Keep-Alive
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:50 GMT
+Expires: Sun, 04 Jan 2026 13:04:50 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":"103"}
+2026/01/04 13:04:50 >>>>>>>>>> REQUEST:
+POST /api2/json/nodes/benedict/lxc HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Content-Length: 488
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Content-Type: application/x-www-form-urlencoded
+Accept-Encoding: gzip
+
+arch=amd64&cmode=tty&console=1&cores=2&cpulimit=0&cpuunits=1024&features=nesting%3D1&hostname=network-vm&memory=2048&net0=bridge%3Dvmbr0%2Cname%3Deth0%2Cgw%3D192.168.50.1%2Cip%3D192.168.50.220%2F24&onboot=0&ostemplate=local%3Avztmpl%2Fdebian-12-standard_12.12-1_amd64.tar.zst&protection=0&rootfs=local-lvm%3A25&ssh-public-keys=ssh-ed25519+AAAAC3NzaC1lZDI1NTE5AAAAIDu45hIQnkn2B7d%2BGw7RTXvlEP4kVU1FKOqYMRHv%2F2Lw+network-vm-worker&start=1&storage=local&swap=0&tty=2&unprivileged=1&vmid=220
+2026/01/04 13:04:50 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 84
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:50 GMT
+Expires: Sun, 04 Jan 2026 13:04:50 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":"UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:"}
+2026/01/04 13:04:50 >>>>>>>>>> REQUEST:
+GET /api2/json/nodes/benedict/tasks/UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:/status HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:50 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 252
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:50 GMT
+Expires: Sun, 04 Jan 2026 13:04:50 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":{"node":"benedict","pid":532809,"user":"root@pam","pstart":8706054,"upid":"UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:","type":"vzcreate","id":"220","tokenid":"terraform","status":"running","starttime":1767531890}}
+2026/01/04 13:04:52 >>>>>>>>>> REQUEST:
+GET /api2/json/nodes/benedict/tasks/UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:/status HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:52 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 252
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:52 GMT
+Expires: Sun, 04 Jan 2026 13:04:52 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":{"type":"vzcreate","id":"220","status":"running","starttime":1767531890,"tokenid":"terraform","node":"benedict","pstart":8706054,"upid":"UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:","user":"root@pam","pid":532809}}
+2026/01/04 13:04:54 >>>>>>>>>> REQUEST:
+GET /api2/json/nodes/benedict/tasks/UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:/status HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:54 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 252
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:54 GMT
+Expires: Sun, 04 Jan 2026 13:04:54 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":{"pstart":8706054,"upid":"UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:","user":"root@pam","pid":532809,"node":"benedict","starttime":1767531890,"status":"running","tokenid":"terraform","type":"vzcreate","id":"220"}}
+2026/01/04 13:04:56 >>>>>>>>>> REQUEST:
+GET /api2/json/nodes/benedict/tasks/UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:/status HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:56 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 252
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:56 GMT
+Expires: Sun, 04 Jan 2026 13:04:56 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":{"pstart":8706054,"upid":"UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:","user":"root@pam","pid":532809,"node":"benedict","starttime":1767531890,"status":"running","tokenid":"terraform","id":"220","type":"vzcreate"}}
+2026/01/04 13:04:58 >>>>>>>>>> REQUEST:
+GET /api2/json/nodes/benedict/tasks/UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:/status HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:58 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Connection: close
+Content-Length: 270
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:58 GMT
+Expires: Sun, 04 Jan 2026 13:04:58 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":{"status":"stopped","starttime":1767531890,"tokenid":"terraform","id":"220","type":"vzcreate","pstart":8706054,"upid":"UPID:benedict:00082149:0084D806:695A6572:vzcreate:220:root@pam!terraform:","pid":532809,"user":"root@pam","node":"benedict","exitstatus":"OK"}}
+2026/01/04 13:04:58 >>>>>>>>>> REQUEST:
+GET /api2/json/cluster/resources?type=vm HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:58 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Content-Length: 5305
+Cache-Control: max-age=0
+Connection: Keep-Alive
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:58 GMT
+Expires: Sun, 04 Jan 2026 13:04:58 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":[{"maxmem":2147483648,"node":"betsy","disk":0,"netin":0,"vmid":100,"template":0,"maxdisk":42949672960,"id":"lxc/100","diskwrite":0,"name":"tomas","status":"stopped","diskread":0,"mem":0,"maxcpu":2,"netout":0,"uptime":0,"type":"lxc","cpu":0},{"node":"betsy","disk":0,"netin":0,"maxmem":1073741824,"maxdisk":8589934592,"template":0,"id":"lxc/101","vmid":101,"name":"Uptime-Kuma","status":"stopped","diskread":0,"diskwrite":0,"maxcpu":1,"netout":0,"mem":0,"type":"lxc","cpu":0,"uptime":0},{"template":0,"maxdisk":33501757440,"id":"lxc/102","vmid":102,"disk":1444143104,"node":"betsy","netin":6469109,"maxmem":4294967296,"name":"pbs","status":"running","diskread":1042833408,"diskwrite":2550329344,"type":"lxc","cpu":0.000984465244174985,"uptime":53037,"maxcpu":2,"netout":7169,"mem":38711296},{"type":"lxc","cpu":2.73462567826385e-05,"uptime":51302,"maxcpu":4,"netout":11511313,"mem":257388544,"maxdisk":8350298112,"template":0,"id":"lxc/105","vmid":105,"node":"betsy","disk":2272653312,"netin":20490798,"maxmem":8589934592,"status":"running","name":"nextcloud","diskread":611069952,"diskwrite":210894848},{"maxmem":2147483648,"disk":0,"node":"betsy","netin":0,"vmid":106,"template":0,"maxdisk":8589934592,"id":"lxc/106","diskwrite":0,"name":"test","status":"stopped","diskread":0,"mem":0,"maxcpu":2,"netout":0,"uptime":0,"cpu":0,"type":"lxc"},{"maxdisk":37580963840,"template":0,"id":"lxc/110","vmid":110,"disk":0,"node":"betsy","netin":0,"maxmem":8388608000,"lock":"snapshot","status":"stopped","name":"media-stack","diskread":0,"diskwrite":0,"type":"lxc","cpu":0,"uptime":0,"maxcpu":8,"netout":0,"mem":0},{"status":"running","name":"l-wn-pd1","diskread":9006223224,"diskwrite":4117452800,"node":"betsy","disk":0,"netin":227452642,"maxmem":10485760000,"template":0,"maxdisk":50465865728,"id":"qemu/111","vmid":111,"tags":"worker-node;container","maxcpu":12,"netout":3879702552,"mem":8730071040,"type":"qemu","cpu":0.0107349031739077,"uptime":53033},{"tags":"worker-node;container;test;dev","maxcpu":4,"netout":0,"mem":0,"cpu":0,"type":"qemu","uptime":0,"name":"l-wn-qa1","status":"stopped","diskread":0,"diskwrite":0,"disk":0,"node":"betsy","netin":0,"maxmem":2147483648,"template":0,"maxdisk":34359738368,"id":"qemu/115","vmid":115},{"maxcpu":1,"netout":0,"mem":0,"cpu":0,"type":"lxc","uptime":0,"name":"nextcloud","status":"stopped","diskread":0,"diskwrite":0,"node":"betsy","disk":0,"netin":0,"maxmem":2147483648,"maxdisk":8589934592,"template":0,"id":"lxc/121","vmid":121},{"id":"lxc/154","maxdisk":8350298112,"template":0,"vmid":154,"netin":14187885,"node":"betsy","disk":1242894336,"maxmem":536870912,"diskread":721674240,"name":"pi-hole","status":"running","diskwrite":298668032,"type":"lxc","cpu":0.00229708556974163,"uptime":52983,"netout":13728644,"maxcpu":1,"mem":124243968,"tags":"prod"},{"uptime":52938,"type":"lxc","cpu":0.00240647059687219,"mem":39358464,"netout":241295711,"maxcpu":1,"tags":"prod","vmid":155,"id":"lxc/155","template":0,"maxdisk":8350298112,"maxmem":536870912,"netin":248431204,"disk":961572864,"node":"betsy","diskwrite":152334336,"diskread":135192576,"status":"running","name":"tailscale-router"},{"diskwrite":4180492288,"status":"running","name":"trafeik","diskread":676024320,"maxmem":2147483648,"node":"betsy","disk":10941349888,"netin":71405518,"vmid":156,"maxdisk":18910892032,"template":0,"id":"lxc/156","tags":"container;dev","mem":208125952,"maxcpu":2,"netout":72682993,"uptime":52893,"type":"lxc","cpu":0.0727957355553836},{"vmid":190,"id":"lxc/190","template":0,"maxdisk":32212254720,"maxmem":1073741824,"netin":0,"node":"betsy","disk":0,"diskwrite":0,"diskread":0,"status":"stopped","name":"worker-node1","uptime":0,"type":"lxc","cpu":0,"mem":0,"netout":0,"maxcpu":1},{"uptime":65,"cpu":2.73462567826385e-05,"type":"lxc","mem":19959808,"maxcpu":4,"netout":8168,"diskwrite":8499200,"status":"running","name":"media-worker","diskread":218324992,"vmid":200,"template":0,"maxdisk":33501757440,"id":"lxc/200","maxmem":4294967296,"disk":566829056,"node":"betsy","netin":14166},{"type":"lxc","cpu":0.34340358936238,"uptime":85129,"netout":1473397745,"maxcpu":2,"mem":846204928,"diskread":29321576448,"name":"l-ct-dev1","status":"running","diskwrite":23859666944,"id":"lxc/202","maxdisk":15744311296,"template":0,"vmid":202,"netin":1588389691,"disk":8499212288,"node":"benedict","maxmem":2147483648},{"vmid":210,"id":"lxc/210","type":"lxc","status":"unknown","node":"vladimir"},{"node":"benedict","vmid":220,"id":"lxc/220","type":"lxc","status":"unknown"},{"diskwrite":15032320,"diskread":315781120,"status":"running","name":"traefik-tunnel","maxmem":536870912,"netin":9069458,"node":"benedict","disk":653549568,"vmid":255,"id":"lxc/255","template":0,"maxdisk":16729894912,"mem":13787136,"netout":2686,"maxcpu":1,"uptime":85082,"type":"lxc","cpu":0},{"node":"vladimir","vmid":301,"id":"qemu/301","type":"qemu","tags":"test;windows;worker-node","status":"unknown"},{"node":"vladimir","type":"qemu","id":"qemu/315","vmid":315,"status":"unknown","tags":"container;dev;linux;test;worker-node"},{"diskwrite":0,"diskread":0,"name":"ubuntu-24.04-cloudinit-template","status":"stopped","maxmem":2147483648,"netin":0,"disk":0,"node":"betsy","vmid":9000,"id":"qemu/9000","maxdisk":3758096384,"template":1,"mem":0,"netout":0,"maxcpu":2,"uptime":0,"cpu":0,"type":"qemu"}]}
+2026/01/04 13:04:58 >>>>>>>>>> REQUEST:
+GET /api2/json/nodes/benedict/lxc/220/config HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:58 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Content-Length: 431
+Cache-Control: max-age=0
+Connection: Keep-Alive
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:58 GMT
+Expires: Sun, 04 Jan 2026 13:04:58 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":{"cpulimit":"0","protection":0,"memory":2048,"arch":"amd64","onboot":0,"unprivileged":1,"cmode":"tty","cpuunits":1024,"ostype":"debian","rootfs":"local-lvm:vm-220-disk-0,size=25G","net0":"name=eth0,bridge=vmbr0,gw=192.168.50.1,hwaddr=BC:24:11:3E:9C:2D,ip=192.168.50.220/24,type=veth","console":1,"digest":"02eb04da14882c18fe62ededc2cb682efb3af343","swap":0,"hostname":"network-vm","tty":2,"cores":2,"features":"nesting=1"}}
+2026/01/04 13:04:58 >>>>>>>>>> REQUEST:
+GET /api2/json/cluster/ha/resources/220 HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:58 <<<<<<<<<< RESULT:
+HTTP/1.1 500 no such resource 'ct:220'
+Connection: close
+Content-Length: 53
+Cache-Control: max-age=0
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:58 GMT
+Expires: Sun, 04 Jan 2026 13:04:58 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"message":"no such resource 'ct:220'\n","data":null}
+2026/01/04 13:04:58 >>>>>>>>>> REQUEST:
+GET /api2/json/pools HTTP/1.1
+Host: 192.168.50.4:8006
+User-Agent: Go-http-client/1.1
+Accept: application/json
+Authorization: PVEAPIToken=root@pam!terraform=d7ee3657-8b73-40e0-9c1e-30d760518814
+Accept-Encoding: gzip
+
+2026/01/04 13:04:58 <<<<<<<<<< RESULT:
+HTTP/1.1 200 OK
+Content-Length: 11
+Cache-Control: max-age=0
+Connection: Keep-Alive
+Content-Type: application/json;charset=UTF-8
+Date: Sun, 04 Jan 2026 13:04:58 GMT
+Expires: Sun, 04 Jan 2026 13:04:58 GMT
+Pragma: no-cache
+Server: pve-api-daemon/3.0
+
+{"data":[]}

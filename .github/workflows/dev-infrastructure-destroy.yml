@@ -1,0 +1,101 @@
+name: Dev Infrastructure Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      destroy_target:
+        description: 'What to destroy'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - media-stack
+          - network-vm
+          - both
+
+env:
+  TF_VERSION: 1.6.4
+
+jobs:
+  destroy-media-stack:
+    if: github.event.inputs.destroy_target == 'media-stack' || github.event.inputs.destroy_target == 'both'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack init
+
+      - name: Terraform Destroy
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack destroy -auto-approve
+
+  destroy-network-vm:
+    if: github.event.inputs.destroy_target == 'network-vm' || github.event.inputs.destroy_target == 'both'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init
+
+      - name: Terraform Destroy
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy -auto-approve
+
+  summary:
+    needs: [destroy-media-stack, destroy-network-vm]
+    if: always()
+    runs-on: self-hosted
+    steps:
+      - name: Destruction Summary
+        run: |
+          echo "## 🗑️ Dev Infrastructure Destruction Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Target: ${{ github.event.inputs.destroy_target }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏗️ Job Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- Destroy Media Stack: ${{ needs.destroy-media-stack.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Destroy Network VM: ${{ needs.destroy-network-vm.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Infrastructure has been destroyed for testing purposes**" >> $GITHUB_STEP_SUMMARY
