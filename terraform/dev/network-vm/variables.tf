@@ -2,13 +2,11 @@ variable "vault_token" {
   description = "Vault access token"
   type        = string
   sensitive   = true
-  default     = "myroot"
 }
 
 variable "vault_address" {
   description = "Vault server address"
   type        = string
-  default     = "http://localhost:8200"
 }
 
 variable "pve_api" {
@@ -19,6 +17,7 @@ variable "pve_api" {
 variable "pve_user" {
   description = "Proxmox user"
   type        = string
+  sensitive   = true
 }
 
 variable "pve_pass" {
