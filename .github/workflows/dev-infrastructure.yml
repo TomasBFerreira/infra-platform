@@ -224,26 +224,26 @@ jobs:
       - name: Ensure Ansible dependencies are available
         run: |
           cd /app/infra-platform
-          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault || true
+          ansible-galaxy collection install community.general community.hashi_vault || true
 
       - name: Retrieve SSH key from Vault
         env:
-          VAULT_ADDR: ${{ env.VAULT_ADDR }}
-          VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           mkdir -p ~/.ssh
-          vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519 || true
-          chmod 600 ~/.ssh/media-stack_worker_id_ed25519 || true
-          chown $(whoami):$(whoami) ~/.ssh/media-stack_worker_id_ed25519 || true
+          vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
+          chmod 600 ~/.ssh/media-stack_worker_id_ed25519
+          chown $(whoami):$(whoami) ~/.ssh/media-stack_worker_id_ed25519
 
       - name: Run Ansible playbook via container
         env:
-          VAULT_ADDR: ${{ env.VAULT_ADDR }}
-          VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
           ANSIBLE_SSH_ARGS: "-o ConnectTimeout=30 -o ConnectionAttempts=3 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
         run: |
           # Ensure the SSH key has the correct permissions
-          chmod 600 ~/.ssh/media-stack_worker_id_ed25519
+          chmod 600 ~/.ssh/media-stack_worker_id_ed25519 || true
           
           # Run the playbook via container
           cd /app/infra-platform
@@ -273,12 +273,12 @@ jobs:
       - name: Ensure Ansible dependencies are available
         run: |
           cd /app/infra-platform
-          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault || true
+          ansible-galaxy collection install community.general community.hashi_vault || true
 
       - name: Run Ansible playbook via container
         env:
-          VAULT_ADDR: ${{ env.VAULT_ADDR }}
-          VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         working-directory: ansible/dev/network-vm
         run: |
           cd /app/infra-platform
