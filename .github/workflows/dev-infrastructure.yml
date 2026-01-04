@@ -146,7 +146,7 @@ jobs:
             -v "$PWD:/app/infra-platform" \
             -w /app/infra-platform \
             hashicorp/vault:latest \
-            ./scripts/vault-generate-network-vm-key.sh "$VAULT_ADDR" "$VAULT_TOKEN"
+            /app/infra-platform/scripts/vault-generate-network-vm-key.sh "$VAULT_ADDR" "$VAULT_TOKEN"
 
       - name: Terraform Init
         env:
