@@ -40,3 +40,6 @@ vault_1.15.2_linux_amd64.zip
 vault
 vault_1.15.2_linux_amd64.zip
 vault.zip
+terraform/dev/media-stack/tfplan
+terraform/dev/network-vm/terraform-plugin-proxmox.log
+terraform/dev/network-vm/tfplan
