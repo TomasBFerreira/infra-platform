@@ -234,8 +234,8 @@ jobs:
       - name: Install Vault CLI
         run: |
           curl -fsSL https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o /tmp/vault.zip
-          unzip -o /tmp/vault.zip -d /usr/local/bin/
-          chmod +x /usr/local/bin/vault
+          sudo unzip -o /tmp/vault.zip -d /usr/local/bin/
+          sudo chmod +x /usr/local/bin/vault
           rm /tmp/vault.zip
           vault --version
 
@@ -291,8 +291,8 @@ jobs:
       - name: Install Vault CLI
         run: |
           curl -fsSL https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o /tmp/vault.zip
-          unzip -o /tmp/vault.zip -d /usr/local/bin/
-          chmod +x /usr/local/bin/vault
+          sudo unzip -o /tmp/vault.zip -d /usr/local/bin/
+          sudo chmod +x /usr/local/bin/vault
           rm /tmp/vault.zip
           vault --version
 
