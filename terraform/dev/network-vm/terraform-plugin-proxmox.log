@@ -1,0 +1,2 @@
+[90mSun, 04 Jan 2026 01:25:10 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:159[0m[36m >[0m Enabling the capture of log-library logs as ithe _capturelog flag was detected
+[90mSun, 04 Jan 2026 01:25:10 +0000[0m [32mINF[0m [1mgithub.com/Telmate/terraform-provider-proxmox/proxmox/util.go:192[0m[36m >[0m Logging Started. Root Logger Set to level debug

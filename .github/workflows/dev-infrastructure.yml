@@ -134,6 +134,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Ensure SSH key exists in Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/vault-generate-network-vm-key.sh "$VAULT_ADDR" "$VAULT_TOKEN"
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
