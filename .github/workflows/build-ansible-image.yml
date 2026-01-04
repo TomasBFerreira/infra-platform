@@ -20,7 +20,7 @@ jobs:
       - name: Build Ansible Docker image
         run: |
           cd /app/infra-platform
-          docker compose build ansible
+          docker compose build --no-cache ansible
 
       - name: Push Ansible Docker image (optional)
         if: github.ref == 'refs/heads/dev'

@@ -221,6 +221,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Rebuild Ansible image
+        run: |
+          cd /app/infra-platform
+          docker compose build --no-cache ansible
+
       - name: Ensure Ansible dependencies are available
         run: |
           cd /app/infra-platform
@@ -269,6 +274,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Rebuild Ansible image
+        run: |
+          cd /app/infra-platform
+          docker compose build --no-cache ansible
 
       - name: Ensure Ansible dependencies are available
         run: |
