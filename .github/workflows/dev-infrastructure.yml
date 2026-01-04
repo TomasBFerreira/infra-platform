@@ -243,6 +243,10 @@ jobs:
       - name: Check Vault CLI version
         run: vault --version
 
+      - name: Fix .ssh directory ownership
+        run: |
+          sudo chown -R $USER:$USER ~/.ssh || true
+
       - name: Retrieve SSH key from Vault
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
@@ -303,6 +307,10 @@ jobs:
 
       - name: Check Vault CLI version
         run: vault --version
+
+      - name: Fix .ssh directory ownership
+        run: |
+          sudo chown -R $USER:$USER ~/.ssh || true
 
       - name: Retrieve SSH key from Vault
         env:
