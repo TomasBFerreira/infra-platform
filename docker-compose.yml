@@ -27,7 +27,7 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
-      - ~/.ssh:/root/.ssh
+      - ~/ssh:/root/ssh
       - ansible_cache:/root/.ansible
     networks:
       - infra-network
