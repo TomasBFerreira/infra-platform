@@ -1,5 +1,4 @@
 name: Dev Infrastructure Management
-
 on:
   push:
     branches: [dev]
@@ -44,7 +43,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Detect file changes
         id: changes
         run: |
@@ -59,6 +57,7 @@ jobs:
             echo "media_stack=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^(terraform/dev/media-stack|ansible/dev/media-stack)' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
             echo "network_vm=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^(terraform/dev/network-vm|ansible/dev/network-vm)' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
           fi
+
 
   terraform-media-stack:
     needs: detect-changes
@@ -257,15 +256,22 @@ jobs:
           vault kv get -field=private secret/ssh_keys/media-stack_worker | tee "$HOME/ssh/media-stack_worker_id_ed25519" > /dev/null
           chmod 600 "$HOME/ssh/media-stack_worker_id_ed25519"
 
+      - name: Debug SSH key file (media-stack)
+        run: |
+          head -5 "$HOME/ssh/media-stack_worker_id_ed25519"
+          file "$HOME/ssh/media-stack_worker_id_ed25519"
+          ls -l "$HOME/ssh/media-stack_worker_id_ed25519"
+
+      - name: Fix line endings in SSH key (media-stack)
+        run: |
+          sed -i 's/\r$//' "$HOME/ssh/media-stack_worker_id_ed25519"
+
       - name: Run Ansible playbook via container
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
           ANSIBLE_SSH_ARGS: "-o ConnectTimeout=30 -o ConnectionAttempts=3 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
         run: |
-          # Ensure the SSH key has the correct permissions
-          chmod 600 ~/.ssh/media-stack_worker_id_ed25519 || true
-          
           # Run the playbook via container
           cd /app/infra-platform
           if [ "${{ github.event.inputs.ansible_action }}" = "check" ]; then
@@ -273,13 +279,13 @@ jobs:
               -i ansible/dev/media-stack/inventory.ini \
               --check \
               -v \
-              --private-key ~/.ssh/media-stack_worker_id_ed25519 \
+              --private-key /root/ssh/media-stack_worker_id_ed25519 \
               ansible/dev/media-stack/media-stack_setup.yml
           else
             ./scripts/run-ansible.sh playbook \
               -i ansible/dev/media-stack/inventory.ini \
               -v \
-              --private-key ~/.ssh/media-stack_worker_id_ed25519 \
+              --private-key /root/ssh/media-stack_worker_id_ed25519 \
               ansible/dev/media-stack/media-stack_setup.yml
           fi
 
@@ -322,6 +328,16 @@ jobs:
           vault kv get -field=private secret/ssh_keys/network-vm_worker | tee "$HOME/ssh/network-vm_worker_id_ed25519" > /dev/null
           chmod 600 "$HOME/ssh/network-vm_worker_id_ed25519"
 
+      - name: Debug SSH key file (network-vm)
+        run: |
+          head -5 "$HOME/ssh/network-vm_worker_id_ed25519"
+          file "$HOME/ssh/network-vm_worker_id_ed25519"
+          ls -l "$HOME/ssh/network-vm_worker_id_ed25519"
+
+      - name: Fix line endings in SSH key (network-vm)
+        run: |
+          sed -i 's/\r$//' "$HOME/ssh/network-vm_worker_id_ed25519"
+
       - name: Ensure Ansible dependencies are available
         run: |
           cd /app/infra-platform
@@ -339,13 +355,13 @@ jobs:
               -i ansible/dev/network-vm/inventory.ini \
               --check \
               -v \
-              --private-key ~/.ssh/network-vm_worker_id_ed25519 \
+              --private-key /root/ssh/network-vm_worker_id_ed25519 \
               ansible/dev/network-vm/network-vm_setup.yml
           else
             ./scripts/run-ansible.sh playbook \
               -i ansible/dev/network-vm/inventory.ini \
               -v \
-              --private-key ~/.ssh/network-vm_worker_id_ed25519 \
+              --private-key /root/ssh/network-vm_worker_id_ed25519 \
               ansible/dev/network-vm/network-vm_setup.yml
           fi
 
