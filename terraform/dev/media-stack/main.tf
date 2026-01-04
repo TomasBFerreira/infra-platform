@@ -93,7 +93,7 @@ resource "proxmox_lxc" "media_stack_worker" {
   
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
   start           = true
-  target_node     = "betsy"
+  target_node     = "benedict"
 
   # Provisioner to ensure SSH key is properly set up
   provisioner "remote-exec" {

@@ -224,7 +224,7 @@ jobs:
       - name: Ensure Ansible dependencies are available
         run: |
           cd /app/infra-platform
-          ansible-galaxy collection install community.general community.hashi_vault || true
+          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault || true
 
       - name: Retrieve SSH key from Vault
         env:
@@ -232,9 +232,9 @@ jobs:
           VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
         run: |
           mkdir -p ~/.ssh
-          vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519
-          chmod 600 ~/.ssh/media-stack_worker_id_ed25519
-          chown $(whoami):$(whoami) ~/.ssh/media-stack_worker_id_ed25519
+          vault kv get -field=private secret/ssh_keys/media-stack_worker > ~/.ssh/media-stack_worker_id_ed25519 || true
+          chmod 600 ~/.ssh/media-stack_worker_id_ed25519 || true
+          chown $(whoami):$(whoami) ~/.ssh/media-stack_worker_id_ed25519 || true
 
       - name: Run Ansible playbook via container
         env:
