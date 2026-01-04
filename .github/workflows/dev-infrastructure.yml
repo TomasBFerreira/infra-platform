@@ -148,7 +148,7 @@ jobs:
             ubuntu:22.04 \
             bash -c "\
               apt-get update && \
-              apt-get install -y curl unzip && \
+              apt-get install -y curl unzip openssh-client && \
               curl -fsSL https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o vault.zip && \
               rm -f vault && \
               unzip -o vault.zip && \
