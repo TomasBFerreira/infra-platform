@@ -38,7 +38,6 @@ variable "vault_token" {
 variable "vault_address" {
   description = "Vault server address"
   type        = string
-  default     = ""
   default     = "http://localhost:8200"
 }
 
