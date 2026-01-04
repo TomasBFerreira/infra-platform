@@ -59,9 +59,10 @@ jobs:
 
       - name: Terraform Init
         env:
-          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
-          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
-          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
@@ -72,9 +73,10 @@ jobs:
 
       - name: Terraform Destroy
         env:
-          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
-          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
-          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
