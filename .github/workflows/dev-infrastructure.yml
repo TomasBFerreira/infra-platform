@@ -150,7 +150,8 @@ jobs:
               apt-get update && \
               apt-get install -y curl unzip && \
               curl -fsSL https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o vault.zip && \
-              unzip vault.zip && \
+              rm -f vault && \
+              unzip -o vault.zip && \
               mv vault /usr/local/bin/ && \
               chmod +x /usr/local/bin/vault && \
               /app/infra-platform/scripts/vault-generate-network-vm-key.sh \"$VAULT_ADDR\" \"$VAULT_TOKEN\" \
