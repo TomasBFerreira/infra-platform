@@ -31,7 +31,7 @@ resource "proxmox_lxc" "network_vm" {
 
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]
   start           = true
-  target_node     = "betsy"
+  target_node     = "benedict"
 }
 
 # Output the VM's IP address
