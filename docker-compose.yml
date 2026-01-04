@@ -2,6 +2,7 @@ services:
   terraform:
     image: hashicorp/terraform:1.6.4
     container_name: terraform-runner
+    restart: unless-stopped
     working_dir: /workspace
     volumes:
       - .:/workspace
@@ -19,6 +20,7 @@ services:
   ansible:
     image: quay.io/ansible/ansible-core:latest
     container_name: ansible-runner
+    restart: unless-stopped
     working_dir: /workspace
     volumes:
       - .:/workspace
