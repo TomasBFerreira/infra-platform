@@ -231,6 +231,14 @@ jobs:
           cd /app/infra-platform
           ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault
 
+      - name: Install Vault CLI
+        run: |
+          curl -fsSL https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o /tmp/vault.zip
+          unzip -o /tmp/vault.zip -d /usr/local/bin/
+          chmod +x /usr/local/bin/vault
+          rm /tmp/vault.zip
+          vault --version
+
       - name: Retrieve SSH key from Vault
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
@@ -279,6 +287,14 @@ jobs:
         run: |
           cd /app/infra-platform
           docker compose build --no-cache ansible
+
+      - name: Install Vault CLI
+        run: |
+          curl -fsSL https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o /tmp/vault.zip
+          unzip -o /tmp/vault.zip -d /usr/local/bin/
+          chmod +x /usr/local/bin/vault
+          rm /tmp/vault.zip
+          vault --version
 
       - name: Retrieve SSH key from Vault
         env:
