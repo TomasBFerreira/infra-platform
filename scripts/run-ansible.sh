@@ -38,10 +38,6 @@ run_ansible() {
             echo "Running: ansible-inventory $@"
             $DOCKER_COMPOSE_CMD run --rm ansible ansible-inventory "$@"
             ;;
-        *)
-            echo "Running: ansible $@"
-            $DOCKER_COMPOSE_CMD run --rm ansible ansible "$@"
-            ;;
         "config")
             echo "Running: ansible-config $@"
             $DOCKER_COMPOSE_CMD run --rm ansible ansible-config "$@"
@@ -73,9 +69,8 @@ run_ansible() {
             exit 1
             ;;
         *)
-            echo "Error: Unknown ansible command '$cmd'"
-            echo "Run '$0 help' for available commands"
-            exit 1
+            echo "Running: ansible $@"
+            $DOCKER_COMPOSE_CMD run --rm ansible ansible "$@"
             ;;
     esac
 }
