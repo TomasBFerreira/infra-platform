@@ -134,13 +134,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Ensure SSH key exists in Vault
+      - name: Ensure SSH key exists in Vault (containerized)
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           cd /app/infra-platform
-          ./scripts/vault-generate-network-vm-key.sh "$VAULT_ADDR" "$VAULT_TOKEN"
+          docker run --rm \
+            -e VAULT_ADDR="$VAULT_ADDR" \
+            -e VAULT_TOKEN="$VAULT_TOKEN" \
+            -v "$PWD:/app/infra-platform" \
+            -w /app/infra-platform \
+            hashicorp/vault:latest \
+            ./scripts/vault-generate-network-vm-key.sh "$VAULT_ADDR" "$VAULT_TOKEN"
 
       - name: Terraform Init
         env:
