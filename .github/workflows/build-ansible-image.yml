@@ -1,0 +1,28 @@
+name: Build Ansible Image
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'scripts/Dockerfile'
+      - 'scripts/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/build-ansible-image.yml'
+  workflow_dispatch:
+
+jobs:
+  build-ansible-image:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Ansible Docker image
+        run: |
+          cd /app/infra-platform
+          docker compose build ansible
+
+      - name: Push Ansible Docker image (optional)
+        if: github.ref == 'refs/heads/dev'
+        run: |
+          echo "Image built locally. Add push step here if you want to push to a registry."
