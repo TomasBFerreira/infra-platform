@@ -252,10 +252,10 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          mkdir -p ~/.ssh
-          rm -f ~/.ssh/media-stack_worker_id_ed25519
-          vault kv get -field=private secret/ssh_keys/media-stack_worker | tee ~/.ssh/media-stack_worker_id_ed25519 > /dev/null
-          chmod 600 ~/.ssh/media-stack_worker_id_ed25519
+          mkdir -p "$HOME/ssh"
+          rm -f "$HOME/ssh/media-stack_worker_id_ed25519"
+          vault kv get -field=private secret/ssh_keys/media-stack_worker | tee "$HOME/ssh/media-stack_worker_id_ed25519" > /dev/null
+          chmod 600 "$HOME/ssh/media-stack_worker_id_ed25519"
 
       - name: Run Ansible playbook via container
         env:
@@ -317,10 +317,10 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          mkdir -p ~/.ssh
-          rm -f ~/.ssh/network-vm_worker_id_ed25519
-          vault kv get -field=private secret/ssh_keys/network-vm_worker | tee ~/.ssh/network-vm_worker_id_ed25519 > /dev/null
-          chmod 600 ~/.ssh/network-vm_worker_id_ed25519
+          mkdir -p "$HOME/ssh"
+          rm -f "$HOME/ssh/network-vm_worker_id_ed25519"
+          vault kv get -field=private secret/ssh_keys/network-vm_worker | tee "$HOME/ssh/network-vm_worker_id_ed25519" > /dev/null
+          chmod 600 "$HOME/ssh/network-vm_worker_id_ed25519"
 
       - name: Ensure Ansible dependencies are available
         run: |
