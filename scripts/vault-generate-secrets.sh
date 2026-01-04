@@ -26,8 +26,8 @@ fi
 
 # ----------------- Config/Vars For Debugging -----------------
 
-export VAULT_TOKEN="root"
-export VAULT_ADDR="http://192.168.50.169:8200"
+export VAULT_TOKEN="myroot"
+export VAULT_ADDR="http://localhost:8200"
 PROJECT="media-stack"
 SSH_SECRET_PATH="${SSH_SECRET_PATH:-secret/ssh_keys/${PROJECT}_worker}"
 PASSWORD_SECRET_PATH="${PASSWORD_SECRET_PATH:-secret/${PROJECT}/root_password}"

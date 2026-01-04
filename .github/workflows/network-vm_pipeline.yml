@@ -36,11 +36,18 @@ jobs:
         id: init
         working-directory: terraform/dev/network-vm
         env:
+<<<<<<< HEAD
           TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
           TF_VAR_proxmox_user: ${{ secrets.PROXMOX_USER }}
           TF_VAR_proxmox_password: ${{ secrets.PROXMOX_PASSWORD }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR || 'http://localhost:8200' }}
           VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE || '' }}
+=======
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+>>>>>>> dev
         run: |
           terraform init -input=false
 
@@ -48,11 +55,18 @@ jobs:
         id: plan
         working-directory: terraform/dev/network-vm
         env:
+<<<<<<< HEAD
           TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
           TF_VAR_proxmox_user: ${{ secrets.PROXMOX_USER }}
           TF_VAR_proxmox_password: ${{ secrets.PROXMOX_PASSWORD }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR || 'http://localhost:8200' }}
           VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE || '' }}
+=======
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+>>>>>>> dev
         run: |
           terraform plan -no-color -input=false -out=tfplan
           echo "tf_plan=$(base64 -w0 tfplan)" >> $GITHUB_OUTPUT
@@ -71,6 +85,7 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
+<<<<<<< HEAD
       - name: Setup Vault
         uses: hashicorp/vault-action@v2
         with:
@@ -86,6 +101,13 @@ jobs:
           PVE_API: ${{ secrets.PVE_API }}
           PVE_USER: ${{ env.PVE_USER }}
           PVE_PASS: ${{ env.PVE_PASS }}
+=======
+      - name: Cleanup Proxmox VM via API
+        env:
+          PVE_API: ${{ secrets.PVE_API }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+          PVE_PASS: ${{ secrets.PVE_PASS }}
+>>>>>>> dev
           PVE_NODE: ${{ env.PVE_NODE }}
           VMID: ${{ env.VMID }}
         run: |
@@ -95,6 +117,7 @@ jobs:
       - name: Terraform Apply
         working-directory: terraform/dev/network-vm
         env:
+<<<<<<< HEAD
           TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
           TF_VAR_proxmox_user: ${{ secrets.PROXMOX_USER }}
           TF_VAR_proxmox_password: ${{ secrets.PROXMOX_PASSWORD }}
@@ -127,6 +150,40 @@ jobs:
 
   ansible:
     needs: [terraform-apply, vault-secrets]
+=======
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+        run: |
+          terraform apply -auto-approve
+
+  # Vault setup will be added later when Vault is ready
+  # vault-secrets:
+  #   needs: terraform-apply
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Setup Vault
+  #       uses: hashicorp/vault-action@v2
+  #       with:
+  #         url: ${{ secrets.VAULT_ADDR }}
+  #         method: jwt
+  #         jwtGithubAudience: ${{ secrets.VAULT_AUDIENCE }}
+  #         secrets: |
+  #           secret/data/network-vm env | ;
+  #           secret/data/network-vm/ssh SSH_PRIVATE_KEY | SSH_PRIVATE_KEY ;
+  #
+  #     - name: Generate Vault secrets for network VM
+  #       run: |
+  #         chmod +x scripts/dev/network-vm/vault-generate-secrets.sh
+  #         scripts/dev/network-vm/vault-generate-secrets.sh
+
+  ansible:
+    needs: terraform-apply
+>>>>>>> dev
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -142,6 +199,7 @@ jobs:
           pip install ansible hvac
           ansible-galaxy collection install community.hashi_vault community.docker
 
+<<<<<<< HEAD
       - name: Setup Vault for Ansible
         uses: hashicorp/vault-action@v2
         with:
@@ -150,6 +208,17 @@ jobs:
           jwtGithubAudience: ${{ secrets.VAULT_AUDIENCE }}
           secrets: |
             secret/data/network-vm/ssh SSH_PRIVATE_KEY | SSH_PRIVATE_KEY ;
+=======
+      # Vault setup will be added later when Vault is ready
+      # - name: Setup Vault for Ansible
+      #   uses: hashicorp/vault-action@v2
+      #   with:
+      #     url: ${{ secrets.VAULT_ADDR }}
+      #     method: jwt
+      #     jwtGithubAudience: ${{ secrets.VAULT_AUDIENCE }}
+      #     secrets: |
+      #       secret/data/network-vm/ssh SSH_PRIVATE_KEY | SSH_PRIVATE_KEY ;
+>>>>>>> dev
 
       - name: Configure SSH
         run: |

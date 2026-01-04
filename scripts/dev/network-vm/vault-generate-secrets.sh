@@ -1,8 +1,13 @@
 #!/bin/bash
 
 # Must have VAULT_TOKEN and VAULT_ADDR set!
+<<<<<<< HEAD
 export VAULT_ADDR="http://192.168.50.169:8200"
 export VAULT_TOKEN="root" # or your actual token
+=======
+export VAULT_ADDR="http://localhost:8200"
+export VAULT_TOKEN="myroot" # or your actual token
+>>>>>>> dev
 
 # Insert Tailscale key
 vault kv put secret/tailscale authkey="tskey-...paste_your_key..."

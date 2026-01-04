@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 terraform {
   required_version = ">= 1.0"
 
@@ -55,26 +56,44 @@ variable "proxmox_password" {
 # Fetch SSH key from Vault
 data "vault_generic_secret" "ssh_key" {
   path = "secret/ssh_keys/media-stack_worker"
+=======
+
+# Fetch SSH public key for the VM from Vault
+data "vault_generic_secret" "ssh_key" {
+  path = "secret/ssh_keys/network_vm_worker"
+>>>>>>> dev
 }
 
 resource "proxmox_lxc" "network_vm" {
   vmid        = 220
   hostname    = "network-vm"
+<<<<<<< HEAD
   ostemplate  = "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"
   cores       = 2
   memory      = 2048
   
+=======
+  ostemplate  = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+  cores       = 2
+  memory      = 2048
+
+>>>>>>> dev
   rootfs {
     storage = "local-lvm"
     size    = "25G"
   }
+<<<<<<< HEAD
   
+=======
+
+>>>>>>> dev
   network {
     name   = "eth0"
     bridge = "vmbr0"
     ip     = "192.168.50.220/24"
     gw     = "192.168.50.1"
   }
+<<<<<<< HEAD
   
   unprivileged = true
   
@@ -87,6 +106,21 @@ resource "proxmox_lxc" "network_vm" {
   target_node     = "betsy"
 }
 
+=======
+
+  unprivileged = true
+
+  features {
+    nesting = true
+  }
+
+  ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]
+  start           = true
+  target_node     = "benedict"
+}
+
+# Output the VM's IP address
+>>>>>>> dev
 output "network_vm_ip" {
   value = "192.168.50.220"
 }

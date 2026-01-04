@@ -17,6 +17,7 @@ terraform {
 }
 
 provider "proxmox" {
+<<<<<<< HEAD
   pm_api_url      = var.proxmox_api_url
   pm_user         = var.proxmox_user
   pm_password     = var.proxmox_password
@@ -25,6 +26,16 @@ provider "proxmox" {
 
 provider "vault" {
   address = "http://192.168.50.169:8200"
+=======
+  pm_api_url          = var.proxmox_api_url
+  pm_api_token_id     = var.proxmox_user
+  pm_api_token_secret = var.proxmox_password
+  pm_tls_insecure     = true
+}
+
+provider "vault" {
+  address = var.vault_address
+>>>>>>> dev
   token   = var.vault_token
 }
 
@@ -32,7 +43,17 @@ variable "vault_token" {
   description = "Vault access token"
   type        = string
   sensitive   = true
+<<<<<<< HEAD
   default     = "root"
+=======
+  default     = ""
+}
+
+variable "vault_address" {
+  description = "Vault server address"
+  type        = string
+  default     = "http://localhost:8200"
+>>>>>>> dev
 }
 
 variable "proxmox_api_url" {
@@ -71,10 +92,25 @@ resource "proxmox_lxc" "media_stack_worker" {
     storage = "local-lvm"
     size    = "32G"
   }
+<<<<<<< HEAD
 
   network {
     model  = "virtio"
     bridge = "vmbr0"
+=======
+  
+  network {
+    name   = "eth0"
+    bridge = "vmbr0"
+    ip     = "192.168.50.200/24"
+    gw     = "192.168.50.1"
+  }
+  
+  unprivileged = true
+  
+  features {
+    nesting = true
+>>>>>>> dev
   }
   
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
@@ -99,7 +135,13 @@ resource "proxmox_lxc" "media_stack_worker" {
   }
 }
 
+<<<<<<< HEAD
 output "network_vm_ip" {
   value = "192.168.50.220"
 }
 
+=======
+output "media_worker_ip" {
+  value = "192.168.50.200"
+}
+>>>>>>> dev
