@@ -1,7 +1,7 @@
 
 # Fetch SSH public key for the VM from Vault
 data "vault_generic_secret" "ssh_key" {
-  path = "secret/ssh_keys/network_vm_worker"
+  path = "secret/ssh_keys/network-vm_worker"
 }
 
 resource "proxmox_lxc" "network_vm" {
@@ -29,7 +29,7 @@ resource "proxmox_lxc" "network_vm" {
     nesting = true
   }
 
-  ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]
+  ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
   start           = true
   target_node     = "benedict"
 }
