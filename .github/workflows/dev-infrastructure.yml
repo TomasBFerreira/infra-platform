@@ -244,12 +244,13 @@ jobs:
           PVE_PASS: ${{ secrets.PVE_PASS }}
         run: |
           echo "Terraform apply failed, checking if VM 251 was created anyway..."
-          VM_EXISTS=$(curl -sk -u "$PVE_USER:$PVE_PASS" "$PVE_API/nodes/benedict/qemu/251/status/current" | grep -c '"status"' || echo "0")
-          if [ "$VM_EXISTS" -gt 0 ]; then
+          HTTP_CODE=$(curl -sk -u "$PVE_USER:$PVE_PASS" -w "%{http_code}" -o /tmp/vm_check.json "$PVE_API/nodes/benedict/qemu/251/status/current")
+          if [ "$HTTP_CODE" = "200" ]; then
             echo "✓ VM 251 exists on benedict - treating as success despite provider crash"
+            cat /tmp/vm_check.json
             exit 0
           else
-            echo "✗ VM 251 was not created - actual failure"
+            echo "✗ VM 251 was not created - actual failure (HTTP $HTTP_CODE)"
             exit 1
           fi
 
