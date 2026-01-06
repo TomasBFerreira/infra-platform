@@ -1,40 +1,64 @@
 
-# Fetch SSH public key for the VM from Vault
-data "vault_generic_secret" "ssh_key" {
-  path = "secret/ssh_keys/network-vm_worker"
-}
+module "network_vm" {
+  source = "../../modules/proxmox-vm"
 
-resource "proxmox_lxc" "network_vm" {
+  # VM identification
+  name        = "network-vm"
+  description = "Network services VM (router, firewall, DNS)"
   vmid        = 251
-  hostname    = "network-vm"
-  ostemplate  = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
-  cores       = 2
-  memory      = 2048
+  target_node = "benedict"
 
-  rootfs {
-    storage = "local-lvm"
-    size    = "25G"
-  }
+  # Hardware specs
+  cores           = 2
+  sockets         = 1
+  memory          = 2048
+  qemu_agent_enabled = true
 
-  network {
-    name   = "eth0"
-    bridge = "vmbr0"
-    ip     = "192.168.50.251/24"
-    gw     = "192.168.50.1"
-  }
+  # OS/Boot configuration
+  iso               = "local:iso/ubuntu-24.04.3-live-server-amd64.iso"
+  clone_template    = ""
+  boot_order        = "order=virtio0;ide2"
+  bios              = "seabios"
+  scsihw            = "virtio-scsi-pci"
 
-  unprivileged = true
+  # Network configuration
+  network_model   = "virtio"
+  network_bridge  = "vmbr0"
+  network_ip      = "192.168.50.251/24"
+  network_gateway = "192.168.50.1"
 
-  features {
-    nesting = true
-  }
+  # Disk configuration
+  disk_type    = "virtio"
+  disk_storage = "local-lvm"
+  disk_size    = "25G"
+  disk_format  = "qcow2"
+  disk_ssd     = true
+  disk_discard = "on"
 
-  ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
-  start           = true
-  target_node     = "benedict"
+  # Cloud-init configuration
+  cloudinit_enabled  = true
+  cloudinit_user     = "ubuntu"
+  ssh_key_vault_path = "secret/ssh_keys/network-vm_worker"
+  nameserver         = "8.8.8.8"
+  searchdomain       = ""
+
+  # Boot options
+  start_on_boot = true
+
+  # VGA configuration
+  vga_type   = "virtio"
+  vga_memory = 16
+
+  # Provider variables
+  proxmox_api_url     = var.pve_api
+  proxmox_api_token_id = var.pve_user
+  proxmox_api_token_secret = var.pve_pass
+
+  depends_on = []
 }
 
 # Output the VM's IP address
 output "network_vm_ip" {
-  value = "192.168.50.251"
+  value       = "192.168.50.251"
+  description = "Network VM IP address"
 }
