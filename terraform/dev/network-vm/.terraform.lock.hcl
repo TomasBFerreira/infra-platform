@@ -2,21 +2,22 @@
 # Manual edits may be lost in future updates.
 
 provider "registry.terraform.io/hashicorp/vault" {
-  version = "5.6.0"
+  version     = "3.25.0"
+  constraints = "~> 3.0"
   hashes = [
-    "h1:qRzvy+n5SM0Dz1TSW/DGSK8jfG3Lwj+dv0xM7in2AhM=",
-    "zh:062bfab310e25164ea1bd9a2b86eb0e07ebf67d66f1cea32af84432a8a0a3f15",
-    "zh:0fbff85de06502af491dc1992a1a9de5b7066d9dd12095350c73cd9e2a80d11e",
-    "zh:255dd6c50d9f069486b36ed13612a1fb7fcaed1949861fb6bc1681bd668ab223",
-    "zh:2e99f2dbff55363e1b97370858735a1a8f680d4f4ff28e4665727bafd504d253",
-    "zh:3deba8d0c6987cf4613664ec46be0caa071621295a51135a6142742bd73e9c9c",
-    "zh:50b6660462cc9fb20b8343c5e11fa7d026e5f805c96223b032eb10de76583349",
-    "zh:6338f19114edc8b754bfc8c144d37c71dd6b1a511d388e0118f5eac446a8c5eb",
-    "zh:6671aeecd9f056509612b22c20cf5c52392bd7ca52ee5db9988e68d34cde2c8d",
+    "h1:QjkFFwx5M4cnNi3oDgJMFQWmVgCbUisAN2SXfhmfsac=",
+    "zh:430308f5dbd322a2e5afafd2be810f44eb35e28afa0aa0ac30b270cd6f413da8",
+    "zh:6c36da504c4af84ea9fbaf1e6c2560f691dc3d2d7f0b382a937bfae78830fa17",
     "zh:78d5eefdd9e494defcb3c68d282b8f96630502cac21d1ea161f53cfe9bb483b3",
-    "zh:944692c575f710ff6412efecee401b56981df7cfe2ae6a0c0e54b7c38a92934e",
-    "zh:d5a73da30ac8db0ecc4bf4bab733ddcad009ae768d30dc6ae212db2e1d1ad34f",
-    "zh:fbd46583f3037a85cbc5995e15bb72a08903e9afc5a06dd9b23de251efc58225",
+    "zh:7bc39cb2a7d91631cb8be54b0b06de29fb47910923e54f779e74d8b218b1ab70",
+    "zh:7e4a5bebcfa19b9f1e3a6bbda5c6771b6dd28b3dfa19fdf3d4fced419cfa416f",
+    "zh:7ea473203b37d006a0d2b1cdc8bff55c96b3c5819dbb62862cdabff6f2f0e2f2",
+    "zh:9ad136feece62f0c545fefa4592b2cdaa896a39acb697fb129233dce880a69aa",
+    "zh:ad0c9980295c902804af23da0250830b912eb13089349bf5c7be0649fac2689c",
+    "zh:b305835cc13dcd9ec996d49d23163c6311f30786296f86ca5657b93aea4f3591",
+    "zh:d8fe6ab7da12efbb5b122ae9b6856375c5a3759add9df577a8fb448898ceffe3",
+    "zh:ef59ef2c06a55571e64fdd5888a074ed9556436738e9737e32bacab93ca133ff",
+    "zh:f59c2605d916e1806dc494241467dd430194f5e7bdbf331c5aca904873347ad8",
   ]
 }
 
