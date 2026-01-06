@@ -48,6 +48,8 @@ resource "proxmox_vm_qemu" "vm" {
   network {
     model  = var.network_model
     bridge = var.network_bridge
+    ipconfig0 = var.cloudinit_enabled ? "ip=${var.network_ip},gw=${var.network_gateway}" : null
+    nameserver = var.cloudinit_enabled && var.nameserver != "" ? var.nameserver : null
   }
   
   # Disk configuration
@@ -61,20 +63,7 @@ resource "proxmox_vm_qemu" "vm" {
   }
   
   # Cloud-init configuration (if enabled)
-  dynamic "ipconfig0" {
-    for_each = var.cloudinit_enabled ? [1] : []
-    content {
-      ip  = var.network_ip
-      gw  = var.network_gateway
-    }
-  }
-  
-  dynamic "nameserver" {
-    for_each = var.cloudinit_enabled && var.nameserver != "" ? [1] : []
-    content {
-      nameserver = var.nameserver
-    }
-  }
+  # ipconfig0 and nameserver are now set in the network block above
   
   # SSH keys via cloud-init or Vault
   sshkeys = var.cloudinit_enabled ? (

@@ -345,7 +345,7 @@ jobs:
       - name: Build and tag Ansible image
         run: |
           cd /app/infra-platform
-          docker compose build --no-cache ansible
+          docker compose build ansible
           docker tag custom-ansible:latest custom-ansible:ci
 
   ansible-media-stack:
