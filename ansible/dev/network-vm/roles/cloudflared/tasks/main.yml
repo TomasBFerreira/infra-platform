@@ -1,0 +1,51 @@
+---
+- name: Install Docker (cloudflared prerequisite)
+  apt:
+    name: docker.io
+    state: present
+
+- name: Ensure Docker service is running
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
+- name: Create cloudflared data directory
+  file:
+    path: /opt/cloudflared
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create cloudflared docker-compose file
+  copy:
+    dest: /opt/cloudflared/docker-compose.yml
+    content: |
+      version: '3.8'
+      services:
+        cloudflared:
+          image: cloudflare/cloudflared:latest
+          container_name: cloudflared
+          command: tunnel --no-autoupdate run --token {{ cloudflared_token }}
+          restart: always
+          networks:
+            - default
+      networks:
+        default:
+          driver: bridge
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Start cloudflared tunnel service
+  shell: cd /opt/cloudflared && docker-compose up -d
+  environment:
+    DOCKER_COMPOSE_VERSION: v2
+
+- name: Ensure cloudflared service auto-starts
+  cron:
+    name: "Start cloudflared on reboot"
+    special_time: reboot
+    job: "cd /opt/cloudflared && docker-compose up -d"
+    user: root

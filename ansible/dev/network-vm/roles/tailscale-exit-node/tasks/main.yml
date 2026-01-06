@@ -1,0 +1,40 @@
+---
+- name: Ensure Tailscale is installed
+  apt:
+    name: tailscale
+    state: present
+
+- name: Check Tailscale connection status
+  command: tailscale status --json
+  register: tailscale_status
+  changed_when: false
+  failed_when: false
+
+- name: Connect Tailscale with auth key
+  command: tailscale up --auth-key={{ tailscale_auth_key }} --advertise-exit-node
+  when: "'Running' not in tailscale_status.stdout"
+  environment:
+    PATH: /usr/bin:/usr/sbin:/usr/local/bin
+
+- name: Enable IP forwarding for exit node
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    sysctl_set: yes
+    state: present
+
+- name: Enable IP6 forwarding for exit node
+  sysctl:
+    name: net.ipv6.conf.all.forwarding
+    value: '1'
+    sysctl_set: yes
+    state: present
+
+- name: Verify Tailscale connection
+  command: tailscale status
+  register: tailscale_final_status
+  changed_when: false
+
+- name: Display Tailscale status
+  debug:
+    msg: "{{ tailscale_final_status.stdout_lines }}"

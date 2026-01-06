@@ -1,0 +1,126 @@
+---
+- name: Install required packages
+  apt:
+    name:
+      - git
+      - curl
+    state: present
+
+- name: Create traefik user for git operations
+  user:
+    name: traefik
+    system: yes
+    shell: /bin/bash
+    home: /home/traefik
+    create_home: yes
+
+- name: Create SSH key directory
+  file:
+    path: /home/traefik/.ssh
+    state: directory
+    owner: traefik
+    group: traefik
+    mode: '0700'
+
+- name: Generate SSH key for traefik user
+  openssh_keypair:
+    path: /home/traefik/.ssh/id_rsa
+    type: ed25519
+    owner: traefik
+    group: traefik
+    mode: '0600'
+  register: traefik_ssh_key
+
+- name: Display SSH public key for deployment
+  debug:
+    msg: |
+      SSH Public Key for GitHub Deploy Key:
+      {{ traefik_ssh_key.public_key }}
+      Add this key to: https://github.com/TomasBFerreira/traefik-gitops/settings/keys/new
+  when: traefik_ssh_key.public_key is defined
+
+- name: Configure SSH for GitHub
+  copy:
+    dest: /home/traefik/.ssh/config
+    content: |
+      Host github.com
+        HostName github.com
+        User git
+        IdentityFile ~/.ssh/id_rsa
+        StrictHostKeyChecking accept-new
+    owner: traefik
+    group: traefik
+    mode: '0600'
+
+- name: Test GitHub SSH connection
+  command: ssh -T git@github.com
+  become: yes
+  become_user: traefik
+  register: github_test
+  changed_when: false
+  failed_when: false
+
+- name: Clone traefik-gitops repository
+  git:
+    repo: 'git@github.com:TomasBFerreira/traefik-gitops.git'
+    dest: /home/traefik/traefik-gitops
+    key_file: /home/traefik/.ssh/id_rsa
+    accept_hostkey: yes
+  become: yes
+  become_user: traefik
+
+- name: Create traefik compose directory
+  file:
+    path: /opt/traefik
+    state: directory
+    owner: traefik
+    group: traefik
+    mode: '0755'
+
+- name: Copy docker-compose from repo to /opt/traefik
+  command: cp -r /home/traefik/traefik-gitops/* /opt/traefik/
+  become: yes
+  become_user: traefik
+
+- name: Fix ownership of /opt/traefik
+  file:
+    path: /opt/traefik
+    owner: traefik
+    group: traefik
+    recurse: yes
+
+- name: Start traefik services
+  shell: cd /opt/traefik && docker-compose up -d
+  become: yes
+  become_user: traefik
+
+- name: Create systemd service for traefik
+  copy:
+    dest: /etc/systemd/system/traefik.service
+    content: |
+      [Unit]
+      Description=Traefik Stack
+      After=docker.service
+      Requires=docker.service
+      
+      [Service]
+      Type=simple
+      User=traefik
+      WorkingDirectory=/opt/traefik
+      ExecStart=/usr/bin/docker-compose up
+      ExecStop=/usr/bin/docker-compose down
+      Restart=always
+      RestartSec=10
+      
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable and start traefik service
+  systemd:
+    name: traefik
+    enabled: yes
+    state: started
+    daemon_reload: yes

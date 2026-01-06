@@ -1,0 +1,5 @@
+---
+traefik_repo: "git@github.com:TomasBFerreira/traefik-gitops.git"
+traefik_user: traefik
+traefik_home: /home/traefik
+traefik_compose_dir: /opt/traefik

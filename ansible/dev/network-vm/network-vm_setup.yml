@@ -13,6 +13,9 @@
   roles:
     - role: common
     - role: tailscale
+    - role: tailscale-exit-node
+    - role: cloudflared
+    - role: traefik
     - role: vault
     - role: wireguard
     - role: firewall

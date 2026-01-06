@@ -1,0 +1,2 @@
+---
+cloudflared_token: "{{ vault_cloudflared_token }}"

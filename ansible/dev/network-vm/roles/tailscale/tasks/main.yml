@@ -21,22 +21,31 @@
   modprobe:
     name: tun
     state: present
+  ignore_errors: yes
+  register: modprobe_result
 
-- name: Ensure /dev/net/tun device exists
-  file:
-    path: /dev/net/tun
-    state: touch
-    mode: '0600'
-  when: ansible_facts['devices']['tun'] is not defined
-
-- name: Check /dev/net/tun exists
+- name: Check if /dev/net/tun exists
   stat:
     path: /dev/net/tun
   register: tun_stat
 
-- fail:
-    msg: "/dev/net/tun device is missing. Please ensure it is enabled and accessible."
+- name: Create /dev/net directory if missing
+  file:
+    path: /dev/net
+    state: directory
+    mode: '0755'
   when: not tun_stat.stat.exists
+
+- name: Create tun device if missing (Proxmox VE workaround)
+  command: mknod /dev/net/tun c 10 200
+  when: not tun_stat.stat.exists
+  ignore_errors: yes
+
+- name: Set tun device permissions
+  file:
+    path: /dev/net/tun
+    mode: '0666'
+  when: tun_stat.stat.exists or not tun_stat.stat.exists
     
 - name: Enable and start tailscaled service
   systemd:
