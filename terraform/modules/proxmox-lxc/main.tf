@@ -56,26 +56,4 @@ resource "proxmox_lxc" "container" {
   target_node = var.target_node
   
   onboot = var.start_on_boot
-  
-  # Provisioner to ensure SSH key is properly set up if using Vault
-  dynamic "provisioner" {
-    for_each = var.ssh_key_vault_path != "" ? [1] : []
-    content {
-      remote-exec {
-        inline = [
-          "mkdir -p /root/.ssh",
-          "echo '${data.vault_generic_secret.ssh_key[0].data["public"]}' > /root/.ssh/authorized_keys",
-          "chmod 700 /root/.ssh",
-          "chmod 600 /root/.ssh/authorized_keys"
-        ]
-
-        connection {
-          type        = "ssh"
-          user        = "root"
-          private_key = data.vault_generic_secret.ssh_key[0].data["private"]
-          host        = split("/", var.network_ip)[0]
-        }
-      }
-    }
-  }
 }
