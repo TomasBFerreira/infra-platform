@@ -48,9 +48,10 @@ resource "proxmox_vm_qemu" "vm" {
   network {
     model  = var.network_model
     bridge = var.network_bridge
-    ipconfig0 = var.cloudinit_enabled ? "ip=${var.network_ip},gw=${var.network_gateway}" : null
-    nameserver = var.cloudinit_enabled && var.nameserver != "" ? var.nameserver : null
   }
+
+  # Set ipconfig0 as a top-level argument (for cloud-init IP/gateway)
+  ipconfig0 = var.cloudinit_enabled ? "ip=${var.network_ip},gw=${var.network_gateway}" : null
   
   # Disk configuration
   disk {
