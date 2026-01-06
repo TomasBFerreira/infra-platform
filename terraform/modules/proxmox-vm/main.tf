@@ -1,0 +1,109 @@
+terraform {
+  required_providers {
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "~> 2.9"
+    }
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 3.0"
+    }
+  }
+}
+
+# Fetch SSH key from Vault if provided
+data "vault_generic_secret" "ssh_key" {
+  count = var.ssh_key_vault_path != "" ? 1 : 0
+  path  = var.ssh_key_vault_path
+}
+
+resource "proxmox_vm_qemu" "vm" {
+  name        = var.name
+  desc        = var.description
+  vmid        = var.vmid
+  target_node = var.target_node
+  
+  # VM configuration
+  agent       = var.qemu_agent_enabled ? 1 : 0
+  cores       = var.cores
+  sockets     = var.sockets
+  memory      = var.memory
+  
+  # Boot configuration
+  boot    = var.boot_order
+  onboot  = var.start_on_boot
+  
+  # BIOS and machine type
+  bios    = var.bios
+  scsihw  = var.scsihw
+  
+  # OS configuration
+  clone      = var.clone_template
+  full_clone = var.full_clone
+  
+  # If not cloning, use ISO
+  iso = var.clone_template == "" ? var.iso : null
+  
+  # Network configuration
+  network {
+    model  = var.network_model
+    bridge = var.network_bridge
+  }
+  
+  # Disk configuration
+  disk {
+    type    = var.disk_type
+    storage = var.disk_storage
+    size    = var.disk_size
+    format  = var.disk_format
+    ssd     = var.disk_ssd
+    discard = var.disk_discard
+  }
+  
+  # Cloud-init configuration (if enabled)
+  dynamic "ipconfig0" {
+    for_each = var.cloudinit_enabled ? [1] : []
+    content {
+      ip  = var.network_ip
+      gw  = var.network_gateway
+    }
+  }
+  
+  dynamic "nameserver" {
+    for_each = var.cloudinit_enabled && var.nameserver != "" ? [1] : []
+    content {
+      nameserver = var.nameserver
+    }
+  }
+  
+  # SSH keys via cloud-init or Vault
+  sshkeys = var.cloudinit_enabled ? (
+    var.ssh_key_vault_path != "" ? data.vault_generic_secret.ssh_key[0].data["public"] : var.ssh_public_keys
+  ) : ""
+  
+  ciuser     = var.cloudinit_enabled ? var.cloudinit_user : null
+  cipassword = var.cloudinit_enabled && var.cloudinit_password != "" ? var.cloudinit_password : null
+  
+  # Additional cloud-init options
+  searchdomain = var.cloudinit_enabled ? var.searchdomain : null
+  
+  # Serial console
+  serial {
+    id   = 0
+    type = "socket"
+  }
+  
+  # VGA configuration
+  vga {
+    type   = var.vga_type
+    memory = var.vga_memory
+  }
+  
+  # Lifecycle management
+  lifecycle {
+    ignore_changes = [
+      network,
+      disk,
+    ]
+  }
+}
