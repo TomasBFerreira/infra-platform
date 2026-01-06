@@ -527,22 +527,25 @@ jobs:
           echo "Ensuring VM 251 is running..."
           PVE_API_ESCAPED=$(echo "$PVE_API" | sed 's|/$||')
           
-          # Start the VM
-          echo "Starting VM..."
-          curl -sk -X POST -u "$PVE_USER:$PVE_PASS" "$PVE_API_ESCAPED/nodes/benedict/qemu/251/status/start" || echo "VM start request sent"
+          # Always try to start the VM (idempotent - won't hurt if already running)
+          echo "Sending start command to VM 251..."
+          START_RESPONSE=$(curl -sk -X POST -u "$PVE_USER:$PVE_PASS" "$PVE_API_ESCAPED/nodes/benedict/qemu/251/status/start" 2>&1)
+          echo "Start response: $START_RESPONSE"
           
           # Wait for VM to be fully running and have SSH available
-          echo "Waiting for VM to boot (up to 60 seconds)..."
-          for i in {1..12}; do
+          echo "Waiting for SSH to become available (up to 2 minutes)..."
+          for i in {1..24}; do
             if nc -z -w3 192.168.50.251 22 2>/dev/null; then
-              echo "✓ VM SSH is ready!"
+              echo "✓ VM SSH is ready on attempt $i!"
+              sleep 5
               exit 0
             fi
-            echo "Attempt $i/12 - VM not ready yet, waiting..."
+            echo "Attempt $i/24 - VM SSH not ready yet, waiting 5 seconds..."
             sleep 5
           done
-          echo "⚠ VM may not be fully ready, continuing anyway..."
-          sleep 10
+          echo "✗ VM SSH did not become available after 2 minutes"
+          echo "Check VM status manually in Proxmox"
+          exit 1
 
       - name: Ensure Ansible dependencies are available
         run: |
