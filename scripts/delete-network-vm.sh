@@ -8,7 +8,7 @@ set -e
 PVE_API_URL="${TF_VAR_pve_api:-$PVE_API}"  # fallback to either env var
 PVE_USER="${TF_VAR_pve_user:-$PVE_USER}"
 PVE_PASS="${TF_VAR_pve_pass:-$PVE_PASS}"
-VMID=220
+VMID=251
 
 if [[ -z "$PVE_API_URL" || -z "$PVE_USER" || -z "$PVE_PASS" ]]; then
   echo "Missing Proxmox API credentials. Set TF_VAR_pve_api, TF_VAR_pve_user, TF_VAR_pve_pass or PVE_API, PVE_USER, PVE_PASS."

@@ -38,11 +38,9 @@ resource "proxmox_vm_qemu" "vm" {
   scsihw  = var.scsihw
   
   # OS configuration
-  clone      = var.clone_template
-  full_clone = var.full_clone
-  
-  # If not cloning, use ISO
-  iso = var.clone_template == "" ? var.iso : null
+  clone      = var.clone_template != "" ? var.clone_template : null
+  full_clone = var.clone_template != "" ? var.full_clone : null
+  iso        = var.clone_template == "" ? var.iso : null
   
   # Network configuration
   network {
