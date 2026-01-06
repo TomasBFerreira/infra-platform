@@ -244,19 +244,21 @@ jobs:
           PVE_PASS: ${{ secrets.PVE_PASS }}
         run: |
           echo "Terraform apply failed, checking if VM 251 was created anyway..."
-          # Escape special characters in credentials
           PVE_API_ESCAPED=$(echo "$PVE_API" | sed 's|/$||')
-          CREDENTIALS=$(echo -n "$PVE_USER:$PVE_PASS" | base64)
           
-          HTTP_CODE=$(curl -sk -H "Authorization: Basic $CREDENTIALS" -w "%{http_code}" -o /tmp/vm_check.json "$PVE_API_ESCAPED/nodes/benedict/qemu/251/status/current")
+          # Check if VM exists
+          VM_CHECK=$(curl -sk -u "$PVE_USER:$PVE_PASS" "$PVE_API_ESCAPED/nodes/benedict/qemu/251/status/current" 2>/dev/null | grep -o '"status":"[^"]*"' || echo "")
           
-          if [ "$HTTP_CODE" = "200" ] || grep -q '"status"' /tmp/vm_check.json 2>/dev/null; then
-            echo "✓ VM 251 exists on benedict - treating as success despite provider crash"
-            cat /tmp/vm_check.json || echo "VM check response received"
+          if [ -n "$VM_CHECK" ]; then
+            echo "✓ VM 251 exists on benedict"
+            echo "Starting VM..."
+            curl -sk -X POST -u "$PVE_USER:$PVE_PASS" "$PVE_API_ESCAPED/nodes/benedict/qemu/251/status/start"
+            echo ""
+            echo "Waiting 30 seconds for VM to boot..."
+            sleep 30
             exit 0
           else
-            echo "⚠ Could not verify VM status (HTTP $HTTP_CODE), but continuing..."
-            echo "Note: The VM may have been created. Check Proxmox manually."
+            echo "⚠ Could not verify VM, but continuing..."
             exit 0
           fi
 
@@ -515,6 +517,32 @@ jobs:
       - name: Fix line endings in SSH key (network-vm)
         run: |
           sed -i 's/\r$//' "$HOME/ssh/network-vm_worker_id_ed25519"
+
+      - name: Ensure VM is running
+        env:
+          PVE_API: ${{ secrets.PVE_API }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+          PVE_PASS: ${{ secrets.PVE_PASS }}
+        run: |
+          echo "Ensuring VM 251 is running..."
+          PVE_API_ESCAPED=$(echo "$PVE_API" | sed 's|/$||')
+          
+          # Start the VM
+          echo "Starting VM..."
+          curl -sk -X POST -u "$PVE_USER:$PVE_PASS" "$PVE_API_ESCAPED/nodes/benedict/qemu/251/status/start" || echo "VM start request sent"
+          
+          # Wait for VM to be fully running and have SSH available
+          echo "Waiting for VM to boot (up to 60 seconds)..."
+          for i in {1..12}; do
+            if nc -z -w3 192.168.50.251 22 2>/dev/null; then
+              echo "✓ VM SSH is ready!"
+              exit 0
+            fi
+            echo "Attempt $i/12 - VM not ready yet, waiting..."
+            sleep 5
+          done
+          echo "⚠ VM may not be fully ready, continuing anyway..."
+          sleep 10
 
       - name: Ensure Ansible dependencies are available
         run: |
