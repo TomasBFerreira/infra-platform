@@ -1,0 +1,33 @@
+---
+- name: Infra LXC Setup
+  hosts: infra_node
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Test connection
+      ping:
+      
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      
+    - name: Install basic packages
+      apt:
+        name:
+          - curl
+          - wget
+          - git
+          - vim
+          - htop
+          - net-tools
+          - dnsutils
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+        
+    - name: Display completion message
+      debug:
+        msg: "Infra LXC baseline setup complete! IP: {{ ansible_default_ipv4.address }}"
