@@ -32,7 +32,7 @@ module "network_vm" {
   disk_storage = "local-lvm"
   disk_size    = "25G"
   disk_format  = "qcow2"
-  disk_ssd     = true
+  disk_ssd     = 1
   disk_discard = "on"
 
   # Cloud-init configuration
