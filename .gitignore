@@ -43,3 +43,6 @@ vault.zip
 terraform/dev/media-stack/tfplan
 terraform/dev/network-vm/terraform-plugin-proxmox.log
 terraform/dev/network-vm/tfplan
+.terraform.lock.hcl
+tfplan
+*.zip*

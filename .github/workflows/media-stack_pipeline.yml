@@ -141,7 +141,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y netcat-openbsd
-          nc -zv 192.168.50.200 22 || echo "Port 22 unreachable"
+          nc -zv 192.168.50.211 22 || echo "Port 22 unreachable"
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Run Ansible playbook with debug info
@@ -171,7 +171,7 @@ jobs:
           
           # Test SSH connection
           echo "=== Testing SSH connection ==="
-          ssh -i ~/.ssh/media-stack_worker_id_ed25519 -o StrictHostKeyChecking=no root@192.168.50.200 'echo "SSH connection successful!"' || echo "SSH connection failed"
+          ssh -i ~/.ssh/media-stack_worker_id_ed25519 -o StrictHostKeyChecking=no root@192.168.50.211 'echo "SSH connection successful!"' || echo "SSH connection failed"
           
           # Run the playbook with verbose output and timeout
           ANSIBLE_COMMAND_TIMEOUT=300 \
@@ -189,7 +189,7 @@ jobs:
             ansible -i ansible/dev/media-stack/inventory.ini all -m ping -vvvv \
               --private-key ~/.ssh/media-stack_worker_id_ed25519
             echo "SSH debug info:"
-            ssh -v -i ~/.ssh/media-stack_worker_id_ed25519 -o StrictHostKeyChecking=no root@192.168.50.200 exit || true
+            ssh -v -i ~/.ssh/media-stack_worker_id_ed25519 -o StrictHostKeyChecking=no root@192.168.50.211 exit || true
             echo "============================================"
             exit 1
           fi

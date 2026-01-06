@@ -81,7 +81,7 @@ resource "proxmox_lxc" "media_stack_worker" {
   network {
     name   = "eth0"
     bridge = "vmbr0"
-    ip     = "192.168.50.200/24"
+    ip     = "192.168.50.211/24"
     gw     = "192.168.50.1"
   }
   
@@ -108,11 +108,11 @@ resource "proxmox_lxc" "media_stack_worker" {
       type        = "ssh"
       user        = "root"
       private_key = data.vault_generic_secret.ssh_key.data["private"]
-      host        = "192.168.50.200"
+      host        = \"192.168.50.211\"
     }
   }
 }
 
 output "media_worker_ip" {
-  value = "192.168.50.200"
+  value = "192.168.50.211"
 }

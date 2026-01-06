@@ -35,7 +35,7 @@ module "infra_lxc" {
   memory = 2048
   swap   = 512
   
-  network_ip      = "192.168.50.210/24"
+  network_ip      = "192.168.50.221/24"
   network_gateway = "192.168.50.1"
   
   rootfs_size = "32G"
@@ -58,7 +58,7 @@ module "network_lxc" {
   memory = 2048
   swap   = 512
   
-  network_ip      = "192.168.50.220/24"
+  network_ip      = "192.168.50.251/24"
   network_gateway = "192.168.50.1"
   
   rootfs_size = "25G"

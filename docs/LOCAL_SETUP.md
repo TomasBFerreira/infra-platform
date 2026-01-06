@@ -152,8 +152,8 @@ curl -k "https://your-proxmox-host:8006/api2/json/version" \
 ### Node Connectivity
 ```bash
 # Test SSH to existing VMs
-ssh root@192.168.50.200  # Media stack
-ssh root@192.168.50.220  # Network VM
+ssh root@192.168.50.211  # Media stack
+ssh root@192.168.50.251  # Network VM
 ```
 
 ## Security Notes

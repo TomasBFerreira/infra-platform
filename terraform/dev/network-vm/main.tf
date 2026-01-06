@@ -19,7 +19,7 @@ resource "proxmox_lxc" "network_vm" {
   network {
     name   = "eth0"
     bridge = "vmbr0"
-    ip     = "192.168.50.220/24"
+    ip     = "192.168.50.251/24"
     gw     = "192.168.50.1"
   }
 
@@ -36,5 +36,5 @@ resource "proxmox_lxc" "network_vm" {
 
 # Output the VM's IP address
 output "network_vm_ip" {
-  value = "192.168.50.220"
+  value = "192.168.50.251"
 }

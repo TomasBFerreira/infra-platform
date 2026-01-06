@@ -1,7 +1,7 @@
 all:
   hosts:
     media-stack_worker:
-      ansible_host: 192.168.50.200
+      ansible_host: 192.168.50.211
       ansible_user: root
       ansible_ssh_private_key_file: /root/.ssh/media-stack_worker_id_ed25519
       ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
