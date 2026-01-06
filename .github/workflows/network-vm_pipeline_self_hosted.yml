@@ -23,6 +23,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Generate SSH key in Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          bash scripts/vault-generate-network-vm-key.sh "$VAULT_ADDR" "$VAULT_TOKEN"
+
       - name: Terraform Init via container
         id: init
         working-directory: terraform/dev/network-vm

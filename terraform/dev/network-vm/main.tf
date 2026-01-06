@@ -49,11 +49,6 @@ module "network_vm" {
   vga_type   = "virtio"
   vga_memory = 16
 
-  # Provider variables
-  proxmox_api_url     = var.pve_api
-  proxmox_api_token_id = var.pve_user
-  proxmox_api_token_secret = var.pve_pass
-
   depends_on = []
 }
 
