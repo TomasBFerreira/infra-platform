@@ -5,7 +5,7 @@
 
 set -e
 
-# Function to fix SSH key line endings
+# Function to fix SSH key line endings and decode base64 if needed
 fix_ssh_key() {
     local key_file="$1"
     local key_name=$(basename "$key_file")
@@ -15,6 +15,22 @@ fix_ssh_key() {
         if file "$key_file" | grep -q CRLF; then
             echo "Fixing CRLF line endings in: $key_name"
             sed -i 's/\r$//' "$key_file"
+        fi
+        
+        # Check if key appears to be base64-encoded (starts with base64 chars, not PEM header)
+        local first_line=$(head -1 "$key_file")
+        if [[ ! "$first_line" =~ ^-----BEGIN ]]; then
+            # Likely base64-encoded, try to decode it
+            if head -c 100 "$key_file" | grep -q '^[A-Za-z0-9+/=]*$'; then
+                echo "Detected base64-encoded SSH key: $key_name - decoding..."
+                local decoded_content
+                decoded_content=$(base64 -d "$key_file" 2>/dev/null) || {
+                    echo "ERROR: Failed to decode base64 key: $key_name"
+                    return 1
+                }
+                echo "$decoded_content" > "$key_file"
+                chmod 600 "$key_file"
+            fi
         fi
         
         # Check file size - keys should not be empty or tiny

@@ -393,7 +393,7 @@ jobs:
         run: |
           mkdir -p "$HOME/ssh"
           rm -f "$HOME/ssh/media-stack_worker_id_ed25519"
-          vault kv get -field=private secret/ssh_keys/media-stack_worker > "$HOME/ssh/media-stack_worker_id_ed25519"
+          vault kv get -field=private secret/ssh_keys/media-stack_worker | base64 -d > "$HOME/ssh/media-stack_worker_id_ed25519"
           if [ ! -s "$HOME/ssh/media-stack_worker_id_ed25519" ]; then
             echo "Error: SSH key file is empty or could not be retrieved"
             exit 1
@@ -473,7 +473,7 @@ jobs:
         run: |
           mkdir -p "$HOME/ssh"
           rm -f "$HOME/ssh/network-vm_worker_id_ed25519"
-          vault kv get -field=private secret/ssh_keys/network-vm_worker > "$HOME/ssh/network-vm_worker_id_ed25519"
+          vault kv get -field=private secret/ssh_keys/network-vm_worker | base64 -d > "$HOME/ssh/network-vm_worker_id_ed25519"
           if [ ! -s "$HOME/ssh/network-vm_worker_id_ed25519" ]; then
             echo "Error: SSH key file is empty or could not be retrieved"
             exit 1
@@ -557,7 +557,7 @@ jobs:
         run: |
           mkdir -p "$HOME/ssh"
           rm -f "$HOME/ssh/infra-lxc_worker_id_ed25519"
-          vault kv get -field=private secret/ssh_keys/infra-lxc_worker > "$HOME/ssh/infra-lxc_worker_id_ed25519"
+          vault kv get -field=private secret/ssh_keys/infra-lxc_worker | base64 -d > "$HOME/ssh/infra-lxc_worker_id_ed25519"
           if [ ! -s "$HOME/ssh/infra-lxc_worker_id_ed25519" ]; then
             echo "Error: SSH key file is empty or could not be retrieved"
             exit 1
