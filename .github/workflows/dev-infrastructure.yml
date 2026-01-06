@@ -344,10 +344,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Rebuild Ansible image
+      - name: Build Ansible image
         run: |
           cd /app/infra-platform
-          docker compose build --no-cache ansible
+          docker compose build ansible
 
       - name: Ensure Ansible dependencies are available
         run: |
@@ -357,18 +357,18 @@ jobs:
       - name: Install Vault CLI
         run: |
           echo "Checking disk space..."
-          df -h /tmp
-          mkdir -p ~/.local/bin
+          df -h ~
+          mkdir -p ~/.cache ~/.local/bin
           echo "Downloading Vault CLI..."
-          curl -fSL --max-time 60 --retry 3 https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o /tmp/vault.zip
-          if [ ! -f /tmp/vault.zip ]; then
+          curl -fSL --max-time 60 --retry 3 https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o ~/.cache/vault.zip
+          if [ ! -f ~/.cache/vault.zip ]; then
             echo "Error: vault.zip was not created"
             exit 1
           fi
           echo "Extracting Vault CLI..."
-          unzip -o /tmp/vault.zip -d ~/.local/bin/
+          unzip -o ~/.cache/vault.zip -d ~/.local/bin/
           chmod +x ~/.local/bin/vault
-          rm -f /tmp/vault.zip
+          rm -f ~/.cache/vault.zip
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           echo "Vault CLI installed successfully"
 
