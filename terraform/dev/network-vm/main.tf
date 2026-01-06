@@ -46,8 +46,8 @@ module "network_vm" {
   start_on_boot = true
 
   # VGA configuration
-  vga_type   = "virtio"
-  vga_memory = 16
+  #vga_type   = "virtio"
+  #vga_memory = 16
 
   depends_on = []
 }
