@@ -1,13 +1,57 @@
 name: Dev Infrastructure Management (Cached)
-
 on:
-  workflow_dispatch:
   push:
     branches: [dev]
     paths:
       - 'terraform/dev/**'
       - 'ansible/dev/**'
-      - '.github/workflows/dev-infrastructure-cached.yml'
+      - '.github/workflows/dev-infrastructure.yml'
+  # pull_request:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: 'Terraform action to perform'
+        required: false
+        default: 'apply'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      ansible_action:
+        description: 'Ansible action to perform'
+        required: false
+        default: 'run'
+        type: choice
+        options:
+          - run
+          - check
+          - skip
+      deploy_media_stack:
+        description: 'Deploy media-stack?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      deploy_network_vm:
+        description: 'Deploy network-vm?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      deploy_infra_lxc:
+        description: 'Deploy infra-lxc?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 env:
   TF_VERSION: 1.6.4
@@ -30,6 +74,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "terraform=true" >> $GITHUB_OUTPUT
             echo "ansible=true" >> $GITHUB_OUTPUT
+            # Respect manual deployment selections
             echo "media_stack=${{ github.event.inputs.deploy_media_stack }}" >> $GITHUB_OUTPUT
             echo "network_vm=${{ github.event.inputs.deploy_network_vm }}" >> $GITHUB_OUTPUT
             echo "infra_lxc=${{ github.event.inputs.deploy_infra_lxc }}" >> $GITHUB_OUTPUT
@@ -41,16 +86,545 @@ jobs:
             echo "infra_lxc=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^(terraform/dev/infra-lxc|ansible/dev/infra-lxc)' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
           fi
 
+
+  terraform-media-stack:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.media_stack_changed == 'true'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack init
+
+      - name: Terraform Plan
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack plan -out=tfplan
+
+      - name: Print Terraform Debug Log (media-stack)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/dev' && (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == '')
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack apply -auto-approve tfplan
+
+      - name: Print Terraform Debug Log (media-stack apply)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
+
+  terraform-network-vm:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.network_vm_changed == 'true'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Ensure SSH key exists in Vault (containerized)
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          docker run --rm \
+            -e VAULT_ADDR="$VAULT_ADDR" \
+            -e VAULT_TOKEN="$VAULT_TOKEN" \
+            -v "$PWD:/app/infra-platform" \
+            -w /app/infra-platform \
+            ubuntu:22.04 \
+            bash -c "\
+              apt-get update && \
+              apt-get install -y curl unzip openssh-client && \
+              curl -fsSL https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o vault.zip && \
+              rm -f vault && \
+              unzip -o vault.zip && \
+              mv vault /usr/local/bin/ && \
+              chmod +x /usr/local/bin/vault && \
+              /app/infra-platform/scripts/vault-generate-network-vm-key.sh \"$VAULT_ADDR\" \"$VAULT_TOKEN\" \
+            "
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init
+
+      - name: Terraform Plan
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm plan -out=tfplan
+
+      - name: Print Terraform Debug Log (network-vm)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/dev' && (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == '')
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply -auto-approve tfplan
+
+      - name: Print Terraform Debug Log (network-vm apply)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
+
+  terraform-infra-lxc:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.infra_lxc_changed == 'true'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Ensure SSH key exists in Vault (containerized)
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          docker run --rm \
+            -e VAULT_ADDR="$VAULT_ADDR" \
+            -e VAULT_TOKEN="$VAULT_TOKEN" \
+            -v "$PWD:/app/infra-platform" \
+            -w /app/infra-platform \
+            ubuntu:22.04 \
+            bash -c "\
+              apt-get update && \
+              apt-get install -y curl unzip openssh-client && \
+              curl -fsSL https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o vault.zip && \
+              rm -f vault && \
+              unzip -o vault.zip && \
+              mv vault /usr/local/bin/ && \
+              chmod +x /usr/local/bin/vault && \
+              # Generate SSH key if it doesn't exist
+              if ! vault kv get -field=private secret/ssh_keys/infra-lxc_worker 2>/dev/null; then \
+                echo 'Generating new SSH keypair for infra-lxc...'; \
+                ssh-keygen -t ed25519 -f /tmp/infra-lxc_worker -N '' -C 'infra-lxc-worker' -q; \
+                PRIVATE_KEY=\$(cat /tmp/infra-lxc_worker); \
+                PUBLIC_KEY=\$(cat /tmp/infra-lxc_worker.pub); \
+                vault kv put secret/ssh_keys/infra-lxc_worker private=\"\$PRIVATE_KEY\" public=\"\$PUBLIC_KEY\"; \
+                echo 'SSH key created and stored in Vault.'; \
+              else \
+                echo 'SSH key already exists in Vault.'; \
+              fi \
+            "
+
+      - name: Terraform Init
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/infra-lxc init
+
+      - name: Terraform Plan
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/infra-lxc plan -out=tfplan
+
+      - name: Print Terraform Debug Log (infra-lxc)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/dev' && (github.event.inputs.terraform_action == 'apply' || github.event.inputs.terraform_action == '')
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
+          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          TF_LOG: DEBUG
+          TF_LOG_PATH: /tmp/terraform.log
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/infra-lxc apply -auto-approve tfplan
+
+      - name: Print Terraform Debug Log (infra-lxc apply)
+        if: failure()
+        run: |
+          echo '--- Terraform Debug Log ---'
+          cat /tmp/terraform.log || echo 'No log found.'
+
   build-ansible-image:
     needs: detect-changes
     runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Build and tag Ansible image (cached)
+      - name: Build and tag Ansible image
         run: |
           cd /app/infra-platform
           docker compose build ansible
           docker tag custom-ansible:latest custom-ansible:ci
 
-# ...existing code for terraform and ansible jobs, just like in dev-infrastructure.yml, but referencing build-ansible-image as a dependency...
+  ansible-media-stack:
+    needs: [detect-changes, terraform-media-stack, build-ansible-image]
+    if: needs.detect-changes.outputs.media_stack_changed == 'true' && (github.event.inputs.ansible_action != 'skip' || github.event.inputs.ansible_action == '')
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+
+      - name: Ensure Ansible dependencies are available
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault
+
+      - name: Install Vault CLI
+        run: |
+          echo "Checking disk space..."
+          df -h ~
+          mkdir -p ~/.cache ~/.local/bin
+          echo "Downloading Vault CLI..."
+          curl -fSL --max-time 60 --retry 3 https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o ~/.cache/vault.zip
+          if [ ! -f ~/.cache/vault.zip ]; then
+            echo "Error: vault.zip was not created"
+            exit 1
+          fi
+          echo "Extracting Vault CLI..."
+          unzip -o ~/.cache/vault.zip -d ~/.local/bin/
+          chmod +x ~/.local/bin/vault
+          rm -f ~/.cache/vault.zip
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "Vault CLI installed successfully"
+
+      - name: Check Vault CLI version
+        run: |
+          vault --version
+          which vault
+
+      - name: Retrieve SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          mkdir -p "$HOME/ssh"
+          rm -f "$HOME/ssh/media-stack_worker_id_ed25519"
+          vault kv get -field=private secret/ssh_keys/media-stack_worker > "$HOME/ssh/media-stack_worker_id_ed25519"
+          if [ ! -s "$HOME/ssh/media-stack_worker_id_ed25519" ]; then
+            echo "Error: SSH key file is empty or could not be retrieved"
+            exit 1
+          fi
+          chmod 600 "$HOME/ssh/media-stack_worker_id_ed25519"
+
+      - name: Debug SSH key file (media-stack)
+        run: |
+          head -5 "$HOME/ssh/media-stack_worker_id_ed25519"
+          file "$HOME/ssh/media-stack_worker_id_ed25519"
+          ls -l "$HOME/ssh/media-stack_worker_id_ed25519"
+
+      - name: Fix line endings in SSH key (media-stack)
+        run: |
+          sed -i 's/\r$//' "$HOME/ssh/media-stack_worker_id_ed25519"
+
+      - name: Run Ansible playbook via container
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          ANSIBLE_SSH_ARGS: "-o ConnectTimeout=30 -o ConnectionAttempts=3 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
+        run: |
+          # Run the playbook via container
+          cd /app/infra-platform
+          if [ "${{ github.event.inputs.ansible_action }}" = "check" ]; then
+            ./scripts/run-ansible.sh playbook \
+              -i ansible/dev/media-stack/inventory.ini \
+              --check \
+              -v \
+              --private-key /root/ssh/media-stack_worker_id_ed25519 \
+              ansible/dev/media-stack/media-stack_setup.yml
+          else
+            ./scripts/run-ansible.sh playbook \
+              -i ansible/dev/media-stack/inventory.ini \
+              -v \
+              --private-key /root/ssh/media-stack_worker_id_ed25519 \
+              ansible/dev/media-stack/media-stack_setup.yml
+          fi
+
+  ansible-network-vm:
+    needs: [detect-changes, terraform-network-vm, build-ansible-image]
+    if: needs.detect-changes.outputs.network_vm_changed == 'true' && (github.event.inputs.ansible_action != 'skip' || github.event.inputs.ansible_action == '')
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+
+      - name: Install Vault CLI
+        run: |
+          echo "Checking disk space..."
+          df -h ~
+          mkdir -p ~/.cache ~/.local/bin
+          echo "Downloading Vault CLI..."
+          curl -fSL --max-time 60 --retry 3 https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o ~/.cache/vault.zip
+          if [ ! -f ~/.cache/vault.zip ]; then
+            echo "Error: vault.zip was not created"
+            exit 1
+          fi
+          echo "Extracting Vault CLI..."
+          unzip -o ~/.cache/vault.zip -d ~/.local/bin/
+          chmod +x ~/.local/bin/vault
+          rm -f ~/.cache/vault.zip
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "Vault CLI installed successfully"
+
+      - name: Check Vault CLI version
+        run: |
+          vault --version
+          which vault
+
+      - name: Retrieve SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          mkdir -p "$HOME/ssh"
+          rm -f "$HOME/ssh/network-vm_worker_id_ed25519"
+          vault kv get -field=private secret/ssh_keys/network-vm_worker > "$HOME/ssh/network-vm_worker_id_ed25519"
+          if [ ! -s "$HOME/ssh/network-vm_worker_id_ed25519" ]; then
+            echo "Error: SSH key file is empty or could not be retrieved"
+            exit 1
+          fi
+          chmod 600 "$HOME/ssh/network-vm_worker_id_ed25519"
+
+      - name: Debug SSH key file (network-vm)
+        run: |
+          head -5 "$HOME/ssh/network-vm_worker_id_ed25519"
+          file "$HOME/ssh/network-vm_worker_id_ed25519"
+          ls -l "$HOME/ssh/network-vm_worker_id_ed25519"
+
+      - name: Fix line endings in SSH key (network-vm)
+        run: |
+          sed -i 's/\r$//' "$HOME/ssh/network-vm_worker_id_ed25519"
+
+      - name: Ensure Ansible dependencies are available
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault
+
+      - name: Run Ansible playbook via container
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        working-directory: ansible/dev/network-vm
+        run: |
+          cd /app/infra-platform
+          if [ "${{ github.event.inputs.ansible_action }}" = "check" ]; then
+            ./scripts/run-ansible.sh playbook \
+              -i ansible/dev/network-vm/inventory.ini \
+              --check \
+              -v \
+              --private-key /root/ssh/network-vm_worker_id_ed25519 \
+              ansible/dev/network-vm/network-vm_setup.yml
+          else
+            ./scripts/run-ansible.sh playbook \
+              -i ansible/dev/network-vm/inventory.ini \
+              -v \
+              --private-key /root/ssh/network-vm_worker_id_ed25519 \
+              ansible/dev/network-vm/network-vm_setup.yml
+          fi
+
+  ansible-infra-lxc:
+    needs: [detect-changes, terraform-infra-lxc, build-ansible-image]
+    if: needs.detect-changes.outputs.infra_lxc_changed == 'true' && (github.event.inputs.ansible_action != 'skip' || github.event.inputs.ansible_action == '')
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+
+      - name: Install Vault CLI
+        run: |
+          echo "Checking disk space..."
+          df -h ~
+          mkdir -p ~/.cache ~/.local/bin
+          echo "Downloading Vault CLI..."
+          curl -fSL --max-time 60 --retry 3 https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip -o ~/.cache/vault.zip
+          if [ ! -f ~/.cache/vault.zip ]; then
+            echo "Error: vault.zip was not created"
+            exit 1
+          fi
+          echo "Extracting Vault CLI..."
+          unzip -o ~/.cache/vault.zip -d ~/.local/bin/
+          chmod +x ~/.local/bin/vault
+          rm -f ~/.cache/vault.zip
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "Vault CLI installed successfully"
+
+      - name: Check Vault CLI version
+        run: |
+          vault --version
+          which vault
+
+      - name: Retrieve SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          mkdir -p "$HOME/ssh"
+          rm -f "$HOME/ssh/infra-lxc_worker_id_ed25519"
+          vault kv get -field=private secret/ssh_keys/infra-lxc_worker > "$HOME/ssh/infra-lxc_worker_id_ed25519"
+          if [ ! -s "$HOME/ssh/infra-lxc_worker_id_ed25519" ]; then
+            echo "Error: SSH key file is empty or could not be retrieved"
+            exit 1
+          fi
+          chmod 600 "$HOME/ssh/infra-lxc_worker_id_ed25519"
+
+      - name: Debug SSH key file (infra-lxc)
+        run: |
+          head -5 "$HOME/ssh/infra-lxc_worker_id_ed25519"
+          file "$HOME/ssh/infra-lxc_worker_id_ed25519"
+          ls -l "$HOME/ssh/infra-lxc_worker_id_ed25519"
+
+      - name: Fix line endings in SSH key (infra-lxc)
+        run: |
+          sed -i 's/\r$//' "$HOME/ssh/infra-lxc_worker_id_ed25519"
+
+      - name: Ensure Ansible dependencies are available
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault
+
+      - name: Run Ansible playbook via container
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          if [ "${{ github.event.inputs.ansible_action }}" = "check" ]; then
+            ./scripts/run-ansible.sh playbook \
+              -i ansible/dev/infra-lxc/inventory.ini \
+              --check \
+              -v \
+              --private-key /root/ssh/infra-lxc_worker_id_ed25519 \
+              ansible/dev/infra-lxc/infra-lxc_setup.yml
+          else
+            ./scripts/run-ansible.sh playbook \
+              -i ansible/dev/infra-lxc/inventory.ini \
+              -v \
+              --private-key /root/ssh/infra-lxc_worker_id_ed25519 \
+              ansible/dev/infra-lxc/infra-lxc_setup.yml
+          fi
+
+  summary:
+    needs: [detect-changes, terraform-media-stack, terraform-network-vm, terraform-infra-lxc, ansible-media-stack, ansible-network-vm, ansible-infra-lxc]
+    if: always()
+    runs-on: self-hosted
+    steps:
+      - name: Infrastructure Changes Summary
+        run: |
+          echo "## 🚀 Dev Infrastructure Management Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Changes Detected:" >> $GITHUB_STEP_SUMMARY
+          echo "- Terraform changes: ${{ needs.detect-changes.outputs.terraform_changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Ansible changes: ${{ needs.detect-changes.outputs.ansible_changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Media Stack changes: ${{ needs.detect-changes.outputs.media_stack_changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Network VM changes: ${{ needs.detect-changes.outputs.network_vm_changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Infra LXC changes: ${{ needs.detect-changes.outputs.infra_lxc_changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏗️ Job Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- Terraform Media Stack: ${{ needs.terraform-media-stack.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Terraform Network VM: ${{ needs.terraform-network-vm.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Terraform Infra LXC: ${{ needs.terraform-infra-lxc.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Ansible Media Stack: ${{ needs.ansible-media-stack.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Ansible Network VM: ${{ needs.ansible-network-vm.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Ansible Infra LXC: ${{ needs.ansible-infra-lxc.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "- Review the job outputs above" >> $GITHUB_STEP_SUMMARY
+          echo "- Test infrastructure changes in dev environment" >> $GITHUB_STEP_SUMMARY
+          echo "- When ready, merge to main for production deployment" >> $GITHUB_STEP_SUMMARY
