@@ -125,5 +125,12 @@ USER root
 # Ensure PATH is set for root user too
 ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Set entrypoint to fix SSH keys before running commands
+ENTRYPOINT ["/entrypoint.sh"]
+
 # Final verification as root
 RUN which node && node --version
