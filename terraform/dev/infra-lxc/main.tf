@@ -32,7 +32,7 @@ provider "vault" {
 module "infra_lxc" {
   source = "../../modules/proxmox-lxc"
   
-  vmid        = 210
+  vmid        = 221
   hostname    = "infra-node-dev"
   description = "Infrastructure services (Ansible, Terraform, Vault)"
   

@@ -5,7 +5,7 @@ data "vault_generic_secret" "ssh_key" {
 }
 
 resource "proxmox_lxc" "network_vm" {
-  vmid        = 220
+  vmid        = 251
   hostname    = "network-vm"
   ostemplate  = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   cores       = 2
