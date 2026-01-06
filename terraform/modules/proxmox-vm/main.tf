@@ -88,10 +88,8 @@ resource "proxmox_vm_qemu" "vm" {
   }
   
   # Lifecycle management
+  # Ignore all changes after creation to work around provider v2.9.14 read-back crash
   lifecycle {
-    ignore_changes = [
-      network,
-      disk,
-    ]
+    ignore_changes = all
   }
 }
