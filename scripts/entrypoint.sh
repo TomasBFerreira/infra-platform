@@ -17,26 +17,33 @@ fix_ssh_key() {
             sed -i 's/\r$//' "$key_file"
         fi
         
-        # Check if key appears to be base64-encoded (starts with base64 chars, not PEM header)
-        local first_line=$(head -1 "$key_file")
-        if [[ ! "$first_line" =~ ^-----BEGIN ]]; then
-            # Likely base64-encoded, try to decode it
-            if head -c 100 "$key_file" | grep -q '^[A-Za-z0-9+/=]*$'; then
-                echo "Detected base64-encoded SSH key: $key_name - decoding..."
-                local decoded_content
-                decoded_content=$(base64 -d "$key_file" 2>/dev/null) || {
-                    echo "ERROR: Failed to decode base64 key: $key_name"
-                    return 1
-                }
-                echo "$decoded_content" > "$key_file"
-                chmod 600 "$key_file"
-            fi
-        fi
-        
         # Check file size - keys should not be empty or tiny
         local file_size=$(wc -c < "$key_file")
+        
+        # Check if key appears to be base64-encoded (contains mostly base64 chars instead of PEM structure)
+        # Valid PEM should have: -----BEGIN ... ----- followed by base64, then -----END ... -----
+        # If we see base64 text where PEM header should be, it's double-encoded
+        local first_chars=$(head -c 50 "$key_file")
+        if [[ "$first_chars" == *"b3BlbnNzaC1rZXkt"* ]] || [[ "$first_chars" == *"-----BEGIN"* ]] && [ "$file_size" -lt 1000 ]; then
+            # Likely base64-encoded binary (small size + base64 chars at start)
+            echo "Detected base64-encoded SSH key: $key_name (size: $file_size bytes) - decoding..."
+            local decoded_content
+            decoded_content=$(cat "$key_file" | base64 -d 2>/dev/null) || {
+                echo "ERROR: Failed to decode base64 key: $key_name"
+                return 1
+            }
+            echo "$decoded_content" > "$key_file"
+            chmod 600 "$key_file"
+            file_size=$(wc -c < "$key_file")
+            echo "  Decoded key size: $file_size bytes"
+        fi
+        
         if [ "$file_size" -lt 1700 ]; then
             echo "ERROR: SSH key appears to be invalid or corrupted: $key_name (size: $file_size bytes)"
+            echo "  Expected size: ~1700 bytes or more"
+            echo "  First 100 chars:"
+            head -c 100 "$key_file" | cat -v
+            echo ""
             return 1
         fi
         
