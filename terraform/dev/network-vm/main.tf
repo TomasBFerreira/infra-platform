@@ -15,8 +15,8 @@ module "network_vm" {
   qemu_agent_enabled = true
 
   # OS/Boot configuration
-  iso               = "local:iso/ubuntu-24.04.3-live-server-amd64.iso"
-  clone_template    = ""
+  # iso               = "local:iso/ubuntu-24.04.3-live-server-amd64.iso"
+  clone_template    = "9000"
   boot_order        = "order=virtio0;ide2"
   bios              = "seabios"
   scsihw            = "virtio-scsi-pci"
