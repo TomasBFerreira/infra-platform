@@ -28,6 +28,30 @@ on:
           - run
           - check
           - skip
+      deploy_media_stack:
+        description: 'Deploy media-stack?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      deploy_network_vm:
+        description: 'Deploy network-vm?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      deploy_infra_lxc:
+        description: 'Deploy infra-lxc?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 env:
   TF_VERSION: 1.6.4
@@ -50,9 +74,10 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "terraform=true" >> $GITHUB_OUTPUT
             echo "ansible=true" >> $GITHUB_OUTPUT
-            echo "media_stack=true" >> $GITHUB_OUTPUT
-            echo "network_vm=true" >> $GITHUB_OUTPUT
-            echo "infra_lxc=true" >> $GITHUB_OUTPUT
+            # Respect manual deployment selections
+            echo "media_stack=${{ github.event.inputs.deploy_media_stack }}" >> $GITHUB_OUTPUT
+            echo "network_vm=${{ github.event.inputs.deploy_network_vm }}" >> $GITHUB_OUTPUT
+            echo "infra_lxc=${{ github.event.inputs.deploy_infra_lxc }}" >> $GITHUB_OUTPUT
           else
             echo "terraform=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^terraform/dev/' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
             echo "ansible=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^ansible/dev/' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
