@@ -336,18 +336,27 @@ jobs:
           echo '--- Terraform Debug Log ---'
           cat /tmp/terraform.log || echo 'No log found.'
 
+  build-ansible-image:
+    needs: detect-changes
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Build and tag Ansible image
+        run: |
+          cd /app/infra-platform
+          docker compose build --no-cache ansible
+          docker tag custom-ansible:latest custom-ansible:ci
+
   ansible-media-stack:
-    needs: [detect-changes, terraform-media-stack]
+    needs: [detect-changes, terraform-media-stack, build-ansible-image]
     if: needs.detect-changes.outputs.media_stack_changed == 'true' && (github.event.inputs.ansible_action != 'skip' || github.event.inputs.ansible_action == '')
     runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build Ansible image
-        run: |
-          cd /app/infra-platform
-          docker compose build --no-cache ansible
+
 
       - name: Ensure Ansible dependencies are available
         run: |
@@ -425,17 +434,14 @@ jobs:
           fi
 
   ansible-network-vm:
-    needs: [detect-changes, terraform-network-vm]
+    needs: [detect-changes, terraform-network-vm, build-ansible-image]
     if: needs.detect-changes.outputs.network_vm_changed == 'true' && (github.event.inputs.ansible_action != 'skip' || github.event.inputs.ansible_action == '')
     runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build Ansible image
-        run: |
-          cd /app/infra-platform
-          docker compose build --no-cache ansible
+
 
       - name: Install Vault CLI
         run: |
@@ -512,17 +518,14 @@ jobs:
           fi
 
   ansible-infra-lxc:
-    needs: [detect-changes, terraform-infra-lxc]
+    needs: [detect-changes, terraform-infra-lxc, build-ansible-image]
     if: needs.detect-changes.outputs.infra_lxc_changed == 'true' && (github.event.inputs.ansible_action != 'skip' || github.event.inputs.ansible_action == '')
     runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build Ansible image
-        run: |
-          cd /app/infra-platform
-          docker compose build --no-cache ansible
+
 
       - name: Install Vault CLI
         run: |
