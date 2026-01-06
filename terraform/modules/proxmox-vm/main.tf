@@ -2,7 +2,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "telmate/proxmox"
-      version = "~> 2.10"
+      version = "~> 2.9"
     }
     vault = {
       source  = "hashicorp/vault"
@@ -22,6 +22,7 @@ resource "proxmox_vm_qemu" "vm" {
   desc        = var.description
   vmid        = var.vmid
   target_node = var.target_node
+  force_create = true
   
   # VM configuration
   agent       = var.qemu_agent_enabled ? 1 : 0
