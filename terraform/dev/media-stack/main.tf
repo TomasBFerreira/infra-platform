@@ -108,7 +108,7 @@ resource "proxmox_lxc" "media_stack_worker" {
       type        = "ssh"
       user        = "root"
       private_key = data.vault_generic_secret.ssh_key.data["private"]
-      host        = \"192.168.50.211\"
+      host        = "192.168.50.211"
     }
   }
 }
