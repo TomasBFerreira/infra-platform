@@ -1,3 +1,18 @@
+terraform {
+  required_version = ">= 1.0"
+
+  required_providers {
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "~> 2.9"
+    }
+  }
+
+  backend "local" {
+    path = "terraform.tfstate"
+  }
+}
+
 provider "proxmox" {
   pm_api_url          = var.pve_api
   pm_api_token_id     = var.pve_user
