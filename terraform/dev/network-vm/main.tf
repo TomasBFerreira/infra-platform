@@ -30,7 +30,7 @@ module "network_vm" {
   # Disk configuration
   disk_type    = "virtio"
   disk_storage = "shared-ssd-nfs"
-  disk_size    = "25G"
+  disk_size    = 32
   disk_format  = "qcow2"
   disk_ssd     = 1
   disk_discard = "on"
