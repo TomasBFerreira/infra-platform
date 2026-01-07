@@ -52,7 +52,7 @@ variable "start_on_boot" {
 variable "bios" {
   description = "BIOS type (seabios or ovmf)"
   type        = string
-  default     = "seabios"
+  default     = "ovmf"
 }
 
 variable "scsihw" {

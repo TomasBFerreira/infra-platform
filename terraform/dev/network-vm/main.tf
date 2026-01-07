@@ -18,7 +18,7 @@ module "network_vm" {
   # iso               = "local:iso/ubuntu-24.04.3-live-server-amd64.iso"
   clone_template    = "ubuntu-24.04-cloudinit-template"
   boot_order        = "order=virtio0;ide2"
-  bios              = "seabios"
+  bios              = "ovmf"
   scsihw            = "virtio-scsi-pci"
 
   # Network configuration
