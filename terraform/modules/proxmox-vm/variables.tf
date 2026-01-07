@@ -122,9 +122,9 @@ variable "disk_storage" {
 }
 
 variable "disk_size" {
-  description = "Size of disk (e.g., '32G')"
-  type        = string
-  default     = "32G"
+  description = "Size of disk in GB (e.g., 32). If your resource block expects a string like '32G', update accordingly."
+  type        = number
+  default     = 32
 }
 
 variable "disk_format" {
