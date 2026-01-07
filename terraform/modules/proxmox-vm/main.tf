@@ -63,4 +63,10 @@ resource "proxmox_vm_qemu" "vm" {
     discard = var.disk_discard
   }
 
+  # Lifecycle: ignore disk changes to prevent provider crashes on read-back
+  # This is a workaround for telmate/proxmox v2.9.14 type conversion issues
+  lifecycle {
+    ignore_changes = [disk]
+  }
+
 }
