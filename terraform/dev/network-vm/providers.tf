@@ -25,11 +25,6 @@ provider "proxmox" {
     _default    = "debug"
     _capturelog = ""
   }
-  timeouts {
-    create = "2m"
-    update = "2m"
-    delete = "2m"
-  }
 }
 
 provider "vault" {
