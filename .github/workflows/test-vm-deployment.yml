@@ -1,0 +1,89 @@
+name: Test VM Deployment
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'terraform/dev/vm-test/**'
+      - '.github/workflows/test-vm-deployment.yml'
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: 'Terraform action'
+        required: false
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  TF_VERSION: 1.6.4
+
+jobs:
+  test-vm-deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Test VM
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: terraform
+
+      - name: Terraform Init
+        run: |
+          cd terraform/dev/vm-test
+          terraform init
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+
+      - name: Terraform Plan
+        run: |
+          cd terraform/dev/vm-test
+          terraform plan -out=tfplan
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+
+      - name: Terraform Apply
+        if: |
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.terraform_action == 'apply')
+        run: |
+          cd terraform/dev/vm-test
+          terraform apply -auto-approve tfplan
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+
+      - name: Terraform Destroy
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.terraform_action == 'destroy'
+        run: |
+          cd terraform/dev/vm-test
+          terraform destroy -auto-approve
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
