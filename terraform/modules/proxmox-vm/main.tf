@@ -62,43 +62,5 @@ resource "proxmox_vm_qemu" "vm" {
     ssd     = var.disk_ssd
     discard = var.disk_discard
   }
-  
-  # Cloud-init configuration (if enabled)
-  # ipconfig0 and nameserver are now set in the network block above
-  
-  # SSH keys via cloud-init or Vault
-  sshkeys = var.cloudinit_enabled ? (
-    var.ssh_key_vault_path != "" ? data.vault_generic_secret.ssh_key[0].data["public"] : var.ssh_public_keys
-  ) : ""
-  
-  ciuser     = var.cloudinit_enabled ? var.cloudinit_user : null
-  cipassword = var.cloudinit_enabled && var.cloudinit_password != "" ? var.cloudinit_password : null
-  
-  # Additional cloud-init options
-  searchdomain = var.cloudinit_enabled ? var.searchdomain : null
-  
-  # Serial console
-  serial {
-    id   = 0
-    type = "socket"
-  }
-  
-  # VGA configuration
-  vga {
-    type   = var.vga_type
-    memory = var.vga_memory
-  }
-  
-  # Lifecycle management
-  # Only ignore problematic fields that cause provider v2.9.14 crash
-  # Allow cloud-init and network configuration to be applied
-  lifecycle {
-    ignore_changes = [
-      # Ignore disk changes that can cause provider crashes on read-back
-      disk,
-      # Ignore these to prevent unnecessary recreation
-      clone,
-      full_clone,
-    ]
-  }
+
 }
