@@ -22,7 +22,7 @@ resource "proxmox_vm_qemu" "vm" {
   desc        = var.description
   vmid        = var.vmid
   target_node = var.target_node
-  force_create = true
+  force_create = false
   
   # VM configuration
   agent       = var.qemu_agent_enabled ? 1 : 0
