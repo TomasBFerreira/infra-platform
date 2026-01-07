@@ -118,7 +118,7 @@ variable "disk_type" {
 variable "disk_storage" {
   description = "Storage location for disk"
   type        = string
-  default     = "local-lvm"
+  default     = "shared-ssd-nfs"
 }
 
 variable "disk_size" {
@@ -148,7 +148,7 @@ variable "disk_discard" {
 variable "cloudinit_enabled" {
   description = "Enable cloud-init configuration"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "cloudinit_user" {

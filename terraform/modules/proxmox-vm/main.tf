@@ -49,8 +49,9 @@ resource "proxmox_vm_qemu" "vm" {
     bridge = var.network_bridge
   }
 
-  # Set ipconfig0 as a top-level argument (for cloud-init IP/gateway)
-  ipconfig0 = var.cloudinit_enabled ? "ip=${var.network_ip},gw=${var.network_gateway}" : null
+  # Set ipconfig0 and nameserver as top-level arguments (for cloud-init IP/gateway/DNS)
+  ipconfig0   = var.cloudinit_enabled ? "ip=${var.network_ip},gw=${var.network_gateway}" : null
+  nameserver  = var.cloudinit_enabled && var.nameserver != "" ? var.nameserver : null
   
   # Disk configuration
   disk {
@@ -89,8 +90,15 @@ resource "proxmox_vm_qemu" "vm" {
   }
   
   # Lifecycle management
-  # Ignore all changes after creation to work around provider v2.9.14 read-back crash
+  # Only ignore problematic fields that cause provider v2.9.14 crash
+  # Allow cloud-init and network configuration to be applied
   lifecycle {
-    ignore_changes = all
+    ignore_changes = [
+      # Ignore disk changes that can cause provider crashes on read-back
+      disk,
+      # Ignore these to prevent unnecessary recreation
+      clone,
+      full_clone,
+    ]
   }
 }
