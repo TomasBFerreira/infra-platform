@@ -18,31 +18,31 @@ data "vault_generic_secret" "ssh_key" {
 }
 
 resource "proxmox_vm_qemu" "vm" {
-  name        = var.name
-  desc        = var.description
-  vmid        = var.vmid
-  target_node = var.target_node
+  name         = var.name
+  desc         = var.description
+  vmid         = var.vmid
+  target_node  = var.target_node
   force_create = false
-  
+
   # VM configuration
-  agent       = var.qemu_agent_enabled ? 1 : 0
-  cores       = var.cores
-  sockets     = var.sockets
-  memory      = var.memory
-  
+  agent   = var.qemu_agent_enabled ? 1 : 0
+  cores   = var.cores
+  sockets = var.sockets
+  memory  = var.memory
+
   # Boot configuration
-  boot    = var.boot_order
-  onboot  = var.start_on_boot
-  
+  boot   = var.boot_order
+  onboot = var.start_on_boot
+
   # BIOS and machine type
-  bios    = var.bios
-  scsihw  = var.scsihw
-  
+  bios   = var.bios
+  scsihw = var.scsihw
+
   # OS configuration
   clone      = var.clone_template != "" ? var.clone_template : null
   full_clone = var.clone_template != "" ? var.full_clone : null
   iso        = var.clone_template == "" ? var.iso : null
-  
+
   # Network configuration
   network {
     model  = var.network_model
@@ -50,9 +50,9 @@ resource "proxmox_vm_qemu" "vm" {
   }
 
   # Set ipconfig0 and nameserver as top-level arguments (for cloud-init IP/gateway/DNS)
-  ipconfig0   = var.cloudinit_enabled ? "ip=${var.network_ip},gw=${var.network_gateway}" : null
-  nameserver  = var.cloudinit_enabled && var.nameserver != "" ? var.nameserver : null
-  
+  ipconfig0  = var.cloudinit_enabled ? "ip=${var.network_ip},gw=${var.network_gateway}" : null
+  nameserver = var.cloudinit_enabled && var.nameserver != "" ? var.nameserver : null
+
   # Disk configuration
   disk {
     type    = var.disk_type

@@ -25,10 +25,10 @@ resource "proxmox_lxc" "container" {
   cores       = var.cores
   memory      = var.memory
   swap        = var.swap
-  
-  nameserver = var.nameserver
+
+  nameserver   = var.nameserver
   searchdomain = var.searchdomain
-  
+
   rootfs {
     storage = var.rootfs_storage
     size    = var.rootfs_size
@@ -40,20 +40,20 @@ resource "proxmox_lxc" "container" {
     ip     = var.network_ip
     gw     = var.network_gateway
   }
-  
+
   unprivileged = var.unprivileged
-  
+
   features {
     nesting = var.feature_nesting
     keyctl  = var.feature_keyctl
     fuse    = var.feature_fuse
   }
-  
+
   # Set SSH key if provided via Vault
   ssh_public_keys = var.ssh_key_vault_path != "" ? data.vault_generic_secret.ssh_key[0].data["public"] : var.ssh_public_keys
-  
+
   start       = var.start_on_boot
   target_node = var.target_node
-  
+
   onboot = var.start_on_boot
 }

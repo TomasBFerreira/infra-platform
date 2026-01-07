@@ -8,8 +8,8 @@ module "test_vm" {
   target_node = "benedict"
 
   # Hardware - minimal
-  cores   = 1
-  memory  = 512
+  cores  = 1
+  memory = 512
 
   # Clone from template
   clone_template = "ubuntu-24.04-cloudinit-template"

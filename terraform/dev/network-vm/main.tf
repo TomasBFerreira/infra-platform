@@ -9,17 +9,17 @@ module "network_vm" {
   target_node = "benedict"
 
   # Hardware specs
-  cores           = 2
-  sockets         = 1
-  memory          = 2048
+  cores              = 2
+  sockets            = 1
+  memory             = 2048
   qemu_agent_enabled = true
 
   # OS/Boot configuration
   # iso               = "local:iso/ubuntu-24.04.3-live-server-amd64.iso"
-  clone_template    = "ubuntu-24.04-cloudinit-template"
-  boot_order        = "order=virtio0;ide2"
-  bios              = "ovmf"
-  scsihw            = "virtio-scsi-pci"
+  clone_template = "ubuntu-24.04-cloudinit-template"
+  boot_order     = "order=virtio0;ide2"
+  bios           = "ovmf"
+  scsihw         = "virtio-scsi-pci"
 
   # Network configuration
   network_model   = "virtio"

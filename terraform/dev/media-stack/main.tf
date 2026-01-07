@@ -10,7 +10,7 @@ terraform {
       version = "~> 3.0"
     }
   }
-  
+
   backend "local" {
     path = "terraform.tfstate"
   }
@@ -64,33 +64,33 @@ data "vault_generic_secret" "ssh_key" {
 
 # Create LXC container
 resource "proxmox_lxc" "media_stack_worker" {
-  vmid        = 211
-  hostname    = "media-worker"
-  ostemplate  = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
-  cores       = 4
-  memory      = 4096
-  
+  vmid       = 211
+  hostname   = "media-worker"
+  ostemplate = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+  cores      = 4
+  memory     = 4096
+
   # Explicit DNS configuration
   nameserver = "1.1.1.1 8.8.8.8"
-  
+
   rootfs {
     storage = "local-lvm"
     size    = "32G"
   }
-  
+
   network {
     name   = "eth0"
     bridge = "vmbr0"
     ip     = "192.168.50.211/24"
     gw     = "192.168.50.1"
   }
-  
+
   unprivileged = true
-  
+
   features {
     nesting = true
   }
-  
+
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
   start           = true
   target_node     = "benedict"

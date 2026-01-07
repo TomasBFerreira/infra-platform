@@ -10,7 +10,7 @@ terraform {
       version = "~> 3.0"
     }
   }
-  
+
   backend "local" {
     path = "terraform.tfstate"
   }
@@ -31,23 +31,23 @@ provider "vault" {
 # Use the reusable LXC module
 module "infra_lxc" {
   source = "../../modules/proxmox-lxc"
-  
+
   vmid        = 221
   hostname    = "infra-node-dev"
   description = "Infrastructure services (Ansible, Terraform, Vault)"
-  
+
   cores  = 2
   memory = 2048
   swap   = 512
-  
+
   network_ip      = "192.168.50.221/24"
   network_gateway = "192.168.50.1"
-  
+
   rootfs_size = "32G"
-  
+
   # SSH key from Vault
   ssh_key_vault_path = "secret/ssh_keys/infra-lxc_worker"
-  
+
   target_node = "benedict"
 }
 
