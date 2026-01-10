@@ -1,6 +1,7 @@
+
 name: Deploy Vault LXC to Prod
 
-      - '.github/workflows/deploy-vault-lxc.yml'
+
   push:
     branches:
       - main
@@ -10,7 +11,6 @@ name: Deploy Vault LXC to Prod
       - 'ansible/dev/vault-lxc/**'
       - '.github/workflows/deploy-vault-lxc.yml'
   workflow_dispatch:
-
 jobs:
   deploy:
     runs-on: self-hosted
