@@ -14,7 +14,6 @@ on:
 jobs:
   deploy:
     runs-on: self-hosted
-    environment: production
     env:
       PVE_NODE: betsy
       LXC_TEMPLATE: local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst
