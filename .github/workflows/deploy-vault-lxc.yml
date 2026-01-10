@@ -20,6 +20,8 @@ jobs:
       LXC_ID: 310
       LXC_IP: 192.168.50.310/24
       LXC_GW: 192.168.50.1
+      UID: ${{ runner.uid }}
+      GID: ${{ runner.gid }}
     steps:
       - name: Clean up Docker-created files
         run: |
