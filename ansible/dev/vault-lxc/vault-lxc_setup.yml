@@ -1,0 +1,5 @@
+- name: Vault LXC Setup
+  hosts: vault-lxc
+  become: yes
+  roles:
+    - vault
