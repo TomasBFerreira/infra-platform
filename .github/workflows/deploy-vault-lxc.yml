@@ -21,6 +21,13 @@ jobs:
       LXC_IP: 192.168.50.310/24
       LXC_GW: 192.168.50.1
     steps:
+      - name: Clean up Docker-created files
+        run: |
+          if [ -d terraform/prod/vault-lxc/.terraform ]; then
+            sudo rm -rf terraform/prod/vault-lxc/.terraform
+          fi
+        continue-on-error: true
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
