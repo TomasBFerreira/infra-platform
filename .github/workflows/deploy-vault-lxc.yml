@@ -23,9 +23,7 @@ jobs:
     steps:
       - name: Clean up Docker-created files
         run: |
-          if [ -d terraform/prod/vault-lxc/.terraform ]; then
-            sudo rm -rf terraform/prod/vault-lxc/.terraform
-          fi
+          rm -rf terraform/prod/vault-lxc/.terraform || true
         continue-on-error: true
 
       - name: Checkout repository
