@@ -2,13 +2,13 @@ name: Deploy Vault LXC to Prod
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [dev]
     paths:
       - 'terraform/prod/vault-lxc/**'
       - 'ansible/dev/vault-lxc/**'
       - '.github/workflows/deploy-vault-lxc.yml'
+  pull_request:
+    branches: [dev]
   workflow_dispatch:
 
 jobs:
