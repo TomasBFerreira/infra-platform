@@ -25,10 +25,18 @@ run_terraform() {
     local cmd="$1"
     shift
     
+    # Dynamically build environment variable flags for all TF_VAR_* and VAULT_* variables
+    local env_vars=()
+    while IFS='=' read -r key value; do
+        if [[ $key =~ ^TF_VAR_ ]] || [[ $key =~ ^VAULT_ ]]; then
+            env_vars+=("-e" "$key")
+        fi
+    done < <(env)
+    
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@"
-            $DOCKER_COMPOSE_CMD run --rm -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user terraform "$cmd" "$@"
+            $DOCKER_COMPOSE_CMD run --rm "${env_vars[@]}" terraform "$cmd" "$@"
             ;;
         "help"|"-h"|"--help")
             $DOCKER_COMPOSE_CMD run --rm terraform help
@@ -47,10 +55,18 @@ run_terraform_with_chdir() {
     local cmd="$2"
     shift 2
     
+    # Dynamically build environment variable flags for all TF_VAR_* and VAULT_* variables
+    local env_vars=()
+    while IFS='=' read -r key value; do
+        if [[ $key =~ ^TF_VAR_ ]] || [[ $key =~ ^VAULT_ ]]; then
+            env_vars+=("-e" "$key")
+        fi
+    done < <(env)
+    
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@ (in directory: $chdir)"
-            $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user terraform "$cmd" "$@"
+            $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" "${env_vars[@]}" terraform "$cmd" "$@"
             ;;
         "help"|"-h"|"--help")
             $DOCKER_COMPOSE_CMD run --rm terraform help
