@@ -20,8 +20,10 @@ jobs:
       LXC_ID: 310
       LXC_IP: 192.168.50.310/24
       LXC_GW: 192.168.50.1
-      UID: ${{ runner.uid }}
-      GID: ${{ runner.gid }}
+          - name: Set UID and GID env
+            run: |
+              echo "UID=$(id -u)" >> $GITHUB_ENV
+              echo "GID=$(id -g)" >> $GITHUB_ENV
     steps:
       - name: Clean up Docker-created files
         run: |
