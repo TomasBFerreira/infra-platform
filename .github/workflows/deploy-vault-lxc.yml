@@ -29,17 +29,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Export Terraform variables
+        run: |
+          echo "TF_VAR_target_node=${{ env.PVE_NODE }}" >> $GITHUB_ENV
+          echo "TF_VAR_lxc_template=${{ env.LXC_TEMPLATE }}" >> $GITHUB_ENV
+          echo "TF_VAR_lxc_id=${{ env.LXC_ID }}" >> $GITHUB_ENV
+          echo "TF_VAR_lxc_ip=${{ env.LXC_IP }}" >> $GITHUB_ENV
+          echo "TF_VAR_lxc_gw=${{ env.LXC_GW }}" >> $GITHUB_ENV
+          echo "TF_VAR_proxmox_api_url=${{ secrets.PVE_API }}" >> $GITHUB_ENV
+          echo "TF_VAR_proxmox_user=${{ secrets.PVE_USER }}" >> $GITHUB_ENV
+          echo "TF_VAR_proxmox_password=${{ secrets.PVE_PASS }}" >> $GITHUB_ENV
+          echo "TF_VAR_ssh_public_keys=${{ secrets.SSH_PUBLIC_KEYS }}" >> $GITHUB_ENV
+
       - name: Terraform Init & Apply (container)
-        env:
-          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
-          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
-          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
-          TF_VAR_target_node: ${{ env.PVE_NODE }}
-          TF_VAR_lxc_template: ${{ env.LXC_TEMPLATE }}
-          TF_VAR_lxc_id: ${{ env.LXC_ID }}
-          TF_VAR_lxc_ip: ${{ env.LXC_IP }}
-          TF_VAR_lxc_gw: ${{ env.LXC_GW }}
-          TF_VAR_ssh_public_keys: ${{ secrets.SSH_PUBLIC_KEYS }}
         run: |
           ./scripts/run-terraform.sh -chdir terraform/prod/vault-lxc init
           ./scripts/run-terraform.sh -chdir terraform/prod/vault-lxc apply -auto-approve
