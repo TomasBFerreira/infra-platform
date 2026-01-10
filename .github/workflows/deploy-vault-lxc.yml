@@ -1,7 +1,6 @@
-
 name: Deploy Vault LXC to Prod
 
-
+on:
   push:
     branches:
       - main
