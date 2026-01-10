@@ -16,7 +16,7 @@ jobs:
     runs-on: self-hosted
     env:
       PVE_NODE: betsy
-      LXC_TEMPLATE: local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst
+      LXC_TEMPLATE: "100"
       LXC_ID: 310
       LXC_IP: 192.168.50.310/24
       LXC_GW: 192.168.50.1

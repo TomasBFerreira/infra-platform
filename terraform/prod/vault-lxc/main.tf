@@ -1,23 +1,28 @@
-resource "proxmox_lxc" "vault" {
-  name        = "vault"
-  ostemplate  = var.lxc_template
-  target_node = var.target_node
-  vmid        = var.lxc_id
-  cores       = 2
-  memory      = 2048
+resource "proxmox_virtual_environment_lxc_container" "vault" {
+  node_name = var.target_node
+  vm_id     = var.lxc_id
+  hostname  = "vault"
+
+  initialization {
+    hostname = "vault"
+  }
+
+  clone {
+    vm_id = var.lxc_template
+  }
+
+  cores    = 2
+  memory   = 2048
+
   disk {
-    size = "8G"
-    storage = "local-lvm"
+    datastore_id = "local-lvm"
+    size         = 8
   }
-  network {
-    name = "eth0"
-    bridge = "vmbr0"
-    ip = var.lxc_ip
-    gw = var.lxc_gw
+
+  network_device {
+    name   = "eth0"
+    bridge = "vmbr0"  
   }
-  features {
-    nesting = true
-  }
-  ssh_public_keys = var.ssh_public_keys
-  start = true
+
+  started = true
 }

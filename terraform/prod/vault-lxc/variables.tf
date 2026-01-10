@@ -14,14 +14,14 @@ variable "proxmox_password" {
   sensitive   = true
 }
 
-variable "lxc_template" {
-  description = "LXC template name/path"
-  type        = string
-}
-
 variable "target_node" {
   description = "Proxmox node/host where LXC will be created"
   type        = string
+}
+
+variable "lxc_template" {
+  description = "LXC template VM ID to clone from"
+  type        = number
 }
 
 variable "lxc_id" {
