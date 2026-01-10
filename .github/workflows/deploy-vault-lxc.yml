@@ -10,6 +10,7 @@ on:
       - 'ansible/dev/vault-lxc/**'
       - '.github/workflows/deploy-vault-lxc.yml'
   workflow_dispatch:
+
 jobs:
   deploy:
     runs-on: self-hosted
