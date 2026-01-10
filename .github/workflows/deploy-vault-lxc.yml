@@ -26,11 +26,6 @@ jobs:
           echo "UID=$(id -u)" >> $GITHUB_ENV
           echo "GID=$(id -g)" >> $GITHUB_ENV
 
-      - name: Clean up Docker-created files
-        run: |
-          rm -rf terraform/prod/vault-lxc/.terraform || true
-        continue-on-error: true
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
