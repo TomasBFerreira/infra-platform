@@ -1,4 +1,4 @@
-resource "proxmox_virtual_environment_lxc_container" "vault" {
+resource "proxmox_virtual_environment_container" "vault" {
   node_name = var.target_node
   vm_id     = var.lxc_id
   hostname  = "vault"
