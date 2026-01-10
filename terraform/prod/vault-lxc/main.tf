@@ -1,28 +1,38 @@
 resource "proxmox_virtual_environment_container" "vault" {
   node_name = var.target_node
   vm_id     = var.lxc_id
-  hostname  = "vault"
-
-  initialization {
-    hostname = "vault"
-  }
+  description = "Vault LXC Container"
 
   clone {
     vm_id = var.lxc_template
   }
 
-  cores    = 2
-  memory   = 2048
+  initialization {
+    hostname = "vault"
+  }
+
+  cpu {
+    cores = 2
+  }
+
+  memory {
+    dedicated = 2048
+  }
 
   disk {
     datastore_id = "local-lvm"
     size         = 8
   }
 
-  network_device {
-    name   = "eth0"
-    bridge = "vmbr0"  
+  network_interface {
+    name = "eth0"
   }
 
   started = true
+
+  lifecycle {
+    ignore_changes = [
+      initialization,
+    ]
+  }
 }
