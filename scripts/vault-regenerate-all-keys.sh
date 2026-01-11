@@ -38,7 +38,7 @@ vault kv delete secret/ssh_keys/network_vm_worker 2>/dev/null || echo "  (Key di
 # Regenerate media-stack key
 echo ""
 echo "3. Regenerating media-stack SSH key..."
-cd /app/infra-platform
+cd /app/dev/infra-platform
 docker run --rm \
   -e VAULT_ADDR="$VAULT_ADDR" \
   -e VAULT_TOKEN="$VAULT_TOKEN" \
@@ -56,7 +56,7 @@ echo "4. Regenerating network-vm SSH key..."
 docker run --rm \
   -e VAULT_ADDR="$VAULT_ADDR" \
   -e VAULT_TOKEN="$VAULT_TOKEN" \
-  -v "$PWD:/app/infra-platform" \
+  -v "$PWD:/app/dev/infra-platform" \
   -w /app/infra-platform \
   ubuntu:22.04 \
   bash -c "
@@ -65,7 +65,7 @@ docker run --rm \
     unzip -o vault.zip
     mv vault /usr/local/bin/
     chmod +x /usr/local/bin/vault
-    /app/infra-platform/scripts/vault-generate-network-vm-key.sh \"$VAULT_ADDR\" \"$VAULT_TOKEN\"
+    /app/dev/infra-platform/scripts/vault-generate-network-vm-key.sh \"$VAULT_ADDR\" \"$VAULT_TOKEN\"
   "
 
 echo ""

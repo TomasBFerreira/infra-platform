@@ -107,7 +107,7 @@ jobs:
           TF_LOG: DEBUG
           TF_LOG_PATH: /tmp/terraform.log
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack init
 
       - name: Terraform Plan
@@ -122,7 +122,7 @@ jobs:
           TF_LOG: DEBUG
           TF_LOG_PATH: /tmp/terraform.log
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack plan -out=tfplan
 
       - name: Print Terraform Debug Log (media-stack)
@@ -144,7 +144,7 @@ jobs:
           TF_LOG: DEBUG
           TF_LOG_PATH: /tmp/terraform.log
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/media-stack apply -auto-approve tfplan
 
       - name: Print Terraform Debug Log (media-stack apply)
@@ -166,12 +166,12 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           docker run --rm \
             -e VAULT_ADDR="$VAULT_ADDR" \
             -e VAULT_TOKEN="$VAULT_TOKEN" \
-            -v "$PWD:/app/infra-platform" \
-            -w /app/infra-platform \
+            -v "$PWD:/app/dev/infra-platform" \
+            -w /app/dev/infra-platform \
             ubuntu:22.04 \
             bash -c "\
               apt-get update && \
@@ -181,7 +181,7 @@ jobs:
               unzip -o vault.zip && \
               mv vault /usr/local/bin/ && \
               chmod +x /usr/local/bin/vault && \
-              /app/infra-platform/scripts/vault-generate-network-vm-key.sh \"$VAULT_ADDR\" \"$VAULT_TOKEN\" \
+              /app/dev/infra-platform/scripts/vault-generate-network-vm-key.sh \"$VAULT_ADDR\" \"$VAULT_TOKEN\" \
             "
 
       - name: Terraform Init
@@ -194,7 +194,7 @@ jobs:
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init
 
       - name: Terraform Plan
@@ -209,7 +209,7 @@ jobs:
           TF_LOG: DEBUG
           TF_LOG_PATH: /tmp/terraform.log
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm plan -out=tfplan
 
       - name: Print Terraform Debug Log (network-vm)
@@ -233,7 +233,7 @@ jobs:
           TF_LOG: DEBUG
           TF_LOG_PATH: /tmp/terraform.log
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply -auto-approve tfplan
 
       - name: Verify VM was created (workaround for provider crash)
@@ -281,7 +281,7 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           docker run --rm \
             -e VAULT_ADDR="$VAULT_ADDR" \
             -e VAULT_TOKEN="$VAULT_TOKEN" \
@@ -320,7 +320,7 @@ jobs:
           TF_LOG: DEBUG
           TF_LOG_PATH: /tmp/terraform.log
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/infra-lxc init
 
       - name: Terraform Plan
@@ -334,7 +334,7 @@ jobs:
           TF_LOG: DEBUG
           TF_LOG_PATH: /tmp/terraform.log
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/infra-lxc plan -out=tfplan
 
       - name: Print Terraform Debug Log (infra-lxc)
@@ -355,7 +355,7 @@ jobs:
           TF_LOG: DEBUG
           TF_LOG_PATH: /tmp/terraform.log
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/infra-lxc apply -auto-approve tfplan
 
       - name: Print Terraform Debug Log (infra-lxc apply)
@@ -372,7 +372,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Build and tag Ansible image
         run: |
-          cd /app/infra-platform
+          cd /app/dev/infra-platform
           docker compose build ansible
           docker tag custom-ansible:latest custom-ansible:ci
 

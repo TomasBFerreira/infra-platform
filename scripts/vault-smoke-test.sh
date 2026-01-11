@@ -79,7 +79,7 @@ fi
 # Test 5: Terraform Container Access
 echo ""
 echo "🔍 Test 5: Terraform Container Vault Access"
-cd /app/infra-platform
+cd /app/dev/infra-platform
 
 # Test if container can reach host Vault using wget
 if docker exec terraform-runner sh -c "wget -q -O - http://host.docker.internal:8200/v1/sys/health" > /dev/null 2>&1; then
