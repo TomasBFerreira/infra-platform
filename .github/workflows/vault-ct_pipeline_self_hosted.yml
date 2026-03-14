@@ -1,0 +1,104 @@
+name: Vault CT Pipeline (Self-Hosted)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/dev/vault-ct/**'
+      - 'ansible/dev/vault-ct/**'
+  workflow_dispatch:
+
+env:
+  TF_VERSION: 1.6.4
+  PVE_NODE: benedict
+  VMID: '210'
+
+jobs:
+  setup:
+    runs-on: self-hosted
+    outputs:
+      tf_plan: ${{ steps.plan.outputs.tf_plan }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        id: init
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct plan -no-color -input=false -out=tfplan
+          echo "tf_plan=$(base64 -w0 terraform/dev/vault-ct/tfplan)" >> $GITHUB_OUTPUT
+
+  terraform-apply:
+    needs: setup
+    if: github.ref == 'refs/heads/main' && needs.setup.outputs.tf_plan != ''
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct init -input=false
+
+      - name: Terraform Apply
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+        run: |
+          cd /app/infra-platform
+          echo "${{ needs.setup.outputs.tf_plan }}" | base64 -d > terraform/dev/vault-ct/tfplan
+          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct apply -auto-approve tfplan
+
+  ansible:
+    needs: terraform-apply
+    runs-on: self-hosted
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Run Ansible playbook
+        run: |
+          ansible-playbook \
+            -i ansible/dev/vault-ct/inventory.ini \
+            -v \
+            ansible/dev/vault-ct/vault-ct_setup.yml
