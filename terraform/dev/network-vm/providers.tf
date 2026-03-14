@@ -32,6 +32,7 @@ provider "proxmox" {
 }
 
 provider "vault" {
-  address = var.vault_address
-  token   = var.vault_token
+  address          = var.vault_address
+  token            = var.vault_token
+  skip_child_token = true
 }
