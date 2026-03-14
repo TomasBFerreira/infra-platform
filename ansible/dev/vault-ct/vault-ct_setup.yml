@@ -215,3 +215,67 @@
       debug:
         msg: "Vault was already initialized — skipping init steps."
       when: vault_init_status.json.initialized
+
+    # --- CI policy + token setup (runs on init or when VAULT_ROOT_TOKEN is provided) ---
+
+    - name: Set admin token fact
+      set_fact:
+        vault_admin_token: "{{ vault_init_result.json.root_token if (not vault_init_status.json.initialized) else lookup('env', 'VAULT_ROOT_TOKEN') }}"
+
+    - name: Create or update CI pipeline policy
+      uri:
+        url: "{{ vault_addr }}/v1/sys/policies/acl/ci-pipeline"
+        method: PUT
+        headers:
+          X-Vault-Token: "{{ vault_admin_token }}"
+        body_format: json
+        body:
+          policy: |
+            path "secret/data/*" {
+              capabilities = ["read", "list"]
+            }
+            path "secret/metadata/*" {
+              capabilities = ["list"]
+            }
+        status_code: [200, 204]
+      when: vault_admin_token != ''
+      no_log: true
+
+    - name: Create CI pipeline token
+      uri:
+        url: "{{ vault_addr }}/v1/auth/token/create"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_admin_token }}"
+        body_format: json
+        body:
+          display_name: "github-actions"
+          policies: ["ci-pipeline"]
+          ttl: "8760h"
+          renewable: true
+        status_code: [200]
+      register: ci_token_result
+      when: vault_admin_token != ''
+      no_log: true
+
+    - name: Update GitHub secret VAULT_ADDR
+      delegate_to: localhost
+      become: no
+      shell: gh secret set VAULT_ADDR --body "http://192.168.50.211:8200"
+      environment:
+        GH_TOKEN: "{{ lookup('env', 'GH_PAT') }}"
+      when: vault_admin_token != '' and ci_token_result is not skipped
+
+    - name: Update GitHub secret VAULT_TOKEN
+      delegate_to: localhost
+      become: no
+      shell: gh secret set VAULT_TOKEN --body "{{ ci_token_result.json.auth.client_token }}"
+      environment:
+        GH_TOKEN: "{{ lookup('env', 'GH_PAT') }}"
+      when: vault_admin_token != '' and ci_token_result is not skipped
+      no_log: true
+
+    - name: CI setup summary
+      debug:
+        msg: "CI pipeline policy and token created. VAULT_ADDR and VAULT_TOKEN GitHub secrets updated to point to CT 211."
+      when: vault_admin_token != '' and ci_token_result is not skipped
