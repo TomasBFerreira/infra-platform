@@ -15,16 +15,13 @@ env:
   VMID: '220'
 
 jobs:
-  setup:
+  terraform:
     runs-on: self-hosted
-    outputs:
-      tf_plan: ${{ steps.plan.outputs.tf_plan }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Terraform Init via container
-        id: init
+      - name: Terraform Init
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
@@ -36,8 +33,7 @@ jobs:
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
 
-      - name: Terraform Plan via container
-        id: plan
+      - name: Terraform Apply
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
@@ -47,55 +43,10 @@ jobs:
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm plan -no-color -input=false -out=tfplan
-          echo "tf_plan=$(base64 -w0 terraform/dev/network-vm/tfplan)" >> $GITHUB_OUTPUT
-
-  terraform-apply:
-    needs: setup
-    if: github.ref == 'refs/heads/main' && needs.setup.outputs.tf_plan != ''
-    runs-on: self-hosted
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Cleanup Proxmox VM via API
-        env:
-          PVE_API: ${{ secrets.PVE_API }}
-          PVE_USER: ${{ secrets.PVE_USER }}
-          PVE_PASS: ${{ secrets.PVE_PASS }}
-          PVE_NODE: ${{ env.PVE_NODE }}
-          VMID: ${{ env.VMID }}
-        run: |
-          # Add your cleanup logic here if needed
-          echo "Cleaning up VM $VMID on node $PVE_NODE"
-
-      - name: Terraform Init via container
-        env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
-        run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
-
-      - name: Terraform Apply via container
-        env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
-        run: |
-          cd /app/infra-platform
-          echo "${{ needs.setup.outputs.tf_plan }}" | base64 -d > terraform/dev/network-vm/tfplan
-          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply -auto-approve tfplan
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply -no-color -input=false -auto-approve
 
   ansible:
-    needs: terraform-apply
+    needs: terraform
     runs-on: self-hosted
     env:
       LC_ALL: C.UTF-8
