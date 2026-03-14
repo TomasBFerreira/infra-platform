@@ -103,8 +103,8 @@ jobs:
 
       - name: Install Ansible
         run: |
-          python3 -m pip install --quiet --upgrade pip
-          python3 -m pip install --quiet ansible
+          sudo apt-get install -y python3-pip python3-venv --quiet
+          python3 -m pip install --quiet --break-system-packages ansible
 
       - name: Install Ansible collections
         run: |
