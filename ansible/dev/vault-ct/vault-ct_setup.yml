@@ -68,7 +68,7 @@
             tls_disable = true
           }
 
-          api_addr = "http://192.168.50.210:8200"
+          api_addr = "http://192.168.50.211:8200"
 
     - name: Enable and start Vault service
       systemd:
@@ -202,7 +202,7 @@
     - name: Print init summary
       debug:
         msg: |
-          Vault initialized at http://192.168.50.210:8200
+          Vault initialized at http://192.168.50.211:8200
           Root token and unseal keys saved to /root/vault-init.json
           IMPORTANT: Copy /root/vault-init.json somewhere safe and then delete it.
       when: not vault_init_status.json.initialized
