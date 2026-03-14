@@ -189,19 +189,29 @@
         - "{{ vault_init_result.json.keys[1] }}"
       when: not vault_init_status.json.initialized
 
+    - name: Check if KV v2 is mounted
+      uri:
+        url: "{{ vault_addr }}/v1/sys/mounts/secret"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ vault_admin_token if vault_admin_token is defined and vault_admin_token != '' else vault_init_result.json.root_token }}"
+        status_code: [200, 400]
+      register: kv_mount_check
+      when: not vault_init_status.json.initialized or (vault_admin_token is defined and vault_admin_token != '')
+
     - name: Enable KV v2 secrets engine
       uri:
         url: "{{ vault_addr }}/v1/sys/mounts/secret"
         method: POST
         headers:
-          X-Vault-Token: "{{ vault_init_result.json.root_token }}"
+          X-Vault-Token: "{{ vault_admin_token if vault_admin_token is defined and vault_admin_token != '' else vault_init_result.json.root_token }}"
         body_format: json
         body:
           type: kv
           options:
             version: "2"
         status_code: [200, 204]
-      when: not vault_init_status.json.initialized
+      when: kv_mount_check is not skipped and kv_mount_check.status == 400
 
     - name: Print init summary
       debug:
