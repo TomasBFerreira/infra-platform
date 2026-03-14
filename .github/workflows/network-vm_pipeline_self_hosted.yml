@@ -11,7 +11,7 @@ on:
 env:
   TF_VERSION: 1.6.4
   VAULT_VERSION: 1.21.0
-  PVE_NODE: betsy
+  PVE_NODE: benedict
   VMID: '220'
 
 jobs:
@@ -25,32 +25,30 @@ jobs:
 
       - name: Terraform Init via container
         id: init
-        working-directory: terraform/dev/network-vm
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: myroot
-          TF_VAR_vault_address: http://localhost:8200
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh init -input=false
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
 
       - name: Terraform Plan via container
         id: plan
-        working-directory: terraform/dev/network-vm
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: myroot
-          TF_VAR_vault_address: http://localhost:8200
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh plan -no-color -input=false -out=tfplan
-          echo "tf_plan=$(base64 -w0 tfplan)" >> $GITHUB_OUTPUT
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm plan -no-color -input=false -out=tfplan
+          echo "tf_plan=$(base64 -w0 terraform/dev/network-vm/tfplan)" >> $GITHUB_OUTPUT
 
   terraform-apply:
     needs: setup
@@ -72,30 +70,29 @@ jobs:
           echo "Cleaning up VM $VMID on node $PVE_NODE"
 
       - name: Terraform Init via container
-        working-directory: terraform/dev/network-vm
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: myroot
-          TF_VAR_vault_address: http://localhost:8200
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh init -input=false
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
 
       - name: Terraform Apply via container
-        working-directory: terraform/dev/network-vm
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: myroot
-          TF_VAR_vault_address: http://localhost:8200
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh apply -auto-approve tfplan
+          echo "${{ needs.setup.outputs.tf_plan }}" | base64 -d > terraform/dev/network-vm/tfplan
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply -auto-approve tfplan
 
   ansible:
     needs: terraform-apply
@@ -112,8 +109,8 @@ jobs:
 
       - name: Run Ansible playbook via container
         env:
-          VAULT_ADDR: http://localhost:8200
-          VAULT_TOKEN: myroot
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         working-directory: ansible/dev/network-vm
         run: |
           cd /app/infra-platform
