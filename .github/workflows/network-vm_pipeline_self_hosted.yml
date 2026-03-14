@@ -59,6 +59,15 @@ jobs:
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
 
+      - name: Fetch SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/network_vm_key
+          chmod 600 /tmp/network_vm_key
+
       - name: Run Ansible playbook
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
