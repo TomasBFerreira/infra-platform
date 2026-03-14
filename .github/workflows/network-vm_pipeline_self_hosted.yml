@@ -101,16 +101,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Ansible playbook via container
+      - name: Install Ansible
+        run: |
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet ansible
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Run Ansible playbook
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          cd /app/infra-platform
-          docker compose run --rm ansible bash -c "
-            ansible-galaxy collection install -r /workspace/ansible/requirements.yml &&
-            ansible-playbook \
-              -i /workspace/ansible/dev/network-vm/inventory.ini \
-              -v \
-              /workspace/ansible/dev/network-vm/network-vm_setup.yml
-          "
+          ansible-playbook \
+            -i ansible/dev/network-vm/inventory.ini \
+            -v \
+            ansible/dev/network-vm/network-vm_setup.yml
