@@ -97,6 +97,9 @@ jobs:
   ansible:
     needs: terraform-apply
     runs-on: self-hosted
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
