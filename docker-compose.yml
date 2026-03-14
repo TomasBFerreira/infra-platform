@@ -18,7 +18,7 @@ services:
       - tools
 
   ansible:
-    image: quay.io/ansible/ansible-core:latest
+    image: quay.io/ansible/ansible-core:2.17
     container_name: ansible-runner
     restart: unless-stopped
     working_dir: /workspace
