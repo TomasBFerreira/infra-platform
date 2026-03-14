@@ -16,7 +16,7 @@
     state: present
 
 - name: Ensure timezone is set
-  timezone:
+  community.general.timezone:
     name: "{{ timezone | default('UTC') }}"
 
 - name: Create shared directories

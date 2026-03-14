@@ -101,20 +101,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Ensure Ansible dependencies are available
-        run: |
-          # Install Ansible collections if needed
-          cd /app/infra-platform
-          ./scripts/run-ansible.sh galaxy collection install community.general community.hashi_vault || true
-
       - name: Run Ansible playbook via container
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-        working-directory: ansible/dev/network-vm
         run: |
           cd /app/infra-platform
-          ./scripts/run-ansible.sh playbook \
-            -i ansible/dev/network-vm/inventory.ini \
-            -v \
-            ansible/dev/network-vm/network-vm_setup.yml
+          docker compose run --rm ansible bash -c "
+            ansible-galaxy collection install -r /workspace/ansible/requirements.yml &&
+            ansible-playbook \
+              -i /workspace/ansible/dev/network-vm/inventory.ini \
+              -v \
+              /workspace/ansible/dev/network-vm/network-vm_setup.yml
+          "
