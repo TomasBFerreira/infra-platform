@@ -111,15 +111,19 @@
         group: root
       when: not vault_init_status.json.initialized
 
+    - name: Extract unseal keys into facts
+      set_fact:
+        vault_unseal_key_0: "{{ vault_init_result.json.keys[0] }}"
+        vault_unseal_key_1: "{{ vault_init_result.json.keys[1] }}"
+      when: not vault_init_status.json.initialized
+
     - name: Write unseal keys file for auto-unseal service
       copy:
         dest: "{{ vault_config_dir }}/.unseal_keys"
         mode: '0400'
         owner: root
         group: root
-        content: |
-          {{ vault_init_result.json.keys[0] }}
-          {{ vault_init_result.json.keys[1] }}
+        content: "{{ vault_unseal_key_0 }}\n{{ vault_unseal_key_1 }}\n"
       when: not vault_init_status.json.initialized
 
     - name: Write auto-unseal script
