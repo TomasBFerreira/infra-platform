@@ -7,17 +7,16 @@ terraform {
     }
     vault = {
       source  = "hashicorp/vault"
-      version = "~> 3.0"
+      version = "~> 5.0"
     }
   }
-  
+
   backend "local" {
     path = "terraform.tfstate"
   }
 }
 
 provider "proxmox" {
-<<<<<<< HEAD
   pm_api_url      = var.proxmox_api_url
   pm_user         = var.proxmox_user
   pm_password     = var.proxmox_password
@@ -25,17 +24,7 @@ provider "proxmox" {
 }
 
 provider "vault" {
-  address = "http://192.168.50.169:8200"
-=======
-  pm_api_url          = var.proxmox_api_url
-  pm_api_token_id     = var.proxmox_user
-  pm_api_token_secret = var.proxmox_password
-  pm_tls_insecure     = true
-}
-
-provider "vault" {
   address = var.vault_address
->>>>>>> dev
   token   = var.vault_token
 }
 
@@ -43,9 +32,6 @@ variable "vault_token" {
   description = "Vault access token"
   type        = string
   sensitive   = true
-<<<<<<< HEAD
-  default     = "root"
-=======
   default     = ""
 }
 
@@ -53,7 +39,6 @@ variable "vault_address" {
   description = "Vault server address"
   type        = string
   default     = "http://localhost:8200"
->>>>>>> dev
 }
 
 variable "proxmox_api_url" {
@@ -79,69 +64,37 @@ data "vault_generic_secret" "ssh_key" {
 
 # Create LXC container
 resource "proxmox_lxc" "media_stack_worker" {
-  vmid        = 200
-  hostname    = "media-worker"
-  ostemplate  = "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"
-  cores       = 4
-  memory      = 4096
-  
-  # Explicit DNS configuration
+  vmid       = 200
+  hostname   = "media-worker"
+  ostemplate = "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"
+  cores      = 4
+  memory     = 4096
+
   nameserver = "1.1.1.1 8.8.8.8"
-  
+
   rootfs {
     storage = "local-lvm"
     size    = "32G"
   }
-<<<<<<< HEAD
 
-  network {
-    model  = "virtio"
-    bridge = "vmbr0"
-=======
-  
   network {
     name   = "eth0"
     bridge = "vmbr0"
     ip     = "192.168.50.200/24"
     gw     = "192.168.50.1"
   }
-  
+
   unprivileged = true
-  
+
   features {
     nesting = true
->>>>>>> dev
   }
-  
+
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public"]
   start           = true
-  target_node     = "betsy"
-
-  # Provisioner to ensure SSH key is properly set up
-  provisioner "remote-exec" {
-    inline = [
-      "mkdir -p /root/.ssh",
-      "echo '${data.vault_generic_secret.ssh_key.data["public"]}' > /root/.ssh/authorized_keys",
-      "chmod 700 /root/.ssh",
-      "chmod 600 /root/.ssh/authorized_keys"
-    ]
-
-    connection {
-      type        = "ssh"
-      user        = "root"
-      private_key = data.vault_generic_secret.ssh_key.data["private"]
-      host        = "192.168.50.200"
-    }
-  }
+  target_node     = "benedict"
 }
 
-<<<<<<< HEAD
-output "network_vm_ip" {
-  value = "192.168.50.220"
-}
-
-=======
 output "media_worker_ip" {
   value = "192.168.50.200"
 }
->>>>>>> dev

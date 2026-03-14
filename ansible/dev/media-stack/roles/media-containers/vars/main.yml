@@ -1,15 +1,8 @@
 base_media_path: /mnt/media
-timezone: "UTC"
+timezone: "Europe/London"
 
-
-<<<<<<< HEAD
-vault_addr: "http://192.168.50.169:8200"
+vault_addr: "{{ lookup('env', 'VAULT_ADDR') }}"
 vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
-=======
-vault_addr: "http://localhost:8200"
-vault_token: "{{ lookup('env', 'VAULT_TOKEN') | default('myroot', true) }}"
->>>>>>> dev
-
 
 media_containers:
   - name: sonarr
@@ -65,5 +58,3 @@ media_containers:
       - "{{ base_media_path }}/movies:/media/movies"
     env:
       WEBUI_PORT: "8096"
-
-timezone: "Europe/London"
