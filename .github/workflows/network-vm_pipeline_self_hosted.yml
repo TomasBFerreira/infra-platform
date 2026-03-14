@@ -101,11 +101,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Ansible
-        run: |
-          sudo apt-get install -y python3-pip python3-venv --quiet
-          python3 -m pip install --quiet --break-system-packages ansible
-
       - name: Install Ansible collections
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
