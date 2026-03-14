@@ -3,3 +3,5 @@ tailscale_authkey: >-
     'secret=secret/data/tailscale:authkey token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
 vault_addr: "{{ lookup('env', 'VAULT_ADDR') }}"
 vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+tailscale_subnet_routes: "192.168.50.0/24"
+tailscale_hostname: "benedict-subnet-router"

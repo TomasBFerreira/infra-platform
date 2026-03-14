@@ -1,79 +1,91 @@
-- name: Add Tailscale official APT repository key
-  apt_key:
-    url: https://pkgs.tailscale.com/stable/ubuntu/focal.noarmor.gpg
-    state: present
+- name: Add Tailscale GPG key
+  shell: |
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+      -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+  args:
+    creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
 
-- name: Add Tailscale official APT repository
+- name: Add Tailscale APT repository
   apt_repository:
-    repo: "deb https://pkgs.tailscale.com/stable/ubuntu focal main"
+    repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian bookworm main"
     state: present
-
-- name: Update apt cache after adding repo
-  apt:
-    update_cache: yes
+    filename: tailscale
 
 - name: Install Tailscale
   apt:
     name: tailscale
     state: present
+    update_cache: yes
+
+- name: Enable IP forwarding (IPv4)
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    sysctl_set: yes
+    state: present
+    reload: yes
+
+- name: Enable IP forwarding (IPv6)
+  sysctl:
+    name: net.ipv6.conf.all.forwarding
+    value: '1'
+    sysctl_set: yes
+    state: present
+    reload: yes
 
 - name: Ensure tun module is loaded
   modprobe:
     name: tun
     state: present
 
-- name: Ensure /dev/net/tun device exists
+- name: Ensure /dev/net/tun exists
   file:
     path: /dev/net/tun
     state: touch
     mode: '0600'
-  when: ansible_facts['devices']['tun'] is not defined
+  when: not ansible_facts.get('devices', {}).get('tun')
 
 - name: Check /dev/net/tun exists
   stat:
     path: /dev/net/tun
   register: tun_stat
 
-- fail:
-    msg: "/dev/net/tun device is missing. Please ensure it is enabled and accessible."
+- name: Fail if /dev/net/tun is missing
+  fail:
+    msg: "/dev/net/tun is missing. Enable tun device in the LXC config."
   when: not tun_stat.stat.exists
-    
-- name: Enable and start tailscaled service
+
+- name: Enable and start tailscaled
   systemd:
     name: tailscaled
     enabled: yes
     state: started
 
-- name: Restart tailscaled service
-  systemd:
-    name: tailscaled
-    state: restarted
-    enabled: yes
+- name: Check if Tailscale is already connected
+  command: tailscale status --json
+  register: ts_status
+  changed_when: false
+  failed_when: false
 
-- name: Check tailscaled service status and logs for debugging
-  command: journalctl -u tailscaled --no-pager -n 50
-  register: tailscaled_logs
-  ignore_errors: yes
+- name: Set tailscale_connected fact
+  set_fact:
+    tailscale_connected: "{{ (ts_status.stdout | from_json).BackendState == 'Running' }}"
+  when: ts_status.rc == 0
 
-- debug:
-    msg: "{{ tailscaled_logs.stdout }}"
-
-- name: Wait for tailscaled to be active or activating
-  command: systemctl is-active tailscaled
-  register: tailscaled_status
-  retries: 15
-  delay: 5
-  until: tailscaled_status.stdout in ['active', 'activating']
-  ignore_errors: yes
-  
-- name: Authenticate with Tailscale
-  command: "tailscale up --authkey={{ tailscale_authkey }}"
-  args:
-    creates: /var/lib/tailscale/tailscaled.state
+- name: Authenticate and configure Tailscale as subnet router
+  command: >
+    tailscale up
+    --authkey={{ tailscale_authkey }}
+    --advertise-routes={{ tailscale_subnet_routes }}
+    --accept-routes
+    --hostname={{ tailscale_hostname }}
+  when: not (tailscale_connected | default(false))
+  no_log: true
 
 - name: Wait for Tailscale to come online
-  shell: tailscale status | grep '100.64'
-  register: tailscale_status
-  retries: 6
-  delay: 5
-  until: tailscale_status.stdout | length > 0
+  command: tailscale status
+  register: ts_online
+  retries: 10
+  delay: 3
+  until: ts_online.rc == 0
+  changed_when: false
