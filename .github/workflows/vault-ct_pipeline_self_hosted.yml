@@ -58,9 +58,18 @@ jobs:
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
 
+      - name: Fetch SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/vault_ct_worker > /tmp/ansible_vault_ct_id_ed25519
+          chmod 600 /tmp/ansible_vault_ct_id_ed25519
+
       - name: Run Ansible playbook
         run: |
           ansible-playbook \
             -i ansible/dev/vault-ct/inventory.ini \
+            --private-key /tmp/ansible_vault_ct_id_ed25519 \
             -v \
             ansible/dev/vault-ct/vault-ct_setup.yml
