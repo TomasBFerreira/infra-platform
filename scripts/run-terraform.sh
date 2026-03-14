@@ -71,9 +71,7 @@ if [ -f ".env" ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
-# Override Vault address for containers
-export TF_VAR_vault_address="http://host.docker.internal:8200"
-export VAULT_ADDR="http://host.docker.internal:8200"
+# Use Vault address from environment (TF_VAR_vault_address set by workflow)
 
 # Check for -chdir flag first
 CHDIR_DIR=""
