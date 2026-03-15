@@ -26,6 +26,7 @@ resource "proxmox_lxc" "network_vm" {
 
   features {
     nesting = true
+    tun     = true
   }
 
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]

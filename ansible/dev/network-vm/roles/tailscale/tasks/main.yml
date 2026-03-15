@@ -33,18 +33,6 @@
     state: present
     reload: yes
 
-- name: Ensure tun module is loaded
-  modprobe:
-    name: tun
-    state: present
-
-- name: Ensure /dev/net/tun exists
-  file:
-    path: /dev/net/tun
-    state: touch
-    mode: '0600'
-  when: not ansible_facts.get('devices', {}).get('tun')
-
 - name: Check /dev/net/tun exists
   stat:
     path: /dev/net/tun
@@ -52,7 +40,7 @@
 
 - name: Fail if /dev/net/tun is missing
   fail:
-    msg: "/dev/net/tun is missing. Enable tun device in the LXC config."
+    msg: "/dev/net/tun is missing. Enable tun device passthrough in the Proxmox LXC config (features: nesting=1)."
   when: not tun_stat.stat.exists
 
 - name: Enable and start tailscaled
