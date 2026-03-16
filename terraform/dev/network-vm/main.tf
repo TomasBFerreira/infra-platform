@@ -37,6 +37,7 @@ resource "null_resource" "configure_tun" {
   depends_on = [proxmox_lxc.network_vm]
 
   provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
     environment = {
       PVE_API  = var.pve_api
       PVE_USER = var.pve_user
@@ -44,6 +45,7 @@ resource "null_resource" "configure_tun" {
     }
     command = <<-EOT
       set -e
+      apt-get install -y -q curl jq 2>/dev/null || true
       RESPONSE=$(curl -sf -k \
         --data-urlencode "username=$PVE_USER" \
         --data-urlencode "password=$PVE_PASS" \
