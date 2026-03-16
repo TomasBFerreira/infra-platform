@@ -76,6 +76,8 @@ jobs:
               || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/220.conf
             grep -q 'lxc.mount.entry.*tun' /etc/pve/lxc/220.conf \
               || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/220.conf
+            grep -q 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start' /etc/pve/lxc/220.conf \
+              || echo 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start = 0' >> /etc/pve/lxc/220.conf
             pct reboot 220
           SSHEOF
           echo "TUN configured, waiting for reboot..."
