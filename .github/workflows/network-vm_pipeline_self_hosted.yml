@@ -63,56 +63,22 @@ jobs:
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
 
-      - name: Configure TUN device via Proxmox API
+      - name: Configure TUN device via SSH to Proxmox host
         env:
           PVE_API: ${{ secrets.PVE_API }}
           PVE_USER: ${{ secrets.PVE_USER }}
-          PVE_PASS: ${{ secrets.PVE_PASS }}
         run: |
-          python3 - <<'EOF'
-          import urllib.request, urllib.parse, json, ssl, os, time
-
-          ctx = ssl.create_default_context()
-          ctx.check_hostname = False
-          ctx.verify_mode = ssl.CERT_NONE
-
-          api  = os.environ['PVE_API']
-          user = os.environ['PVE_USER']
-          pw   = os.environ['PVE_PASS']
-
-          auth_data = urllib.parse.urlencode({'username': user, 'password': pw}).encode()
-          with urllib.request.urlopen(urllib.request.Request(f'{api}/access/ticket', data=auth_data), context=ctx) as r:
-            resp = json.loads(r.read())
-          ticket = resp['data']['ticket']
-          csrf   = resp['data']['CSRFPreventionToken']
-          headers = {'CSRFPreventionToken': csrf, 'Cookie': f'PVEAuthCookie={ticket}', 'Content-Type': 'application/x-www-form-urlencoded'}
-
-          # Build body manually to keep brackets unencoded in key names (urlencode encodes them to %5B%5D which Proxmox rejects)
-          def make_body(*params):
-            return '&'.join(k + '=' + urllib.parse.quote(v, safe='') for k, v in params).encode()
-
-          cfg = make_body(
-            ('lxc[0]', 'lxc.cgroup2.devices.allow: c 10:200 rwm'),
-            ('lxc[1]', 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'),
-          )
-
-          def api_call(url, data=b'', method='POST'):
-            req = urllib.request.Request(url, data=data, method=method, headers=headers)
-            try:
-              with urllib.request.urlopen(req, context=ctx) as r:
-                print(f"{method} {url.split('/nodes/')[-1]} -> {r.status}")
-            except urllib.error.HTTPError as e:
-              print(f"{method} {url.split('/nodes/')[-1]} -> {e.code}: {e.read().decode()}")
-              raise
-
-          api_call(f'{api}/nodes/benedict/lxc/220/config', data=cfg, method='PUT')
-          print("Config updated, stopping container...")
-          api_call(f'{api}/nodes/benedict/lxc/220/status/stop')
-          time.sleep(8)
-          api_call(f'{api}/nodes/benedict/lxc/220/status/start')
-          print("Container restarted, waiting for boot...")
-          time.sleep(15)
-          EOF
+          BENEDICT_IP=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${BENEDICT_IP} bash << 'SSHEOF'
+            grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/220.conf \
+              || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/220.conf
+            grep -q 'lxc.mount.entry.*tun' /etc/pve/lxc/220.conf \
+              || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/220.conf
+            pct reboot 220
+          SSHEOF
+          echo "TUN configured, waiting for reboot..."
+          sleep 15
 
       - name: Wait for SSH to be ready
         run: |
