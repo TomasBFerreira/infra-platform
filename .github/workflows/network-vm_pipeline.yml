@@ -40,6 +40,8 @@ jobs:
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
         run: |
           terraform init -input=false
 
@@ -51,6 +53,8 @@ jobs:
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
         run: |
           terraform plan -no-color -input=false -out=tfplan
           echo "tf_plan=$(base64 -w0 tfplan)" >> $GITHUB_OUTPUT
@@ -87,6 +91,8 @@ jobs:
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
         run: |
           terraform apply -auto-approve
 
