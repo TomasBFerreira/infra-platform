@@ -37,13 +37,31 @@ resource "null_resource" "configure_tun" {
   depends_on = [proxmox_lxc.network_vm]
 
   provisioner "local-exec" {
+    environment = {
+      PVE_API  = var.pve_api
+      PVE_USER = var.pve_user
+      PVE_PASS = var.pve_pass
+    }
     command = <<-EOT
-      grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/220.conf \
-        || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/220.conf
-      grep -q 'lxc.mount.entry: /dev/net/tun' /etc/pve/lxc/220.conf \
-        || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/220.conf
-      pct reboot 220
-      sleep 10
+      set -e
+      RESPONSE=$(curl -sf -k \
+        --data-urlencode "username=$PVE_USER" \
+        --data-urlencode "password=$PVE_PASS" \
+        "$PVE_API/access/ticket")
+      TICKET=$(echo "$RESPONSE" | jq -r '.data.ticket')
+      CSRF=$(echo "$RESPONSE"   | jq -r '.data.CSRFPreventionToken')
+
+      curl -sf -k -X PUT "$PVE_API/nodes/benedict/lxc/220/config" \
+        -H "CSRFPreventionToken: $CSRF" \
+        -b "PVEAuthCookie=$TICKET" \
+        --data-urlencode "lxc[0]=lxc.cgroup2.devices.allow: c 10:200 rwm" \
+        --data-urlencode "lxc[1]=lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
+
+      curl -sf -k -X POST "$PVE_API/nodes/benedict/lxc/220/status/reboot" \
+        -H "CSRFPreventionToken: $CSRF" \
+        -b "PVEAuthCookie=$TICKET"
+
+      sleep 15
     EOT
   }
 }
