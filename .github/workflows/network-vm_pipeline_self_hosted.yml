@@ -63,6 +63,12 @@ jobs:
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
 
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on 192.168.50.220..."
+          timeout 120 bash -c 'until nc -z 192.168.50.220 22; do sleep 5; done'
+          echo "SSH is up"
+
       - name: Fetch SSH key from Vault
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
