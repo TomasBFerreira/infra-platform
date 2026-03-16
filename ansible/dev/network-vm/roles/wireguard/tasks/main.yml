@@ -15,9 +15,11 @@
       PublicKey = {{ wg_public_key_peer }}
       Endpoint = <remote-peer>:51820
       AllowedIPs = 0.0.0.0/0
+  when: wg_private_key | default('') | length > 0
 
 - name: Enable and start WireGuard
   systemd:
     name: wg-quick@wg0
     enabled: yes
     state: started
+  when: wg_private_key | default('') | length > 0
