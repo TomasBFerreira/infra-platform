@@ -13,14 +13,83 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  TF_VERSION: 1.6.4
-  VAULT_VERSION: 1.21.0
-  PVE_NODE: benedict
-  VMID: '220'
+  BLUE_VMID: '220'
+  BLUE_IP: '192.168.50.220'
+  BLUE_HOST: 'network-vm-blue'
+  GREEN_VMID: '221'
+  GREEN_IP: '192.168.50.221'
+  GREEN_HOST: 'network-vm-green'
 
 jobs:
-  terraform:
+  resolve-slots:
     runs-on: self-hosted
+    outputs:
+      active_slot: ${{ steps.slots.outputs.active_slot }}
+      active_vmid: ${{ steps.slots.outputs.active_vmid }}
+      active_ip: ${{ steps.slots.outputs.active_ip }}
+      active_host: ${{ steps.slots.outputs.active_host }}
+      staging_slot: ${{ steps.slots.outputs.staging_slot }}
+      staging_vmid: ${{ steps.slots.outputs.staging_vmid }}
+      staging_ip: ${{ steps.slots.outputs.staging_ip }}
+      staging_host: ${{ steps.slots.outputs.staging_host }}
+      first_run: ${{ steps.slots.outputs.first_run }}
+    steps:
+      - name: Resolve active and staging slots
+        id: slots
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          ACTIVE_SLOT=$(vault kv get -field=slot secret/network-vm/active-slot 2>/dev/null || echo "none")
+
+          if [ "$ACTIVE_SLOT" = "none" ]; then
+            echo "No active slot found — first run, deploying to blue"
+            STAGING_SLOT="blue"
+            STAGING_VMID="$BLUE_VMID"
+            STAGING_IP="$BLUE_IP"
+            STAGING_HOST="$BLUE_HOST"
+            ACTIVE_VMID=""
+            ACTIVE_IP=""
+            ACTIVE_HOST=""
+            FIRST_RUN="true"
+          elif [ "$ACTIVE_SLOT" = "blue" ]; then
+            STAGING_SLOT="green"
+            STAGING_VMID="$GREEN_VMID"
+            STAGING_IP="$GREEN_IP"
+            STAGING_HOST="$GREEN_HOST"
+            ACTIVE_VMID="$BLUE_VMID"
+            ACTIVE_IP="$BLUE_IP"
+            ACTIVE_HOST="$BLUE_HOST"
+            FIRST_RUN="false"
+          else
+            STAGING_SLOT="blue"
+            STAGING_VMID="$BLUE_VMID"
+            STAGING_IP="$BLUE_IP"
+            STAGING_HOST="$BLUE_HOST"
+            ACTIVE_VMID="$GREEN_VMID"
+            ACTIVE_IP="$GREEN_IP"
+            ACTIVE_HOST="$GREEN_HOST"
+            FIRST_RUN="false"
+          fi
+
+          echo "active_slot=$ACTIVE_SLOT" >> "$GITHUB_OUTPUT"
+          echo "active_vmid=$ACTIVE_VMID" >> "$GITHUB_OUTPUT"
+          echo "active_ip=$ACTIVE_IP" >> "$GITHUB_OUTPUT"
+          echo "active_host=$ACTIVE_HOST" >> "$GITHUB_OUTPUT"
+          echo "staging_slot=$STAGING_SLOT" >> "$GITHUB_OUTPUT"
+          echo "staging_vmid=$STAGING_VMID" >> "$GITHUB_OUTPUT"
+          echo "staging_ip=$STAGING_IP" >> "$GITHUB_OUTPUT"
+          echo "staging_host=$STAGING_HOST" >> "$GITHUB_OUTPUT"
+          echo "first_run=$FIRST_RUN" >> "$GITHUB_OUTPUT"
+
+  terraform-staging:
+    needs: resolve-slots
+    runs-on: self-hosted
+    env:
+      STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -33,9 +102,29 @@ jobs:
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address: ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
+
+      - name: Pre-flight — destroy any stale staging VM
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address: ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.tfstate || true
 
       - name: Terraform Apply
         env:
@@ -45,16 +134,56 @@ jobs:
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address: ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply -no-color -input=false -auto-approve
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.tfstate
 
-  ansible:
-    needs: terraform
+  configure-tun-staging:
+    needs: [resolve-slots, terraform-staging]
+    runs-on: self-hosted
+    env:
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
+    steps:
+      - name: Configure TUN device via SSH to Proxmox host
+        env:
+          PVE_API: ${{ secrets.PVE_API }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          BENEDICT_IP=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${BENEDICT_IP} bash -s -- "${STAGING_VMID}" << 'SSHEOF'
+            VMID="$1"
+            grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/${VMID}.conf \
+              || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/${VMID}.conf
+            grep -q 'lxc.mount.entry.*tun' /etc/pve/lxc/${VMID}.conf \
+              || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/${VMID}.conf
+            grep -q 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start' /etc/pve/lxc/${VMID}.conf \
+              || echo 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start = 0' >> /etc/pve/lxc/${VMID}.conf
+            pct reboot ${VMID}
+          SSHEOF
+          echo "TUN configured, waiting for reboot..."
+          sleep 15
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${STAGING_IP}..."
+          timeout 120 bash -c "until nc -z ${STAGING_IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+  ansible-staging:
+    needs: [resolve-slots, configure-tun-staging]
     runs-on: self-hosted
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
+      STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -63,31 +192,6 @@ jobs:
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
           pip3 install hvac --quiet --break-system-packages
-
-      - name: Configure TUN device via SSH to Proxmox host
-        env:
-          PVE_API: ${{ secrets.PVE_API }}
-          PVE_USER: ${{ secrets.PVE_USER }}
-        run: |
-          BENEDICT_IP=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
-          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${BENEDICT_IP} bash << 'SSHEOF'
-            grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/220.conf \
-              || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/220.conf
-            grep -q 'lxc.mount.entry.*tun' /etc/pve/lxc/220.conf \
-              || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/220.conf
-            grep -q 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start' /etc/pve/lxc/220.conf \
-              || echo 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start = 0' >> /etc/pve/lxc/220.conf
-            pct reboot 220
-          SSHEOF
-          echo "TUN configured, waiting for reboot..."
-          sleep 15
-
-      - name: Wait for SSH to be ready
-        run: |
-          echo "Waiting for SSH on 192.168.50.220..."
-          timeout 120 bash -c 'until nc -z 192.168.50.220 22; do sleep 5; done'
-          echo "SSH is up"
 
       - name: Fetch SSH key from Vault
         env:
@@ -124,8 +228,12 @@ jobs:
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           ansible-playbook \
-            -i ansible/dev/network-vm/inventory.ini \
+            -i "${STAGING_IP}," \
             -v \
+            -e "ansible_host=${STAGING_IP}" \
+            -e "ansible_user=${{ secrets.SSH_USER }}" \
+            -e "ansible_ssh_private_key_file=/tmp/network_vm_key" \
+            -e "tailscale_hostname=${STAGING_HOST}" \
             -e "tailscale_authkey=$TS_AUTHKEY" \
             -e "wg_private_key=$WG_PRIVATE_KEY" \
             -e "wg_public_key_peer=$WG_PEER_PUBLIC_KEY" \
@@ -133,10 +241,86 @@ jobs:
             -e "adguard_password=$ADGUARD_PASS" \
             ansible/dev/network-vm/network-vm_setup.yml
 
-  destroy-on-failure:
-    needs: [terraform, ansible]
+  flip-active:
+    needs: [resolve-slots, ansible-staging]
+    runs-on: self-hosted
+    steps:
+      - name: Write new active slot to Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          vault kv put secret/network-vm/active-slot \
+            slot="${{ needs.resolve-slots.outputs.staging_slot }}" \
+            vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
+            ip="${{ needs.resolve-slots.outputs.staging_ip }}"
+
+  teardown-old-active:
+    needs: [resolve-slots, flip-active]
+    if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
+    runs-on: self-hosted
+    env:
+      ACTIVE_SLOT: ${{ needs.resolve-slots.outputs.active_slot }}
+      ACTIVE_VMID: ${{ needs.resolve-slots.outputs.active_vmid }}
+      ACTIVE_IP: ${{ needs.resolve-slots.outputs.active_ip }}
+      ACTIVE_HOST: ${{ needs.resolve-slots.outputs.active_host }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Tailscale logout on old active VM
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/network_vm_key
+          chmod 600 /tmp/network_vm_key
+          ssh -o StrictHostKeyChecking=no -i /tmp/network_vm_key \
+            ${SSH_USER}@${ACTIVE_IP} "tailscale logout || true" || true
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
+          TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
+          TF_VAR_vm_hostname: ${{ env.ACTIVE_HOST }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
+
+      - name: Terraform Destroy old active VM
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
+          TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
+          TF_VAR_vm_hostname: ${{ env.ACTIVE_HOST }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${ACTIVE_SLOT}.tfstate
+
+  cleanup-on-failure:
+    needs: [resolve-slots, terraform-staging, configure-tun-staging, ansible-staging]
     if: failure()
     runs-on: self-hosted
+    env:
+      STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -149,11 +333,14 @@ jobs:
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address: ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
 
-      - name: Terraform Destroy
+      - name: Terraform Destroy staging VM
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
@@ -161,6 +348,11 @@ jobs:
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address: ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy -no-color -input=false -auto-approve
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.tfstate

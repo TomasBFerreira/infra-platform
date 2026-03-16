@@ -1,5 +1,5 @@
 - name: Network Services VM Setup
-  hosts: network_vm
+  hosts: all
   become: yes
 
   roles:

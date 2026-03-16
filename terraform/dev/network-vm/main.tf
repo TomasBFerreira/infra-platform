@@ -4,8 +4,8 @@ data "vault_generic_secret" "ssh_key" {
 }
 
 resource "proxmox_lxc" "network_vm" {
-  vmid       = 220
-  hostname   = "network-vm"
+  vmid       = var.vmid
+  hostname   = var.vm_hostname
   ostemplate = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   cores      = 2
   memory     = 2048
@@ -18,7 +18,7 @@ resource "proxmox_lxc" "network_vm" {
   network {
     name   = "eth0"
     bridge = "vmbr0"
-    ip     = "192.168.50.220/24"
+    ip     = "${var.ip_address}/24"
     gw     = "192.168.50.1"
   }
 
@@ -35,5 +35,5 @@ resource "proxmox_lxc" "network_vm" {
 
 
 output "network_vm_ip" {
-  value = "192.168.50.220"
+  value = var.ip_address
 }
