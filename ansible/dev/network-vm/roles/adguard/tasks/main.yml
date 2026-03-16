@@ -1,3 +1,14 @@
+- name: Install Docker
+  shell: curl -fsSL https://get.docker.com | sh
+  args:
+    creates: /usr/bin/docker
+
+- name: Ensure Docker service is running
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
 - name: Deploy AdGuard Home via Docker
   community.docker.docker_container:
     name: adguard-home
