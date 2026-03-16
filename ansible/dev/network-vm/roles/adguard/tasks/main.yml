@@ -1,22 +1,26 @@
-- name: Install Docker
-  shell: curl -fsSL https://get.docker.com | sh
-  args:
-    creates: /usr/bin/docker
+- name: Create AdGuard Home directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ adguard_data_path }}"
+    - /opt/adguardhome
 
-- name: Ensure Docker service is running
+- name: Download AdGuard Home binary
+  unarchive:
+    src: https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_amd64.tar.gz
+    dest: /opt/adguardhome
+    remote_src: yes
+    creates: /opt/adguardhome/AdGuardHome/AdGuardHome
+
+- name: Install AdGuard Home as a service
+  command: /opt/adguardhome/AdGuardHome/AdGuardHome -s install
+  args:
+    creates: /etc/systemd/system/AdGuardHome.service
+
+- name: Ensure AdGuard Home is running
   systemd:
-    name: docker
+    name: AdGuardHome
     enabled: yes
     state: started
-
-- name: Deploy AdGuard Home via Docker
-  community.docker.docker_container:
-    name: adguard-home
-    image: adguard/adguardhome
-    state: started
-    restart_policy: unless-stopped
-    privileged: yes
-    ports:
-      - "{{ adguard_port }}:3000"
-    volumes:
-      - "{{ adguard_data_path }}:/opt/adguardhome/work"
