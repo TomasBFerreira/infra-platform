@@ -11,7 +11,7 @@
 
 - name: Set UFW default deny
   ufw:
-    rule: deny
+    default: deny
     direction: incoming
 
 - name: Enable UFW
