@@ -8,6 +8,10 @@ on:
       - 'ansible/dev/network-vm/**'
   workflow_dispatch:
 
+concurrency:
+  group: network-vm-pipeline
+  cancel-in-progress: true
+
 env:
   TF_VERSION: 1.6.4
   VAULT_VERSION: 1.21.0
@@ -77,3 +81,35 @@ jobs:
             -i ansible/dev/network-vm/inventory.ini \
             -v \
             ansible/dev/network-vm/network-vm_setup.yml
+
+  destroy-on-failure:
+    needs: [terraform, ansible]
+    if: failure()
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
+
+      - name: Terraform Destroy
+        env:
+          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy -no-color -input=false -auto-approve
