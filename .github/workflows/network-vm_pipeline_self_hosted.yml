@@ -94,6 +94,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Migrate legacy state file (first-ever blue/green run)
+        run: |
+          STATE_DIR=/app/infra-platform/terraform/dev/network-vm
+          if [ ! -f "${STATE_DIR}/terraform.${STAGING_SLOT}.tfstate" ] && \
+             [ -f "${STATE_DIR}/terraform.tfstate" ]; then
+            echo "Migrating terraform.tfstate → terraform.${STAGING_SLOT}.tfstate"
+            cp "${STATE_DIR}/terraform.tfstate" "${STATE_DIR}/terraform.${STAGING_SLOT}.tfstate"
+          fi
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api: ${{ secrets.PVE_API }}
