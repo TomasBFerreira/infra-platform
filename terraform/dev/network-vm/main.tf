@@ -37,34 +37,37 @@ resource "null_resource" "configure_tun" {
   depends_on = [proxmox_lxc.network_vm]
 
   provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
+    interpreter = ["python3", "-c"]
     environment = {
       PVE_API  = var.pve_api
       PVE_USER = var.pve_user
       PVE_PASS = var.pve_pass
     }
-    command = <<-EOT
-      set -e
-      apt-get install -y -q curl jq 2>/dev/null || true
-      RESPONSE=$(curl -sf -k \
-        --data-urlencode "username=$PVE_USER" \
-        --data-urlencode "password=$PVE_PASS" \
-        "$PVE_API/access/ticket")
-      TICKET=$(echo "$RESPONSE" | jq -r '.data.ticket')
-      CSRF=$(echo "$RESPONSE"   | jq -r '.data.CSRFPreventionToken')
+    command = <<-PYEOF
+      import urllib.request, urllib.parse, json, ssl, os, time
+      ctx = ssl.create_default_context()
+      ctx.check_hostname = False
+      ctx.verify_mode = ssl.CERT_NONE
+      api  = os.environ['PVE_API']
+      user = os.environ['PVE_USER']
+      pw   = os.environ['PVE_PASS']
 
-      curl -sf -k -X PUT "$PVE_API/nodes/benedict/lxc/220/config" \
-        -H "CSRFPreventionToken: $CSRF" \
-        -b "PVEAuthCookie=$TICKET" \
-        --data-urlencode "lxc[0]=lxc.cgroup2.devices.allow: c 10:200 rwm" \
-        --data-urlencode "lxc[1]=lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
+      auth_data = urllib.parse.urlencode({'username': user, 'password': pw}).encode()
+      with urllib.request.urlopen(urllib.request.Request(f'{api}/access/ticket', data=auth_data), context=ctx) as r:
+        resp = json.loads(r.read())
+      ticket = resp['data']['ticket']
+      csrf   = resp['data']['CSRFPreventionToken']
+      headers = {'CSRFPreventionToken': csrf, 'Cookie': f'PVEAuthCookie={ticket}', 'Content-Type': 'application/x-www-form-urlencoded'}
 
-      curl -sf -k -X POST "$PVE_API/nodes/benedict/lxc/220/status/reboot" \
-        -H "CSRFPreventionToken: $CSRF" \
-        -b "PVEAuthCookie=$TICKET"
+      cfg = urllib.parse.urlencode({'lxc[0]': 'lxc.cgroup2.devices.allow: c 10:200 rwm', 'lxc[1]': 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'}).encode()
+      req = urllib.request.Request(f'{api}/nodes/benedict/lxc/220/config', data=cfg, method='PUT', headers=headers)
+      with urllib.request.urlopen(req, context=ctx): pass
 
-      sleep 15
-    EOT
+      req = urllib.request.Request(f'{api}/nodes/benedict/lxc/220/status/reboot', data=b'', method='POST', headers=headers)
+      with urllib.request.urlopen(req, context=ctx): pass
+
+      time.sleep(15)
+    PYEOF
   }
 }
 
