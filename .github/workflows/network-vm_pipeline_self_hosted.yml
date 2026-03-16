@@ -63,6 +63,36 @@ jobs:
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
 
+      - name: Configure TUN device via Proxmox API
+        env:
+          PVE_API: ${{ secrets.PVE_API }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+          PVE_PASS: ${{ secrets.PVE_PASS }}
+        run: |
+          python3 - <<'EOF'
+          import urllib.request, urllib.parse, json, ssl, os, time
+          ctx = ssl.create_default_context()
+          ctx.check_hostname = False
+          ctx.verify_mode = ssl.CERT_NONE
+          api  = os.environ['PVE_API']
+          user = os.environ['PVE_USER']
+          pw   = os.environ['PVE_PASS']
+
+          auth_data = urllib.parse.urlencode({'username': user, 'password': pw}).encode()
+          with urllib.request.urlopen(urllib.request.Request(f'{api}/access/ticket', data=auth_data), context=ctx) as r:
+            resp = json.loads(r.read())
+          ticket = resp['data']['ticket']
+          csrf   = resp['data']['CSRFPreventionToken']
+          headers = {'CSRFPreventionToken': csrf, 'Cookie': f'PVEAuthCookie={ticket}', 'Content-Type': 'application/x-www-form-urlencoded'}
+
+          cfg = urllib.parse.urlencode({'lxc[0]': 'lxc.cgroup2.devices.allow: c 10:200 rwm', 'lxc[1]': 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'}).encode()
+          with urllib.request.urlopen(urllib.request.Request(f'{api}/nodes/benedict/lxc/220/config', data=cfg, method='PUT', headers=headers), context=ctx): pass
+
+          with urllib.request.urlopen(urllib.request.Request(f'{api}/nodes/benedict/lxc/220/status/reboot', data=b'', method='POST', headers=headers), context=ctx): pass
+          print("TUN configured, waiting for reboot...")
+          time.sleep(15)
+          EOF
+
       - name: Wait for SSH to be ready
         run: |
           echo "Waiting for SSH on 192.168.50.220..."
