@@ -62,6 +62,7 @@ jobs:
       - name: Install Ansible collections
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
+          pip3 install hvac --quiet
 
       - name: Configure TUN device via SSH to Proxmox host
         env:
