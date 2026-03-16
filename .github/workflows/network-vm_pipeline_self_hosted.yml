@@ -96,14 +96,20 @@ jobs:
             | awk 'NF > 0' > /tmp/network_vm_key
           chmod 600 /tmp/network_vm_key
 
-      - name: Fetch Tailscale auth key from Vault
+      - name: Fetch secrets from Vault
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+          WG_PRIVATE_KEY=$(vault kv get -field=private_key secret/wireguard)
+          WG_PEER_PUBLIC_KEY=$(vault kv get -field=peer_public_key secret/wireguard)
           echo "::add-mask::$TS_AUTHKEY"
+          echo "::add-mask::$WG_PRIVATE_KEY"
+          echo "::add-mask::$WG_PEER_PUBLIC_KEY"
           echo "TS_AUTHKEY=$TS_AUTHKEY" >> $GITHUB_ENV
+          echo "WG_PRIVATE_KEY=$WG_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "WG_PEER_PUBLIC_KEY=$WG_PEER_PUBLIC_KEY" >> $GITHUB_ENV
 
       - name: Run Ansible playbook
         env:
@@ -114,6 +120,8 @@ jobs:
             -i ansible/dev/network-vm/inventory.ini \
             -v \
             -e "tailscale_authkey=$TS_AUTHKEY" \
+            -e "wg_private_key=$WG_PRIVATE_KEY" \
+            -e "wg_public_key_peer=$WG_PEER_PUBLIC_KEY" \
             ansible/dev/network-vm/network-vm_setup.yml
 
   destroy-on-failure:
