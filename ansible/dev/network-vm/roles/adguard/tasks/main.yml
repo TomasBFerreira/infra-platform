@@ -15,6 +15,7 @@
     image: adguard/adguardhome
     state: started
     restart_policy: unless-stopped
+    privileged: yes
     ports:
       - "{{ adguard_port }}:3000"
     volumes:
