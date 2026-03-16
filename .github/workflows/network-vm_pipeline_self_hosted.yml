@@ -95,10 +95,22 @@ jobs:
             ('lxc[0]', 'lxc.cgroup2.devices.allow: c 10:200 rwm'),
             ('lxc[1]', 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'),
           )
-          with urllib.request.urlopen(urllib.request.Request(f'{api}/nodes/benedict/lxc/220/config', data=cfg, method='PUT', headers=headers), context=ctx): pass
 
-          with urllib.request.urlopen(urllib.request.Request(f'{api}/nodes/benedict/lxc/220/status/reboot', data=b'', method='POST', headers=headers), context=ctx): pass
-          print("TUN configured, rebooting container...")
+          def api_call(url, data=b'', method='POST'):
+            req = urllib.request.Request(url, data=data, method=method, headers=headers)
+            try:
+              with urllib.request.urlopen(req, context=ctx) as r:
+                print(f"{method} {url.split('/nodes/')[-1]} -> {r.status}")
+            except urllib.error.HTTPError as e:
+              print(f"{method} {url.split('/nodes/')[-1]} -> {e.code}: {e.read().decode()}")
+              raise
+
+          api_call(f'{api}/nodes/benedict/lxc/220/config', data=cfg, method='PUT')
+          print("Config updated, stopping container...")
+          api_call(f'{api}/nodes/benedict/lxc/220/status/stop')
+          time.sleep(8)
+          api_call(f'{api}/nodes/benedict/lxc/220/status/start')
+          print("Container restarted, waiting for boot...")
           time.sleep(15)
           EOF
 
