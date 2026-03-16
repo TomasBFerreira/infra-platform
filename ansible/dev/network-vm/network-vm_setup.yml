@@ -8,4 +8,3 @@
     - role: wireguard
     - role: firewall
     - role: adguard
-    - role: dns

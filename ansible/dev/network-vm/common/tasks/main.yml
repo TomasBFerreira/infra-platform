@@ -19,17 +19,6 @@
   community.general.timezone:
     name: "{{ timezone | default('UTC') }}"
 
-- name: Create shared directories
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: '0755'
-  loop:
-    - /opt/scripts
-    - /var/log/myapp
-
 - name: Disable unattended upgrades (optional)
   apt:
     name: unattended-upgrades
