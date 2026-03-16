@@ -33,6 +33,21 @@ resource "proxmox_lxc" "network_vm" {
   target_node     = "benedict"
 }
 
+resource "null_resource" "configure_tun" {
+  depends_on = [proxmox_lxc.network_vm]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/220.conf \
+        || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/220.conf
+      grep -q 'lxc.mount.entry: /dev/net/tun' /etc/pve/lxc/220.conf \
+        || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/220.conf
+      pct reboot 220
+      sleep 10
+    EOT
+  }
+}
+
 output "network_vm_ip" {
   value = "192.168.50.220"
 }
