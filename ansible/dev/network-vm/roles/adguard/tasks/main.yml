@@ -24,3 +24,19 @@
     name: AdGuardHome
     enabled: yes
     state: started
+
+- name: Wait for AdGuard Home API to be ready
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/status"
+    method: GET
+    status_code: 200
+  register: adguard_health
+  retries: 10
+  delay: 3
+  until: adguard_health.status == 200
+
+- name: Verify AdGuard Home reports healthy
+  assert:
+    that:
+      - adguard_health.json.running is defined
+    fail_msg: "AdGuard Home API responded but status is unexpected: {{ adguard_health.json }}"

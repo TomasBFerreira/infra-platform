@@ -14,3 +14,12 @@
     name: dnsmasq
     enabled: yes
     state: started
+
+- name: Verify dnsmasq is resolving DNS
+  command: dig +short +time=3 cloudflare.com @127.0.0.1
+  register: dns_check
+  retries: 5
+  delay: 3
+  until: dns_check.rc == 0 and dns_check.stdout | length > 0
+  changed_when: false
+  failed_when: dns_check.rc != 0 or dns_check.stdout | length == 0

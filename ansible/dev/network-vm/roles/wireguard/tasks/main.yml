@@ -23,3 +23,10 @@
     enabled: yes
     state: started
   when: wg_private_key | default('') | length > 0
+
+- name: Verify WireGuard interface is up
+  command: wg show wg0
+  register: wg_check
+  changed_when: false
+  failed_when: wg_check.rc != 0
+  when: wg_private_key | default('') | length > 0
