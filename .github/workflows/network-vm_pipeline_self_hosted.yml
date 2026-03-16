@@ -96,6 +96,15 @@ jobs:
             | awk 'NF > 0' > /tmp/network_vm_key
           chmod 600 /tmp/network_vm_key
 
+      - name: Fetch Tailscale auth key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+          echo "::add-mask::$TS_AUTHKEY"
+          echo "TS_AUTHKEY=$TS_AUTHKEY" >> $GITHUB_ENV
+
       - name: Run Ansible playbook
         env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
@@ -104,6 +113,7 @@ jobs:
           ansible-playbook \
             -i ansible/dev/network-vm/inventory.ini \
             -v \
+            -e "tailscale_authkey=$TS_AUTHKEY" \
             ansible/dev/network-vm/network-vm_setup.yml
 
   destroy-on-failure:
