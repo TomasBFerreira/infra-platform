@@ -243,12 +243,15 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
+          # Clear stale known_hosts entry — VM was rebuilt so host key changed
+          ssh-keygen -R "${STAGING_IP}" || true
           ansible-playbook \
             -i "${STAGING_IP}," \
             -v \
             -e "ansible_host=${STAGING_IP}" \
             -e "ansible_user=${{ secrets.SSH_USER }}" \
             -e "ansible_ssh_private_key_file=/tmp/network_vm_key" \
+            -e "ansible_ssh_extra_args='-o StrictHostKeyChecking=no'" \
             -e "tailscale_hostname=${STAGING_HOST}" \
             -e "tailscale_authkey=$TS_AUTHKEY" \
             -e "wg_private_key=$WG_PRIVATE_KEY" \
