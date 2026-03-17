@@ -30,3 +30,18 @@ variable "ssh_user" {
   description = "SSH user for the CT"
   type        = string
 }
+
+variable "vmid" {
+  description = "Proxmox VM ID"
+  type        = number
+}
+
+variable "ip_address" {
+  description = "IP address for the CT (without prefix length)"
+  type        = string
+}
+
+variable "vm_hostname" {
+  description = "Hostname for the CT"
+  type        = string
+}

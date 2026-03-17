@@ -1,6 +1,6 @@
 ---
 - name: Vault CT Setup
-  hosts: vault
+  hosts: all
   become: yes
 
   vars:
@@ -68,7 +68,7 @@
             tls_disable = true
           }
 
-          api_addr = "http://192.168.50.211:8200"
+          api_addr = "http://{{ vault_ct_ip }}:8200"
 
     - name: Enable and start Vault service
       systemd:
@@ -216,7 +216,7 @@
     - name: Print init summary
       debug:
         msg: |
-          Vault initialized at http://192.168.50.211:8200
+          Vault initialized at http://{{ vault_ct_ip }}:8200
           Root token and unseal keys saved to /root/vault-init.json
           IMPORTANT: Copy /root/vault-init.json somewhere safe and then delete it.
       when: not vault_init_status.json.initialized
@@ -274,18 +274,17 @@
       when: vault_admin_token != ''
       no_log: true
 
-    - name: Update GitHub secret VAULT_ADDR
+    - name: Update GitHub secrets for environment vault
       delegate_to: localhost
       become: no
-      shell: gh secret set VAULT_ADDR --body "http://192.168.50.211:8200"
-      environment:
-        GH_TOKEN: "{{ lookup('env', 'GH_PAT') }}"
-      when: vault_admin_token != '' and ci_token_result is not skipped
-
-    - name: Update GitHub secret VAULT_TOKEN
-      delegate_to: localhost
-      become: no
-      shell: gh secret set VAULT_TOKEN --body "{{ ci_token_result.json.auth.client_token }}"
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)  ADDR_SECRET="VAULT_ADDR";      TOKEN_SECRET="VAULT_TOKEN"      ;;
+          qa)   ADDR_SECRET="VAULT_QA_ADDR";   TOKEN_SECRET="VAULT_QA_TOKEN"   ;;
+          prod) ADDR_SECRET="VAULT_PROD_ADDR"; TOKEN_SECRET="VAULT_PROD_TOKEN" ;;
+        esac
+        gh secret set $ADDR_SECRET  --body "http://{{ vault_ct_ip }}:8200"
+        gh secret set $TOKEN_SECRET --body "{{ ci_token_result.json.auth.client_token }}"
       environment:
         GH_TOKEN: "{{ lookup('env', 'GH_PAT') }}"
       when: vault_admin_token != '' and ci_token_result is not skipped
@@ -293,5 +292,5 @@
 
     - name: CI setup summary
       debug:
-        msg: "CI pipeline policy and token created. VAULT_ADDR and VAULT_TOKEN GitHub secrets updated to point to CT 211."
+        msg: "CI pipeline policy and token created. GitHub secrets updated to point to http://{{ vault_ct_ip }}:8200 (env: {{ vault_env | default('dev') }})."
       when: vault_admin_token != '' and ci_token_result is not skipped

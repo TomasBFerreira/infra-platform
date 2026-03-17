@@ -1,11 +1,11 @@
-# Fetch SSH public key from dev Vault (CT 200) to bootstrap CT 211
+# Fetch SSH public key from bootstrap Vault (CT 200) to provision the new CT
 data "vault_generic_secret" "ssh_key" {
   path = "secret/ssh_keys/vault_ct_worker"
 }
 
 resource "proxmox_lxc" "vault_ct" {
-  vmid       = 211
-  hostname   = "vault"
+  vmid       = var.vmid
+  hostname   = var.vm_hostname
   ostemplate = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   cores      = 1
   memory     = 512
@@ -18,7 +18,7 @@ resource "proxmox_lxc" "vault_ct" {
   network {
     name   = "eth0"
     bridge = "vmbr0"
-    ip     = "192.168.50.211/24"
+    ip     = "${var.ip_address}/24"
     gw     = "192.168.50.1"
   }
 
@@ -34,5 +34,5 @@ resource "proxmox_lxc" "vault_ct" {
 }
 
 output "vault_ct_ip" {
-  value = "192.168.50.211"
+  value = var.ip_address
 }
