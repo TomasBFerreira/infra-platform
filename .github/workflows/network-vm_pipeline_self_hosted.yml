@@ -249,9 +249,8 @@ jobs:
             -i "${STAGING_IP}," \
             -v \
             -e "ansible_host=${STAGING_IP}" \
-            -e "ansible_user=${{ secrets.SSH_USER }}" \
-            -e "ansible_ssh_private_key_file=/tmp/network_vm_key" \
-            -e "ansible_ssh_extra_args='-o StrictHostKeyChecking=no'" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -i /tmp/network_vm_key'" \
             -e "tailscale_hostname=${STAGING_HOST}" \
             -e "tailscale_authkey=$TS_AUTHKEY" \
             -e "wg_private_key=$WG_PRIVATE_KEY" \
