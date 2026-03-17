@@ -113,8 +113,8 @@
 
     - name: Extract unseal keys into facts
       set_fact:
-        vault_unseal_key_0: "{{ vault_init_result.json.keys[0] }}"
-        vault_unseal_key_1: "{{ vault_init_result.json.keys[1] }}"
+        vault_unseal_key_0: "{{ vault_init_result.json['keys'][0] }}"
+        vault_unseal_key_1: "{{ vault_init_result.json['keys'][1] }}"
       when: not vault_init_status.json.initialized
 
     - name: Write unseal keys file for auto-unseal service
@@ -185,33 +185,9 @@
         body:
           key: "{{ item }}"
       loop:
-        - "{{ vault_init_result.json.keys[0] }}"
-        - "{{ vault_init_result.json.keys[1] }}"
+        - "{{ vault_init_result.json['keys'][0] }}"
+        - "{{ vault_init_result.json['keys'][1] }}"
       when: not vault_init_status.json.initialized
-
-    - name: Check if KV v2 is mounted
-      uri:
-        url: "{{ vault_addr }}/v1/sys/mounts/secret"
-        method: GET
-        headers:
-          X-Vault-Token: "{{ vault_admin_token if vault_admin_token is defined and vault_admin_token != '' else vault_init_result.json.root_token }}"
-        status_code: [200, 400]
-      register: kv_mount_check
-      when: not vault_init_status.json.initialized or (vault_admin_token is defined and vault_admin_token != '')
-
-    - name: Enable KV v2 secrets engine
-      uri:
-        url: "{{ vault_addr }}/v1/sys/mounts/secret"
-        method: POST
-        headers:
-          X-Vault-Token: "{{ vault_admin_token if vault_admin_token is defined and vault_admin_token != '' else vault_init_result.json.root_token }}"
-        body_format: json
-        body:
-          type: kv
-          options:
-            version: "2"
-        status_code: [200, 204]
-      when: kv_mount_check is not skipped and kv_mount_check.status == 400
 
     - name: Print init summary
       debug:
@@ -231,6 +207,30 @@
     - name: Set admin token fact
       set_fact:
         vault_admin_token: "{{ vault_init_result.json.root_token if (not vault_init_status.json.initialized) else lookup('env', 'VAULT_ROOT_TOKEN') }}"
+
+    - name: Check if KV v2 is mounted
+      uri:
+        url: "{{ vault_addr }}/v1/sys/mounts/secret"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ vault_admin_token }}"
+        status_code: [200, 400]
+      register: kv_mount_check
+      when: vault_admin_token != ''
+
+    - name: Enable KV v2 secrets engine
+      uri:
+        url: "{{ vault_addr }}/v1/sys/mounts/secret"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_admin_token }}"
+        body_format: json
+        body:
+          type: kv
+          options:
+            version: "2"
+        status_code: [200, 204]
+      when: kv_mount_check is not skipped and kv_mount_check.status == 400
 
     - name: Create or update CI pipeline policy
       uri:
@@ -283,8 +283,8 @@
           qa)   ADDR_SECRET="VAULT_QA_ADDR";   TOKEN_SECRET="VAULT_QA_TOKEN"   ;;
           prod) ADDR_SECRET="VAULT_PROD_ADDR"; TOKEN_SECRET="VAULT_PROD_TOKEN" ;;
         esac
-        gh secret set $ADDR_SECRET  --body "http://{{ vault_ct_ip }}:8200"
-        gh secret set $TOKEN_SECRET --body "{{ ci_token_result.json.auth.client_token }}"
+        gh secret set $ADDR_SECRET  --body "http://{{ vault_ct_ip }}:8200" --repo TomasBFerreira/infra-platform
+        gh secret set $TOKEN_SECRET --body "{{ ci_token_result.json.auth.client_token }}" --repo TomasBFerreira/infra-platform
       environment:
         GH_TOKEN: "{{ lookup('env', 'GH_PAT') }}"
       when: vault_admin_token != '' and ci_token_result is not skipped
