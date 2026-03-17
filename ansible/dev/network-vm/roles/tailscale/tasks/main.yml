@@ -60,12 +60,19 @@
     tailscale_connected: "{{ (ts_status.stdout | from_json).BackendState == 'Running' }}"
   when: ts_status.rc == 0
 
+- name: Verify Tailscale auth key is available from Vault
+  assert:
+    that:
+      - tailscale_authkey is defined
+      - tailscale_authkey | length > 0
+    fail_msg: "Tailscale auth key could not be retrieved from Vault at secret/data/tailscale:authkey"
+
 - name: Authenticate and configure Tailscale as subnet router
   command: >
+    timeout 90
     tailscale up
     --authkey={{ tailscale_authkey }}
     --advertise-routes={{ tailscale_subnet_routes }}
-    --accept-routes
     --hostname={{ tailscale_hostname }}
   when: not (tailscale_connected | default(false))
   no_log: true

@@ -1,9 +1,1 @@
-# Example: Pull WireGuard keys/config from Vault
-wg_private_key: >-
-  {{ lookup('community.hashi_vault.hashi_vault',
-    'secret=secrets/secret/wireguard:private_key token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
-wg_public_key_peer: >-
-  {{ lookup('community.hashi_vault.hashi_vault',
-    'secret=secret/data/wireguard:peer_public_key token=' ~ vault_token ~ ' url=' ~ vault_addr) }}
-vault_addr: "{{ lookup('env', 'VAULT_ADDR') }}"
-vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+# wg_private_key and wg_public_key_peer are passed as extra vars from the workflow

@@ -1,23 +1,61 @@
-name: Dev Infrastructure Destroy
+name: Infrastructure Destroy
 
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
       destroy_target:
         description: 'What to destroy'
         required: true
-        default: 'both'
+        default: 'network-vm'
         type: choice
         options:
           - media-stack
           - network-vm
           - both
 
-env:
-  TF_VERSION: 1.6.4
-
 jobs:
+  resolve-env:
+    runs-on: self-hosted
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      pve_api_url: ${{ steps.env.outputs.pve_api_url }}
+      blue_vmid: ${{ steps.env.outputs.blue_vmid }}
+      green_vmid: ${{ steps.env.outputs.green_vmid }}
+    steps:
+      - name: Resolve per-environment config
+        id: env
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          case "$ENV" in
+            dev)
+              BLUE_VMID=255; GREEN_VMID=256
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              ;;
+            qa)
+              BLUE_VMID=355; GREEN_VMID=356
+              PVE_API_URL="https://192.168.50.6:8006/api2/json"
+              ;;
+            prod)
+              BLUE_VMID=155; GREEN_VMID=156
+              PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              ;;
+          esac
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+          echo "pve_api_url=$PVE_API_URL" >> "$GITHUB_OUTPUT"
+          echo "blue_vmid=$BLUE_VMID" >> "$GITHUB_OUTPUT"
+          echo "green_vmid=$GREEN_VMID" >> "$GITHUB_OUTPUT"
+
   destroy-media-stack:
+    needs: resolve-env
     if: github.event.inputs.destroy_target == 'media-stack' || github.event.inputs.destroy_target == 'both'
     runs-on: self-hosted
     steps:
@@ -26,7 +64,7 @@ jobs:
 
       - name: Terraform Init
         env:
-          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_api_url: ${{ needs.resolve-env.outputs.pve_api_url }}
           TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
           TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
@@ -39,7 +77,7 @@ jobs:
 
       - name: Terraform Destroy
         env:
-          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
+          TF_VAR_proxmox_api_url: ${{ needs.resolve-env.outputs.pve_api_url }}
           TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
           TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
@@ -48,54 +86,104 @@ jobs:
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack destroy -auto-approve
+          ./scripts/run-terraform.sh -chdir terraform/dev/media-stack destroy \
+            -no-color -input=false -auto-approve
 
   destroy-network-vm:
+    needs: resolve-env
     if: github.event.inputs.destroy_target == 'network-vm' || github.event.inputs.destroy_target == 'both'
     runs-on: self-hosted
+    env:
+      ENV: ${{ needs.resolve-env.outputs.environment }}
+      BLUE_VMID: ${{ needs.resolve-env.outputs.blue_vmid }}
+      GREEN_VMID: ${{ needs.resolve-env.outputs.green_vmid }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Terraform Init
         env:
-          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
-          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
-          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_api: ${{ needs.resolve-env.outputs.pve_api_url }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
-          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vmid: "0"
+          TF_VAR_ip_address: "0.0.0.0"
+          TF_VAR_vm_hostname: "placeholder"
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm init -input=false
 
-      - name: Terraform Destroy
+      - name: Destroy blue slot
         env:
-          TF_VAR_proxmox_api_url: ${{ secrets.PVE_API }}
-          TF_VAR_proxmox_user: ${{ secrets.PVE_USER }}
-          TF_VAR_proxmox_password: ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_api: ${{ needs.resolve-env.outputs.pve_api_url }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.BLUE_VMID }}
+          TF_VAR_ip_address: "0.0.0.0"
+          TF_VAR_vm_hostname: "network-vm-blue"
+          PVE_API: ${{ needs.resolve-env.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.blue.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${BLUE_VMID} 2>/dev/null || true; pct destroy ${BLUE_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/dev/network-vm/terraform.blue.${ENV}.tfstate
+
+      - name: Destroy green slot
+        env:
+          TF_VAR_pve_api: ${{ needs.resolve-env.outputs.pve_api_url }}
+          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token: ${{ secrets.VAULT_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_ADDR }}
+          TF_VAR_vmid: ${{ env.GREEN_VMID }}
+          TF_VAR_ip_address: "0.0.0.0"
+          TF_VAR_vm_hostname: "network-vm-green"
+          PVE_API: ${{ needs.resolve-env.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.green.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${GREEN_VMID} 2>/dev/null || true; pct destroy ${GREEN_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/dev/network-vm/terraform.green.${ENV}.tfstate
+
+      - name: Clear active-slot in Vault
+        env:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy -auto-approve
+          vault kv delete secret/network-vm/${ENV}/active-slot 2>/dev/null || true
+          echo "Vault active-slot cleared for ${ENV}"
 
   summary:
-    needs: [destroy-media-stack, destroy-network-vm]
+    needs: [resolve-env, destroy-media-stack, destroy-network-vm]
     if: always()
     runs-on: self-hosted
     steps:
       - name: Destruction Summary
         run: |
-          echo "## 🗑️ Dev Infrastructure Destruction Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Infrastructure Destruction Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🎯 Target: ${{ github.event.inputs.destroy_target }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Target: ${{ github.event.inputs.destroy_target }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🏗️ Job Results:" >> $GITHUB_STEP_SUMMARY
+          echo "### Job Results:" >> $GITHUB_STEP_SUMMARY
           echo "- Destroy Media Stack: ${{ needs.destroy-media-stack.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- Destroy Network VM: ${{ needs.destroy-network-vm.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "⚠️ **Infrastructure has been destroyed for testing purposes**" >> $GITHUB_STEP_SUMMARY

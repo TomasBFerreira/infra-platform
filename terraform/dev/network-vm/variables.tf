@@ -36,3 +36,18 @@ variable "ssh_public_key" {
   type        = string
   default     = ""
 }
+
+variable "vmid" {
+  description = "Proxmox VM ID"
+  type        = number
+}
+
+variable "ip_address" {
+  description = "IP address for the VM (without prefix length)"
+  type        = string
+}
+
+variable "vm_hostname" {
+  description = "Hostname for the VM"
+  type        = string
+}
