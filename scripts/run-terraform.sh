@@ -46,7 +46,7 @@ run_terraform_with_chdir() {
     local chdir="$1"
     local cmd="$2"
     shift 2
-    
+
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@ (in directory: $chdir)"
