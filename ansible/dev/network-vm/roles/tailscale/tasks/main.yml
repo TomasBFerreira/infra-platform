@@ -69,10 +69,10 @@
 
 - name: Authenticate and configure Tailscale as subnet router
   command: >
+    timeout 90
     tailscale up
     --authkey={{ tailscale_authkey }}
     --advertise-routes={{ tailscale_subnet_routes }}
-    --accept-routes
     --hostname={{ tailscale_hostname }}
   when: not (tailscale_connected | default(false))
   no_log: true
