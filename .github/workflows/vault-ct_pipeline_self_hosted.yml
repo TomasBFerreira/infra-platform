@@ -62,13 +62,13 @@ jobs:
               BLUE_VMID=345;  BLUE_IP="192.168.50.243"
               GREEN_VMID=346; GREEN_IP="192.168.50.244"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
-              PVE_NODE="benedict"
+              PVE_NODE="vladimir"
               ;;
             prod)
               BLUE_VMID=145;  BLUE_IP="192.168.50.145"
               GREEN_VMID=146; GREEN_IP="192.168.50.146"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
-              PVE_NODE="pve"
+              PVE_NODE="betsy"
               ;;
           esac
 
