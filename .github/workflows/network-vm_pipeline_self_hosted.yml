@@ -7,23 +7,27 @@ on:
       - 'terraform/dev/network-vm/**'
       - 'ansible/dev/network-vm/**'
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
 
 concurrency:
-  group: network-vm-pipeline
+  group: network-vm-pipeline-${{ github.event.inputs.environment || 'dev' }}
   cancel-in-progress: true
-
-env:
-  BLUE_VMID: '220'
-  BLUE_IP: '192.168.50.220'
-  BLUE_HOST: 'network-vm-blue'
-  GREEN_VMID: '221'
-  GREEN_IP: '192.168.50.221'
-  GREEN_HOST: 'network-vm-green'
 
 jobs:
   resolve-slots:
     runs-on: self-hosted
     outputs:
+      environment: ${{ steps.slots.outputs.environment }}
+      pve_api_url: ${{ steps.slots.outputs.pve_api_url }}
       active_slot: ${{ steps.slots.outputs.active_slot }}
       active_vmid: ${{ steps.slots.outputs.active_vmid }}
       active_ip: ${{ steps.slots.outputs.active_ip }}
@@ -40,7 +44,30 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          ACTIVE_SLOT=$(vault kv get -field=slot secret/network-vm/active-slot 2>/dev/null || echo "none")
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+
+          case "$ENV" in
+            dev)
+              BLUE_VMID=255;  BLUE_IP="192.168.50.250"
+              GREEN_VMID=256; GREEN_IP="192.168.50.251"
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              ;;
+            qa)
+              BLUE_VMID=355;  BLUE_IP="192.168.50.240"
+              GREEN_VMID=356; GREEN_IP="192.168.50.241"
+              PVE_API_URL="https://192.168.50.6:8006/api2/json"
+              ;;
+            prod)
+              BLUE_VMID=155;  BLUE_IP="192.168.50.155"
+              GREEN_VMID=156; GREEN_IP="192.168.50.156"
+              PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              ;;
+          esac
+
+          BLUE_HOST="network-vm-blue"
+          GREEN_HOST="network-vm-green"
+
+          ACTIVE_SLOT=$(vault kv get -field=slot secret/network-vm/$ENV/active-slot 2>/dev/null || echo "none")
 
           if [ "$ACTIVE_SLOT" = "none" ]; then
             echo "No active slot found — first run, deploying to blue"
@@ -72,6 +99,8 @@ jobs:
             FIRST_RUN="false"
           fi
 
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+          echo "pve_api_url=$PVE_API_URL" >> "$GITHUB_OUTPUT"
           echo "active_slot=$ACTIVE_SLOT" >> "$GITHUB_OUTPUT"
           echo "active_vmid=$ACTIVE_VMID" >> "$GITHUB_OUTPUT"
           echo "active_ip=$ACTIVE_IP" >> "$GITHUB_OUTPUT"
@@ -86,6 +115,7 @@ jobs:
     needs: resolve-slots
     runs-on: self-hosted
     env:
+      ENV: ${{ needs.resolve-slots.outputs.environment }}
       STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
       STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
       STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
@@ -97,15 +127,15 @@ jobs:
       - name: Migrate legacy state file (first-ever blue/green run)
         run: |
           STATE_DIR=/app/infra-platform/terraform/dev/network-vm
-          if [ ! -f "${STATE_DIR}/terraform.${STAGING_SLOT}.tfstate" ] && \
+          if [ ! -f "${STATE_DIR}/terraform.${STAGING_SLOT}.${ENV}.tfstate" ] && \
              [ -f "${STATE_DIR}/terraform.tfstate" ]; then
-            echo "Migrating terraform.tfstate → terraform.${STAGING_SLOT}.tfstate"
-            cp "${STATE_DIR}/terraform.tfstate" "${STATE_DIR}/terraform.${STAGING_SLOT}.tfstate"
+            echo "Migrating terraform.tfstate → terraform.${STAGING_SLOT}.${ENV}.tfstate"
+            cp "${STATE_DIR}/terraform.tfstate" "${STATE_DIR}/terraform.${STAGING_SLOT}.${ENV}.tfstate"
           fi
 
       - name: Terraform Init
         env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
@@ -120,7 +150,7 @@ jobs:
 
       - name: Pre-flight — destroy any stale staging VM
         env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
@@ -129,24 +159,24 @@ jobs:
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
-          PVE_API: ${{ secrets.PVE_API }}
+          PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
             -no-color -input=false -auto-approve \
-            -state=terraform.${STAGING_SLOT}.tfstate || true
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
           # Force-remove via Proxmox in case of state/reality mismatch
-          BENEDICT_IP=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${BENEDICT_IP} \
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
           # Always wipe the stale state file so terraform apply starts clean
-          rm -f /app/infra-platform/terraform/dev/network-vm/terraform.${STAGING_SLOT}.tfstate
+          rm -f /app/infra-platform/terraform/dev/network-vm/terraform.${STAGING_SLOT}.${ENV}.tfstate
 
       - name: Terraform Apply
         env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
@@ -159,7 +189,7 @@ jobs:
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm apply \
             -no-color -input=false -auto-approve \
-            -state=terraform.${STAGING_SLOT}.tfstate
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate
 
   configure-tun-staging:
     needs: [resolve-slots, terraform-staging]
@@ -170,12 +200,12 @@ jobs:
     steps:
       - name: Configure TUN device via SSH to Proxmox host
         env:
-          PVE_API: ${{ secrets.PVE_API }}
+          PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
-          BENEDICT_IP=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${BENEDICT_IP} bash -s -- "${STAGING_VMID}" << 'SSHEOF'
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} bash -s -- "${STAGING_VMID}" << 'SSHEOF'
             VMID="$1"
             grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/${VMID}.conf \
               || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/${VMID}.conf
@@ -270,7 +300,8 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          vault kv put secret/network-vm/active-slot \
+          ENV="${{ needs.resolve-slots.outputs.environment }}"
+          vault kv put secret/network-vm/$ENV/active-slot \
             slot="${{ needs.resolve-slots.outputs.staging_slot }}" \
             vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
             ip="${{ needs.resolve-slots.outputs.staging_ip }}"
@@ -280,6 +311,7 @@ jobs:
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
     runs-on: self-hosted
     env:
+      ENV: ${{ needs.resolve-slots.outputs.environment }}
       ACTIVE_SLOT: ${{ needs.resolve-slots.outputs.active_slot }}
       ACTIVE_VMID: ${{ needs.resolve-slots.outputs.active_vmid }}
       ACTIVE_IP: ${{ needs.resolve-slots.outputs.active_ip }}
@@ -302,7 +334,7 @@ jobs:
 
       - name: Terraform Init
         env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
@@ -317,7 +349,7 @@ jobs:
 
       - name: Terraform Destroy old active VM
         env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
@@ -326,17 +358,17 @@ jobs:
           TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname: ${{ env.ACTIVE_HOST }}
-          PVE_API: ${{ secrets.PVE_API }}
+          PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
             -no-color -input=false -auto-approve \
-            -state=terraform.${ACTIVE_SLOT}.tfstate || true
+            -state=terraform.${ACTIVE_SLOT}.${ENV}.tfstate || true
           # Force-remove via Proxmox in case of state/reality mismatch
-          BENEDICT_IP=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${BENEDICT_IP} \
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${ACTIVE_VMID} 2>/dev/null || true; pct destroy ${ACTIVE_VMID} 2>/dev/null || true"
 
   cleanup-on-failure:
@@ -344,6 +376,7 @@ jobs:
     if: failure()
     runs-on: self-hosted
     env:
+      ENV: ${{ needs.resolve-slots.outputs.environment }}
       STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
       STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
       STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
@@ -354,7 +387,7 @@ jobs:
 
       - name: Terraform Init
         env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
@@ -369,7 +402,7 @@ jobs:
 
       - name: Terraform Destroy staging VM
         env:
-          TF_VAR_pve_api: ${{ secrets.PVE_API }}
+          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user: ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
@@ -378,16 +411,16 @@ jobs:
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
-          PVE_API: ${{ secrets.PVE_API }}
+          PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
             -no-color -input=false -auto-approve \
-            -state=terraform.${STAGING_SLOT}.tfstate || true
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
           # Force-remove via Proxmox and wipe stale state
-          BENEDICT_IP=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${BENEDICT_IP} \
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
-          rm -f /app/infra-platform/terraform/dev/network-vm/terraform.${STAGING_SLOT}.tfstate
+          rm -f /app/infra-platform/terraform/dev/network-vm/terraform.${STAGING_SLOT}.${ENV}.tfstate
