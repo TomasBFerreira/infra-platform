@@ -324,11 +324,18 @@ jobs:
           TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname: ${{ env.ACTIVE_HOST }}
+          PVE_API: ${{ secrets.PVE_API }}
+          PVE_USER: ${{ secrets.PVE_USER }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/dev/network-vm destroy \
             -no-color -input=false -auto-approve \
-            -state=terraform.${ACTIVE_SLOT}.tfstate
+            -state=terraform.${ACTIVE_SLOT}.tfstate || true
+          # Force-remove via Proxmox in case of state/reality mismatch
+          BENEDICT_IP=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${BENEDICT_IP} \
+            "pct stop ${ACTIVE_VMID} 2>/dev/null || true; pct destroy ${ACTIVE_VMID} 2>/dev/null || true"
 
   cleanup-on-failure:
     needs: [resolve-slots, terraform-staging, configure-tun-staging, ansible-staging]
