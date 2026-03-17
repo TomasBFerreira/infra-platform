@@ -1,6 +1,8 @@
 - name: Network Services VM Setup
   hosts: all
   become: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
 
   roles:
     - role: common
