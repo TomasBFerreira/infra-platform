@@ -247,6 +247,12 @@
             path "secret/metadata/*" {
               capabilities = ["list"]
             }
+            path "secret/data/network-vm/*" {
+              capabilities = ["create", "update", "read", "list"]
+            }
+            path "secret/metadata/network-vm/*" {
+              capabilities = ["read", "list", "delete"]
+            }
         status_code: [200, 204]
       when: vault_admin_token != ''
       no_log: true
