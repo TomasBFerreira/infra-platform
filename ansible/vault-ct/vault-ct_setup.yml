@@ -1,0 +1,296 @@
+---
+- name: Vault CT Setup
+  hosts: all
+  become: yes
+
+  vars:
+    vault_version: "1.15.2"
+    vault_addr: "http://127.0.0.1:8200"
+    vault_config_dir: /etc/vault.d
+    vault_data_dir: /opt/vault/data
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies
+      apt:
+        name:
+          - curl
+          - gpg
+          - lsb-release
+        state: present
+
+    - name: Add HashiCorp GPG key
+      shell: |
+        curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+    - name: Add HashiCorp apt repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main"
+        state: present
+        filename: hashicorp
+
+    - name: Install Vault
+      apt:
+        name: vault
+        state: present
+        update_cache: yes
+
+    - name: Create Vault data directory
+      file:
+        path: "{{ vault_data_dir }}"
+        state: directory
+        owner: vault
+        group: vault
+        mode: '0750'
+
+    - name: Write Vault config
+      copy:
+        dest: "{{ vault_config_dir }}/vault.hcl"
+        owner: vault
+        group: vault
+        mode: '0640'
+        content: |
+          ui = true
+          disable_mlock = true
+
+          storage "file" {
+            path = "{{ vault_data_dir }}"
+          }
+
+          listener "tcp" {
+            address     = "0.0.0.0:8200"
+            tls_disable = true
+          }
+
+          api_addr = "http://{{ vault_ct_ip }}:8200"
+
+    - name: Enable and start Vault service
+      systemd:
+        name: vault
+        enabled: yes
+        state: started
+
+    - name: Wait for Vault to be reachable
+      uri:
+        url: "{{ vault_addr }}/v1/sys/health"
+        status_code: [200, 429, 472, 473, 501, 503]
+      register: vault_health
+      retries: 10
+      delay: 2
+      until: vault_health.status in [200, 429, 472, 473, 501, 503]
+
+    - name: Check Vault init status
+      uri:
+        url: "{{ vault_addr }}/v1/sys/init"
+        method: GET
+      register: vault_init_status
+
+    - name: Initialize Vault
+      uri:
+        url: "{{ vault_addr }}/v1/sys/init"
+        method: PUT
+        body_format: json
+        body:
+          secret_shares: 3
+          secret_threshold: 2
+      register: vault_init_result
+      when: not vault_init_status.json.initialized
+
+    - name: Save Vault init output to file
+      copy:
+        content: "{{ vault_init_result.json | to_nice_json }}"
+        dest: /root/vault-init.json
+        mode: '0400'
+        owner: root
+        group: root
+      when: not vault_init_status.json.initialized
+
+    - name: Extract unseal keys into facts
+      set_fact:
+        vault_unseal_key_0: "{{ vault_init_result.json['keys'][0] }}"
+        vault_unseal_key_1: "{{ vault_init_result.json['keys'][1] }}"
+      when: not vault_init_status.json.initialized
+
+    - name: Write unseal keys file for auto-unseal service
+      copy:
+        dest: "{{ vault_config_dir }}/.unseal_keys"
+        mode: '0400'
+        owner: root
+        group: root
+        content: "{{ vault_unseal_key_0 }}\n{{ vault_unseal_key_1 }}\n"
+      when: not vault_init_status.json.initialized
+
+    - name: Write auto-unseal script
+      copy:
+        dest: "{{ vault_config_dir }}/unseal.sh"
+        mode: '0700'
+        owner: root
+        group: root
+        content: |
+          #!/bin/bash
+          VAULT_ADDR="http://127.0.0.1:8200"
+          KEYS_FILE="{{ vault_config_dir }}/.unseal_keys"
+          MAX_WAIT=30
+          export VAULT_ADDR
+          for i in $(seq 1 $MAX_WAIT); do
+            vault status > /dev/null 2>&1 || vault status 2>&1 | grep -q "Sealed" && break
+            sleep 1
+          done
+          if vault status 2>/dev/null | grep -q "^Sealed.*false"; then
+            exit 0
+          fi
+          while IFS= read -r key; do
+            [ -z "$key" ] && continue
+            vault operator unseal "$key"
+            vault status 2>/dev/null | grep -q "^Sealed.*false" && exit 0
+          done < "$KEYS_FILE"
+          exit 1
+
+    - name: Install auto-unseal systemd service
+      copy:
+        dest: /etc/systemd/system/vault-unseal.service
+        content: |
+          [Unit]
+          Description=Vault Auto-Unseal
+          After=vault.service
+          Requires=vault.service
+
+          [Service]
+          Type=oneshot
+          ExecStart={{ vault_config_dir }}/unseal.sh
+          RemainAfterExit=yes
+          User=root
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable vault-unseal service
+      systemd:
+        name: vault-unseal
+        enabled: yes
+        daemon_reload: yes
+      when: not vault_init_status.json.initialized
+
+    - name: Unseal Vault after init
+      uri:
+        url: "{{ vault_addr }}/v1/sys/unseal"
+        method: PUT
+        body_format: json
+        body:
+          key: "{{ item }}"
+      loop:
+        - "{{ vault_init_result.json['keys'][0] }}"
+        - "{{ vault_init_result.json['keys'][1] }}"
+      when: not vault_init_status.json.initialized
+
+    - name: Print init summary
+      debug:
+        msg: |
+          Vault initialized at http://{{ vault_ct_ip }}:8200
+          Root token and unseal keys saved to /root/vault-init.json
+          IMPORTANT: Copy /root/vault-init.json somewhere safe and then delete it.
+      when: not vault_init_status.json.initialized
+
+    - name: Vault already initialized
+      debug:
+        msg: "Vault was already initialized — skipping init steps."
+      when: vault_init_status.json.initialized
+
+    # --- CI policy + token setup (runs on init or when VAULT_ROOT_TOKEN is provided) ---
+
+    - name: Set admin token fact
+      set_fact:
+        vault_admin_token: "{{ vault_init_result.json.root_token if (not vault_init_status.json.initialized) else lookup('env', 'VAULT_ROOT_TOKEN') }}"
+
+    - name: Check if KV v2 is mounted
+      uri:
+        url: "{{ vault_addr }}/v1/sys/mounts/secret"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ vault_admin_token }}"
+        status_code: [200, 400]
+      register: kv_mount_check
+      when: vault_admin_token != ''
+
+    - name: Enable KV v2 secrets engine
+      uri:
+        url: "{{ vault_addr }}/v1/sys/mounts/secret"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_admin_token }}"
+        body_format: json
+        body:
+          type: kv
+          options:
+            version: "2"
+        status_code: [200, 204]
+      when: kv_mount_check is not skipped and kv_mount_check.status == 400
+
+    - name: Create or update CI pipeline policy
+      uri:
+        url: "{{ vault_addr }}/v1/sys/policies/acl/ci-pipeline"
+        method: PUT
+        headers:
+          X-Vault-Token: "{{ vault_admin_token }}"
+        body_format: json
+        body:
+          policy: |
+            path "secret/data/*" {
+              capabilities = ["read", "list"]
+            }
+            path "secret/metadata/*" {
+              capabilities = ["list"]
+            }
+            path "secret/data/network-vm/*" {
+              capabilities = ["create", "update", "read", "list"]
+            }
+            path "secret/metadata/network-vm/*" {
+              capabilities = ["read", "list", "delete"]
+            }
+        status_code: [200, 204]
+      when: vault_admin_token != ''
+      no_log: true
+
+    - name: Create CI pipeline token
+      uri:
+        url: "{{ vault_addr }}/v1/auth/token/create"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_admin_token }}"
+        body_format: json
+        body:
+          display_name: "github-actions"
+          policies: ["ci-pipeline"]
+          ttl: "8760h"
+          renewable: true
+        status_code: [200]
+      register: ci_token_result
+      when: vault_admin_token != ''
+      no_log: true
+
+    - name: Update GitHub secrets for environment vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)  ADDR_SECRET="VAULT_ADDR";      TOKEN_SECRET="VAULT_TOKEN"      ;;
+          qa)   ADDR_SECRET="VAULT_QA_ADDR";   TOKEN_SECRET="VAULT_QA_TOKEN"   ;;
+          prod) ADDR_SECRET="VAULT_PROD_ADDR"; TOKEN_SECRET="VAULT_PROD_TOKEN" ;;
+        esac
+        gh secret set $ADDR_SECRET  --body "http://{{ vault_ct_ip }}:8200" --repo TomasBFerreira/infra-platform
+        gh secret set $TOKEN_SECRET --body "{{ ci_token_result.json.auth.client_token }}" --repo TomasBFerreira/infra-platform
+      environment:
+        GH_TOKEN: "{{ lookup('env', 'GH_PAT') }}"
+      when: vault_admin_token != '' and ci_token_result is not skipped
+      no_log: true
+
+    - name: CI setup summary
+      debug:
+        msg: "CI pipeline policy and token created. GitHub secrets updated to point to http://{{ vault_ct_ip }}:8200 (env: {{ vault_env | default('dev') }})."
+      when: vault_admin_token != '' and ci_token_result is not skipped

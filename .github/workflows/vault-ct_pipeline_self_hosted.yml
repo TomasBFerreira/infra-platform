@@ -4,8 +4,8 @@ on:
   push:
     branches: [main, 'feature/**']
     paths:
-      - 'terraform/dev/vault-ct/**'
-      - 'ansible/dev/vault-ct/**'
+      - 'terraform/vault-ct/**'
+      - 'ansible/vault-ct/**'
   workflow_dispatch:
     inputs:
       environment:
@@ -28,6 +28,7 @@ jobs:
     outputs:
       environment:  ${{ steps.slots.outputs.environment }}
       pve_api_url:  ${{ steps.slots.outputs.pve_api_url }}
+      pve_node:     ${{ steps.slots.outputs.pve_node }}
       active_slot:  ${{ steps.slots.outputs.active_slot }}
       active_vmid:  ${{ steps.slots.outputs.active_vmid }}
       active_ip:    ${{ steps.slots.outputs.active_ip }}
@@ -48,22 +49,26 @@ jobs:
         run: |
           ENV="${{ github.event.inputs.environment || 'dev' }}"
 
-          # VMID scheme: prod=1xx, dev=2xx, qa=3xx (using x45/x46 for blue/green)
+          # VMID scheme: prod=1xx, dev=2xx, qa=3xx (x45/x46 for blue/green)
+          # IPs match VMID last octet where valid; QA uses .243/.244 (dev owns .245/.246)
           case "$ENV" in
             dev)
               BLUE_VMID=245;  BLUE_IP="192.168.50.245"
               GREEN_VMID=246; GREEN_IP="192.168.50.246"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_NODE="benedict"
               ;;
             qa)
-              BLUE_VMID=345;  BLUE_IP="192.168.50.213"
-              GREEN_VMID=346; GREEN_IP="192.168.50.214"
-              PVE_API_URL="https://192.168.50.6:8006/api2/json"
+              BLUE_VMID=345;  BLUE_IP="192.168.50.243"
+              GREEN_VMID=346; GREEN_IP="192.168.50.244"
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_NODE="benedict"
               ;;
             prod)
-              BLUE_VMID=145;  BLUE_IP="192.168.50.111"
-              GREEN_VMID=146; GREEN_IP="192.168.50.112"
+              BLUE_VMID=145;  BLUE_IP="192.168.50.145"
+              GREEN_VMID=146; GREEN_IP="192.168.50.146"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              PVE_NODE="pve"
               ;;
           esac
 
@@ -104,6 +109,7 @@ jobs:
 
           echo "environment=$ENV"           >> "$GITHUB_OUTPUT"
           echo "pve_api_url=$PVE_API_URL"   >> "$GITHUB_OUTPUT"
+          echo "pve_node=$PVE_NODE"         >> "$GITHUB_OUTPUT"
           echo "active_slot=$ACTIVE_SLOT"   >> "$GITHUB_OUTPUT"
           echo "active_vmid=$ACTIVE_VMID"   >> "$GITHUB_OUTPUT"
           echo "active_ip=$ACTIVE_IP"       >> "$GITHUB_OUTPUT"
@@ -127,13 +133,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Migrate legacy state file (first-ever blue/green run)
+      - name: Migrate legacy state files
         run: |
-          STATE_DIR=/app/infra-platform/terraform/dev/vault-ct
-          if [ ! -f "${STATE_DIR}/terraform.${STAGING_SLOT}.${ENV}.tfstate" ] && \
-             [ -f "${STATE_DIR}/terraform.tfstate" ]; then
-            echo "Migrating terraform.tfstate → terraform.${STAGING_SLOT}.${ENV}.tfstate"
-            cp "${STATE_DIR}/terraform.tfstate" "${STATE_DIR}/terraform.${STAGING_SLOT}.${ENV}.tfstate"
+          NEW_DIR=/app/infra-platform/terraform/vault-ct
+          OLD_DIR=/app/infra-platform/terraform/dev/vault-ct
+
+          # Migrate per-slot state files from old env-specific directory to shared directory
+          for slot in blue green; do
+            if [ ! -f "${NEW_DIR}/terraform.${slot}.${ENV}.tfstate" ] && \
+               [ -f "${OLD_DIR}/terraform.${slot}.${ENV}.tfstate" ]; then
+              echo "Migrating ${OLD_DIR}/terraform.${slot}.${ENV}.tfstate → ${NEW_DIR}/"
+              cp "${OLD_DIR}/terraform.${slot}.${ENV}.tfstate" "${NEW_DIR}/terraform.${slot}.${ENV}.tfstate"
+            fi
+          done
+
+          # Legacy: migrate from bare terraform.tfstate in old directory
+          if [ ! -f "${NEW_DIR}/terraform.${STAGING_SLOT}.${ENV}.tfstate" ] && \
+             [ -f "${OLD_DIR}/terraform.tfstate" ]; then
+            echo "Migrating legacy terraform.tfstate → terraform.${STAGING_SLOT}.${ENV}.tfstate"
+            cp "${OLD_DIR}/terraform.tfstate" "${NEW_DIR}/terraform.${STAGING_SLOT}.${ENV}.tfstate"
           fi
 
       - name: Terraform Init
@@ -147,9 +165,10 @@ jobs:
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct init -input=false
+          ./scripts/run-terraform.sh -chdir terraform/vault-ct init -input=false
 
       - name: Pre-flight — destroy any stale staging CT
         env:
@@ -162,18 +181,19 @@ jobs:
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct destroy \
+          ./scripts/run-terraform.sh -chdir terraform/vault-ct destroy \
             -no-color -input=false -auto-approve \
             -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
-          rm -f /app/infra-platform/terraform/dev/vault-ct/terraform.${STAGING_SLOT}.${ENV}.tfstate
+          rm -f /app/infra-platform/terraform/vault-ct/terraform.${STAGING_SLOT}.${ENV}.tfstate
 
       - name: Terraform Apply
         env:
@@ -186,9 +206,10 @@ jobs:
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct apply \
+          ./scripts/run-terraform.sh -chdir terraform/vault-ct apply \
             -no-color -input=false -auto-approve \
             -state=terraform.${STAGING_SLOT}.${ENV}.tfstate
 
@@ -226,9 +247,18 @@ jobs:
 
       - name: Run Ansible playbook
         env:
-          VAULT_ROOT_TOKEN: ${{ secrets.VAULT_ROOT_TOKEN }}
+          # Per-env root tokens — used on re-runs when Vault is already initialized.
+          # On first run these are ignored; the init root token is used instead.
+          VAULT_ROOT_TOKEN_DEV:  ${{ secrets.VAULT_DEV_ROOT_TOKEN }}
+          VAULT_ROOT_TOKEN_QA:   ${{ secrets.VAULT_QA_ROOT_TOKEN }}
+          VAULT_ROOT_TOKEN_PROD: ${{ secrets.VAULT_PROD_ROOT_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
+          case "$ENV" in
+            dev)  export VAULT_ROOT_TOKEN="$VAULT_ROOT_TOKEN_DEV"  ;;
+            qa)   export VAULT_ROOT_TOKEN="$VAULT_ROOT_TOKEN_QA"   ;;
+            prod) export VAULT_ROOT_TOKEN="$VAULT_ROOT_TOKEN_PROD" ;;
+          esac
           ssh-keygen -R "${STAGING_IP}" || true
           ansible-playbook \
             -i "${STAGING_IP}," \
@@ -239,7 +269,7 @@ jobs:
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "vault_ct_ip=${STAGING_IP}" \
             -e "vault_env=${ENV}" \
-            ansible/dev/vault-ct/vault-ct_setup.yml
+            ansible/vault-ct/vault-ct_setup.yml
 
   flip-active:
     needs: [resolve-slots, ansible-staging]
@@ -281,9 +311,10 @@ jobs:
           TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct init -input=false
+          ./scripts/run-terraform.sh -chdir terraform/vault-ct init -input=false
 
       - name: Terraform Destroy old active CT
         env:
@@ -296,11 +327,12 @@ jobs:
           TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct destroy \
+          ./scripts/run-terraform.sh -chdir terraform/vault-ct destroy \
             -no-color -input=false -auto-approve \
             -state=terraform.${ACTIVE_SLOT}.${ENV}.tfstate || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
@@ -333,9 +365,10 @@ jobs:
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct init -input=false
+          ./scripts/run-terraform.sh -chdir terraform/vault-ct init -input=false
 
       - name: Terraform Destroy staging CT
         env:
@@ -348,15 +381,16 @@ jobs:
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/dev/vault-ct destroy \
+          ./scripts/run-terraform.sh -chdir terraform/vault-ct destroy \
             -no-color -input=false -auto-approve \
             -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
-          rm -f /app/infra-platform/terraform/dev/vault-ct/terraform.${STAGING_SLOT}.${ENV}.tfstate
+          rm -f /app/infra-platform/terraform/vault-ct/terraform.${STAGING_SLOT}.${ENV}.tfstate
