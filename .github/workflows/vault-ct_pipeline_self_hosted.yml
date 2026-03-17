@@ -253,6 +253,9 @@ jobs:
           VAULT_ROOT_TOKEN_QA:   ${{ secrets.VAULT_QA_ROOT_TOKEN }}
           VAULT_ROOT_TOKEN_PROD: ${{ secrets.VAULT_PROD_ROOT_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
+          # Bootstrap vault — used by seed tasks to read canonical shared secrets
+          VAULT_DEV_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           case "$ENV" in
             dev)  export VAULT_ROOT_TOKEN="$VAULT_ROOT_TOKEN_DEV"  ;;
