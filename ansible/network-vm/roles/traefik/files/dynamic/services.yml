@@ -1,0 +1,174 @@
+http:
+  routers:
+    # ============================================
+    # PRODUCTION ROUTERS
+    # ============================================
+    plex-router:
+      rule: "Host(`plex.databaes.net`)"
+      service: plex-service
+      entryPoints:
+        - web
+
+    overseerr-router:
+      rule: "Host(`overseerr.databaes.net`)"
+      service: overseerr-service
+      entryPoints:
+        - web
+
+    nextcloud-router:
+      rule: "Host(`cloud.databaes.net`)"
+      service: nextcloud-service
+      entryPoints:
+        - web
+
+    # ============================================
+    # QA/TEST ROUTERS
+    # ============================================
+    jellyfintest-router:
+      rule: "Host(`jellyfintest.databaes.net`)"
+      service: jellyfintest-service
+      entryPoints:
+        - web
+
+    plextest-router:
+      rule: "Host(`plextest.databaes.net`)"
+      service: plextest-service
+      entryPoints:
+        - web
+
+    sonarrtest-router:
+      rule: "Host(`sonarrtest.databaes.net`)"
+      service: sonarrtest-service
+      entryPoints:
+        - web
+
+    radarrtest-router:
+      rule: "Host(`radarrtest.databaes.net`)"
+      service: radarrtest-service
+      entryPoints:
+        - web
+
+    prowlarrtest-router:
+      rule: "Host(`prowlarrtest.databaes.net`)"
+      service: prowlarrtest-service
+      entryPoints:
+        - web
+
+    jacketttest-router:
+      rule: "Host(`jacketttest.databaes.net`)"
+      service: jacketttest-service
+      entryPoints:
+        - web
+
+    overseerrtest-router:
+      rule: "Host(`overseerrtest.databaes.net`)"
+      service: overseerrtest-service
+      entryPoints:
+        - web
+
+    qbittorrenttest-router:
+      rule: "Host(`qbittorrenttest.databaes.net`)"
+      service: qbittorrenttest-service
+      entryPoints:
+        - web
+
+    stremiotest-router:
+      rule: "Host(`stremiotest.databaes.net`)"
+      service: stremiotest-service
+      entryPoints:
+        - web
+
+    # ============================================
+    # DEV ROUTERS
+    # ============================================
+    dev-router:
+      rule: "Host(`dev.databaes.net`)"
+      service: dev-service
+      entryPoints:
+        - web
+
+    kumadev-router:
+      rule: "Host(`kumadev.databaes.net`)"
+      service: kumadev-service
+      entryPoints:
+        - web
+
+  services:
+    # ============================================
+    # PRODUCTION SERVICES
+    # ============================================
+    plex-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:32400"
+
+    overseerr-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:5055"
+
+    nextcloud-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.105"
+
+    # ============================================
+    # QA/TEST SERVICES
+    # ============================================
+    jellyfintest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:8096"
+
+    plextest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:32400"
+
+    sonarrtest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:8989"
+
+    radarrtest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:7878"
+
+    prowlarrtest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:9696"
+
+    jacketttest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:9117"
+
+    overseerrtest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:5055"
+
+    qbittorrenttest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:8080"
+
+    stremiotest-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.111:11470"
+
+    # ============================================
+    # DEV SERVICES
+    # ============================================
+    dev-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.202:4200/"
+
+    kumadev-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.202:3001/"

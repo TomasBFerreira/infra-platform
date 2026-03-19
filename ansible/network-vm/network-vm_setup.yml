@@ -8,6 +8,7 @@
     - role: common
     - role: tailscale
     - role: adguard
+    - role: traefik
     - role: cloudflare-tunnel
     - role: wireguard
     - role: firewall
