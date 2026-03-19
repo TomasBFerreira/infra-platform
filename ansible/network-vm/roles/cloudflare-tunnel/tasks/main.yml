@@ -1,3 +1,9 @@
+- name: Install gnupg
+  apt:
+    name: gnupg
+    state: present
+    update_cache: yes
+
 - name: Install cloudflared apt key
   shell: |
     curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
