@@ -51,7 +51,7 @@
       username: "{{ adguard_username }}"
       password: "{{ adguard_password }}"
     status_code: 200
-  when: adguard_status.status == 302
+  when: adguard_status.status == 302 and adguard_username != '' and adguard_password != ''
   no_log: true
 
 - name: Verify AdGuard Home is healthy
@@ -66,4 +66,5 @@
   retries: 5
   delay: 3
   until: adguard_health.status == 200
+  when: adguard_username != '' and adguard_password != ''
   no_log: true
