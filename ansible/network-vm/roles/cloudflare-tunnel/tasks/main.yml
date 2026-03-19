@@ -1,0 +1,31 @@
+- name: Install cloudflared apt key
+  shell: |
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+      | gpg --dearmor -o /usr/share/keyrings/cloudflare-main.gpg
+  args:
+    creates: /usr/share/keyrings/cloudflare-main.gpg
+
+- name: Add cloudflared apt repository
+  apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared {{ ansible_distribution_release }} main"
+    state: present
+    filename: cloudflared
+
+- name: Install cloudflared
+  apt:
+    name: cloudflared
+    state: present
+    update_cache: yes
+
+- name: Install cloudflare tunnel service
+  command: cloudflared service install {{ cloudflare_tunnel_token }}
+  args:
+    creates: /etc/systemd/system/cloudflared.service
+  when: cloudflare_tunnel_token | default('') | length > 0
+
+- name: Ensure cloudflared service is running
+  systemd:
+    name: cloudflared
+    enabled: yes
+    state: started
+  when: cloudflare_tunnel_token | default('') | length > 0

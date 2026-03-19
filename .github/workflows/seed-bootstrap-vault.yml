@@ -11,6 +11,7 @@ on:
           - tailscale
           - adguard
           - wireguard
+          - cloudflare-tunnel
       # tailscale
       ts_authkey:
         description: '[tailscale] authkey'
@@ -37,6 +38,10 @@ on:
         required: false
       wg_dns:
         description: '[wireguard] DNS (optional, e.g. 1.1.1.1)'
+        required: false
+      # cloudflare-tunnel
+      cf_tunnel_token:
+        description: '[cloudflare-tunnel] Tunnel token from Cloudflare dashboard'
         required: false
 
 jobs:
@@ -66,6 +71,10 @@ jobs:
                 endpoint="${{ github.event.inputs.wg_endpoint }}" \
                 address="${{ github.event.inputs.wg_address }}" \
                 dns="${{ github.event.inputs.wg_dns }}"
+              ;;
+            cloudflare-tunnel)
+              vault kv put secret/cloudflare-tunnel \
+                token="${{ github.event.inputs.cf_tunnel_token }}"
               ;;
           esac
           echo "Written secret/$SECRET to bootstrap vault."
