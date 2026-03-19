@@ -320,18 +320,19 @@
       delegate_to: localhost
       become: no
       shell: |
-        PRIV=$(VAULT_ADDR="{{ lookup('env', 'VAULT_DEV_ADDR') }}" \
-               VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
-               vault kv get -field=private_key secret/wireguard 2>/dev/null || true)
-        PUB=$(VAULT_ADDR="{{ lookup('env', 'VAULT_DEV_ADDR') }}" \
-              VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
-              vault kv get -field=peer_public_key secret/wireguard 2>/dev/null || true)
+        _vault() { VAULT_ADDR="{{ lookup('env', 'VAULT_DEV_ADDR') }}" VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" vault kv get -field="$1" secret/wireguard 2>/dev/null || true; }
+        PRIV=$(_vault private_key)
         if [ -z "$PRIV" ]; then
           echo "SKIP: secret/wireguard not found in bootstrap vault"
           exit 0
         fi
         VAULT_ADDR="http://{{ vault_ct_ip }}:8200" VAULT_TOKEN="{{ vault_admin_token }}" \
-          vault kv put secret/wireguard private_key="$PRIV" peer_public_key="$PUB"
+          vault kv put secret/wireguard \
+            private_key="$PRIV" \
+            peer_public_key="$(_vault peer_public_key)" \
+            endpoint="$(_vault endpoint)" \
+            address="$(_vault address)" \
+            dns="$(_vault dns)"
       when: vault_admin_token != ''
       no_log: true
 
