@@ -1,6 +1,8 @@
 - name: Install WireGuard
   apt:
-    name: wireguard
+    name:
+      - wireguard
+      - openresolv
     update_cache: yes
 
 - name: Configure WireGuard
