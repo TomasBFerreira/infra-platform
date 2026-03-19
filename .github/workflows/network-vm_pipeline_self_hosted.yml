@@ -406,7 +406,7 @@ jobs:
 
   cleanup-on-failure:
     needs: [resolve-slots, terraform-staging, configure-tun-staging, ansible-staging]
-    if: failure()
+    if: failure() && needs.resolve-slots.outputs.environment != 'dev'
     runs-on: self-hosted
     env:
       ENV: ${{ needs.resolve-slots.outputs.environment }}
