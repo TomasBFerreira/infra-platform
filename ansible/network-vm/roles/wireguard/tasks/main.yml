@@ -6,15 +6,19 @@
 - name: Configure WireGuard
   copy:
     dest: /etc/wireguard/wg0.conf
+    mode: '0600'
     content: |
       [Interface]
       PrivateKey = {{ wg_private_key }}
-      Address = 10.0.3.1/24
-      ListenPort = 51820
+      Address = {{ wg_address }}
+      {% if wg_dns | default('') | length > 0 %}
+      DNS = {{ wg_dns }}
+      {% endif %}
+
       [Peer]
-      PublicKey = {{ wg_public_key_peer }}
-      Endpoint = <remote-peer>:51820
-      AllowedIPs = 0.0.0.0/0
+      PublicKey = {{ wg_peer_public_key }}
+      Endpoint = {{ wg_endpoint }}
+      AllowedIPs = {{ wg_allowed_ips | default('0.0.0.0/0') }}
   when: wg_private_key | default('') | length > 0
 
 - name: Enable and start WireGuard

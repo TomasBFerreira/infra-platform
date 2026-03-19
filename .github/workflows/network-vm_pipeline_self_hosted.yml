@@ -280,6 +280,9 @@ jobs:
           TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
           WG_PRIVATE_KEY=$(vault kv get -field=private_key secret/wireguard 2>/dev/null || echo "")
           WG_PEER_PUBLIC_KEY=$(vault kv get -field=peer_public_key secret/wireguard 2>/dev/null || echo "")
+          WG_ENDPOINT=$(vault kv get -field=endpoint secret/wireguard 2>/dev/null || echo "")
+          WG_ADDRESS=$(vault kv get -field=address secret/wireguard 2>/dev/null || echo "")
+          WG_DNS=$(vault kv get -field=dns secret/wireguard 2>/dev/null || echo "")
           ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
           ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
           echo "::add-mask::$TS_AUTHKEY"
@@ -289,6 +292,9 @@ jobs:
           echo "TS_AUTHKEY=$TS_AUTHKEY" >> $GITHUB_ENV
           echo "WG_PRIVATE_KEY=$WG_PRIVATE_KEY" >> $GITHUB_ENV
           echo "WG_PEER_PUBLIC_KEY=$WG_PEER_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "WG_ENDPOINT=$WG_ENDPOINT" >> $GITHUB_ENV
+          echo "WG_ADDRESS=$WG_ADDRESS" >> $GITHUB_ENV
+          echo "WG_DNS=$WG_DNS" >> $GITHUB_ENV
           echo "ADGUARD_USER=$ADGUARD_USER" >> $GITHUB_ENV
           echo "ADGUARD_PASS=$ADGUARD_PASS" >> $GITHUB_ENV
 
@@ -308,7 +314,10 @@ jobs:
             -e "tailscale_hostname=${ENV}-${STAGING_HOST}" \
             -e "tailscale_authkey=$TS_AUTHKEY" \
             -e "wg_private_key=$WG_PRIVATE_KEY" \
-            -e "wg_public_key_peer=$WG_PEER_PUBLIC_KEY" \
+            -e "wg_peer_public_key=$WG_PEER_PUBLIC_KEY" \
+            -e "wg_endpoint=$WG_ENDPOINT" \
+            -e "wg_address=$WG_ADDRESS" \
+            -e "wg_dns=$WG_DNS" \
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
             ansible/network-vm/network-vm_setup.yml

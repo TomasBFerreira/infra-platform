@@ -1,0 +1,71 @@
+name: Seed Bootstrap Vault Secrets
+
+on:
+  workflow_dispatch:
+    inputs:
+      secret_path:
+        description: 'Vault secret path (e.g. tailscale, adguard, wireguard)'
+        required: true
+        type: choice
+        options:
+          - tailscale
+          - adguard
+          - wireguard
+      # tailscale
+      ts_authkey:
+        description: '[tailscale] authkey'
+        required: false
+      # adguard
+      adguard_username:
+        description: '[adguard] username'
+        required: false
+      adguard_password:
+        description: '[adguard] password'
+        required: false
+      # wireguard
+      wg_private_key:
+        description: '[wireguard] PrivateKey from VPN config'
+        required: false
+      wg_peer_public_key:
+        description: '[wireguard] Peer PublicKey from VPN config'
+        required: false
+      wg_endpoint:
+        description: '[wireguard] Peer Endpoint (e.g. 1.2.3.4:51820)'
+        required: false
+      wg_address:
+        description: '[wireguard] Interface Address (e.g. 10.x.x.x/32)'
+        required: false
+      wg_dns:
+        description: '[wireguard] DNS (optional, e.g. 1.1.1.1)'
+        required: false
+
+jobs:
+  seed:
+    runs-on: self-hosted
+    steps:
+      - name: Write secret to bootstrap vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          SECRET="${{ github.event.inputs.secret_path }}"
+          case "$SECRET" in
+            tailscale)
+              vault kv put secret/tailscale \
+                authkey="${{ github.event.inputs.ts_authkey }}"
+              ;;
+            adguard)
+              vault kv put secret/adguard \
+                username="${{ github.event.inputs.adguard_username }}" \
+                password="${{ github.event.inputs.adguard_password }}"
+              ;;
+            wireguard)
+              vault kv put secret/wireguard \
+                private_key="${{ github.event.inputs.wg_private_key }}" \
+                peer_public_key="${{ github.event.inputs.wg_peer_public_key }}" \
+                endpoint="${{ github.event.inputs.wg_endpoint }}" \
+                address="${{ github.event.inputs.wg_address }}" \
+                dns="${{ github.event.inputs.wg_dns }}"
+              ;;
+          esac
+          echo "Written secret/$SECRET to bootstrap vault."
