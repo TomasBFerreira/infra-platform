@@ -7,6 +7,6 @@
   roles:
     - role: common
     - role: tailscale
+    - role: adguard
     - role: wireguard
     - role: firewall
-    - role: adguard
