@@ -280,8 +280,8 @@ jobs:
           TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
           WG_PRIVATE_KEY=$(vault kv get -field=private_key secret/wireguard 2>/dev/null || echo "")
           WG_PEER_PUBLIC_KEY=$(vault kv get -field=peer_public_key secret/wireguard 2>/dev/null || echo "")
-          ADGUARD_USER=$(vault kv get -field=username secret/adguard)
-          ADGUARD_PASS=$(vault kv get -field=password secret/adguard)
+          ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
+          ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
           echo "::add-mask::$TS_AUTHKEY"
           echo "::add-mask::$WG_PRIVATE_KEY"
           echo "::add-mask::$WG_PEER_PUBLIC_KEY"
