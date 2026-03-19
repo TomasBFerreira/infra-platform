@@ -1,0 +1,27 @@
+---
+- name: Stop unattended-upgrades to prevent dpkg lock
+  shell: |
+    systemctl stop unattended-upgrades 2>/dev/null || true
+    killall unattended-upgrades 2>/dev/null || true
+  changed_when: false
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install required system packages
+  apt:
+    name:
+      - curl
+    state: present
+
+- name: Ensure timezone is set
+  community.general.timezone:
+    name: "{{ timezone | default('UTC') }}"
+
+- name: Disable unattended upgrades
+  apt:
+    name: unattended-upgrades
+    state: absent
+    purge: yes

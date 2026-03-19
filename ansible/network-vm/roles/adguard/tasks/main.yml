@@ -1,0 +1,69 @@
+- name: Create AdGuard Home directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ adguard_data_path }}"
+    - /opt/adguardhome
+
+- name: Download AdGuard Home binary
+  unarchive:
+    src: https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_amd64.tar.gz
+    dest: /opt/adguardhome
+    remote_src: yes
+    creates: /opt/adguardhome/AdGuardHome/AdGuardHome
+
+- name: Install AdGuard Home as a service
+  command: /opt/adguardhome/AdGuardHome/AdGuardHome -s install
+  args:
+    creates: /etc/systemd/system/AdGuardHome.service
+
+- name: Ensure AdGuard Home is running
+  systemd:
+    name: AdGuardHome
+    enabled: yes
+    state: started
+
+- name: Wait for AdGuard Home to be ready
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/status"
+    method: GET
+    status_code: [200, 302]
+    follow_redirects: none
+  register: adguard_status
+  retries: 10
+  delay: 3
+  until: adguard_status.status in [200, 302]
+
+- name: Run AdGuard Home initial setup
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/install/configure"
+    method: POST
+    body_format: json
+    body:
+      web:
+        ip: "0.0.0.0"
+        port: "{{ adguard_port }}"
+      dns:
+        ip: "0.0.0.0"
+        port: 53
+      username: "{{ adguard_username }}"
+      password: "{{ adguard_password }}"
+    status_code: 200
+  when: adguard_status.status == 302
+  no_log: true
+
+- name: Verify AdGuard Home is healthy
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/status"
+    method: GET
+    url_username: "{{ adguard_username }}"
+    url_password: "{{ adguard_password }}"
+    force_basic_auth: yes
+    status_code: 200
+  register: adguard_health
+  retries: 5
+  delay: 3
+  until: adguard_health.status == 200
+  no_log: true
