@@ -1,0 +1,423 @@
+name: Torrent Pipeline (Self-Hosted)
+
+on:
+  push:
+    branches: [main, 'feature/**']
+    paths:
+      - 'terraform/torrent/**'
+      - 'ansible/torrent/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+concurrency:
+  group: torrent-pipeline-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-slots:
+    runs-on: self-hosted
+    outputs:
+      environment:  ${{ steps.slots.outputs.environment }}
+      pve_api_url:  ${{ steps.slots.outputs.pve_api_url }}
+      pve_node:     ${{ steps.slots.outputs.pve_node }}
+      active_slot:  ${{ steps.slots.outputs.active_slot }}
+      active_vmid:  ${{ steps.slots.outputs.active_vmid }}
+      active_ip:    ${{ steps.slots.outputs.active_ip }}
+      active_host:  ${{ steps.slots.outputs.active_host }}
+      staging_slot: ${{ steps.slots.outputs.staging_slot }}
+      staging_vmid: ${{ steps.slots.outputs.staging_vmid }}
+      staging_ip:   ${{ steps.slots.outputs.staging_ip }}
+      staging_host: ${{ steps.slots.outputs.staging_host }}
+      first_run:    ${{ steps.slots.outputs.first_run }}
+    steps:
+      - name: Resolve active and staging slots
+        id: slots
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+
+          case "$ENV" in
+            dev)
+              BLUE_VMID=265;  BLUE_IP="192.168.50.252"
+              GREEN_VMID=266; GREEN_IP="192.168.50.253"
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_NODE="benedict"
+              ;;
+            prod)
+              BLUE_VMID=165;  BLUE_IP="192.168.50.165"
+              GREEN_VMID=166; GREEN_IP="192.168.50.166"
+              PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              PVE_NODE="betsy"
+              ;;
+          esac
+
+          BLUE_HOST="torrent-blue"
+          GREEN_HOST="torrent-green"
+
+          ACTIVE_SLOT=$(vault kv get -field=slot secret/torrent/$ENV/active-slot 2>/dev/null || echo "none")
+
+          if [ "$ACTIVE_SLOT" = "none" ]; then
+            echo "No active slot found — first run, deploying to blue"
+            STAGING_SLOT="blue"
+            STAGING_VMID="$BLUE_VMID"
+            STAGING_IP="$BLUE_IP"
+            STAGING_HOST="$BLUE_HOST"
+            ACTIVE_VMID=""
+            ACTIVE_IP=""
+            ACTIVE_HOST=""
+            FIRST_RUN="true"
+          elif [ "$ACTIVE_SLOT" = "blue" ]; then
+            STAGING_SLOT="green"
+            STAGING_VMID="$GREEN_VMID"
+            STAGING_IP="$GREEN_IP"
+            STAGING_HOST="$GREEN_HOST"
+            ACTIVE_VMID="$BLUE_VMID"
+            ACTIVE_IP="$BLUE_IP"
+            ACTIVE_HOST="$BLUE_HOST"
+            FIRST_RUN="false"
+          else
+            STAGING_SLOT="blue"
+            STAGING_VMID="$BLUE_VMID"
+            STAGING_IP="$BLUE_IP"
+            STAGING_HOST="$BLUE_HOST"
+            ACTIVE_VMID="$GREEN_VMID"
+            ACTIVE_IP="$GREEN_IP"
+            ACTIVE_HOST="$GREEN_HOST"
+            FIRST_RUN="false"
+          fi
+
+          echo "environment=$ENV"           >> "$GITHUB_OUTPUT"
+          echo "pve_api_url=$PVE_API_URL"   >> "$GITHUB_OUTPUT"
+          echo "pve_node=$PVE_NODE"         >> "$GITHUB_OUTPUT"
+          echo "active_slot=$ACTIVE_SLOT"   >> "$GITHUB_OUTPUT"
+          echo "active_vmid=$ACTIVE_VMID"   >> "$GITHUB_OUTPUT"
+          echo "active_ip=$ACTIVE_IP"       >> "$GITHUB_OUTPUT"
+          echo "active_host=$ACTIVE_HOST"   >> "$GITHUB_OUTPUT"
+          echo "staging_slot=$STAGING_SLOT" >> "$GITHUB_OUTPUT"
+          echo "staging_vmid=$STAGING_VMID" >> "$GITHUB_OUTPUT"
+          echo "staging_ip=$STAGING_IP"     >> "$GITHUB_OUTPUT"
+          echo "staging_host=$STAGING_HOST" >> "$GITHUB_OUTPUT"
+          echo "first_run=$FIRST_RUN"       >> "$GITHUB_OUTPUT"
+
+  terraform-staging:
+    needs: resolve-slots
+    runs-on: self-hosted
+    env:
+      ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/torrent init -input=false
+
+      - name: Pre-flight — destroy any stale staging CT
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/torrent destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/torrent/terraform.${STAGING_SLOT}.${ENV}.tfstate
+
+      - name: Terraform Apply
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/torrent apply \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate
+
+  configure-tun-staging:
+    needs: [resolve-slots, terraform-staging]
+    runs-on: self-hosted
+    env:
+      ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
+    steps:
+      - name: Configure TUN device and shared media bind mount via Proxmox host
+        env:
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} bash -s -- "${STAGING_VMID}" "${ENV}" << 'SSHEOF'
+            VMID="$1"
+            ENV="$2"
+
+            # TUN device (required for WireGuard)
+            grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/${VMID}.conf \
+              || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/${VMID}.conf
+            grep -q 'lxc.mount.entry.*tun' /etc/pve/lxc/${VMID}.conf \
+              || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/${VMID}.conf
+
+            # Bind-mount shared media from host into LXC (prod only — betsy has /mnt/shared-media)
+            if [ "$ENV" = "prod" ]; then
+              grep -q 'mp0:' /etc/pve/lxc/${VMID}.conf \
+                || echo 'mp0: /mnt/shared-media,mp=/mnt/media' >> /etc/pve/lxc/${VMID}.conf
+            fi
+
+            pct reboot ${VMID}
+          SSHEOF
+          echo "TUN + bind mount configured, waiting for reboot..."
+          sleep 15
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${STAGING_IP}..."
+          timeout 120 bash -c "until nc -z ${STAGING_IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+  ansible-staging:
+    needs: [resolve-slots, configure-tun-staging]
+    runs-on: self-hosted
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Fetch SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/torrent_worker \
+            | awk 'NF > 0' > /tmp/torrent_worker_key
+          chmod 600 /tmp/torrent_worker_key
+
+      - name: Fetch secrets from env vault
+        run: |
+          case "$ENV" in
+            dev)
+              VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
+              VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
+              ;;
+            prod)
+              VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
+              VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
+              ;;
+          esac
+          export VAULT_ADDR VAULT_TOKEN
+
+          WG_PRIVATE_KEY=$(vault kv get -field=private_key secret/wireguard 2>/dev/null || echo "")
+          WG_PEER_PUBLIC_KEY=$(vault kv get -field=peer_public_key secret/wireguard 2>/dev/null || echo "")
+          WG_ENDPOINT=$(vault kv get -field=endpoint secret/wireguard 2>/dev/null || echo "")
+          WG_ADDRESS=$(vault kv get -field=address secret/wireguard 2>/dev/null || echo "")
+          WG_DNS=$(vault kv get -field=dns secret/wireguard 2>/dev/null || echo "")
+
+          echo "WG_PRIVATE_KEY=$WG_PRIVATE_KEY"       >> "$GITHUB_ENV"
+          echo "WG_PEER_PUBLIC_KEY=$WG_PEER_PUBLIC_KEY" >> "$GITHUB_ENV"
+          echo "WG_ENDPOINT=$WG_ENDPOINT"             >> "$GITHUB_ENV"
+          echo "WG_ADDRESS=$WG_ADDRESS"               >> "$GITHUB_ENV"
+          echo "WG_DNS=$WG_DNS"                       >> "$GITHUB_ENV"
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${STAGING_IP}..."
+          timeout 120 bash -c "until nc -z ${STAGING_IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+      - name: Run Ansible playbook
+        run: |
+          ssh-keygen -R "${STAGING_IP}" || true
+          ansible-playbook \
+            -i "${STAGING_IP}," \
+            -v \
+            --private-key /tmp/torrent_worker_key \
+            -e "ansible_host=${STAGING_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "vault_env=${ENV}" \
+            -e "wg_private_key=$WG_PRIVATE_KEY" \
+            -e "wg_peer_public_key=$WG_PEER_PUBLIC_KEY" \
+            -e "wg_endpoint=$WG_ENDPOINT" \
+            -e "wg_address=$WG_ADDRESS" \
+            -e "wg_dns=$WG_DNS" \
+            ansible/torrent/torrent_setup.yml
+
+  flip-active:
+    needs: [resolve-slots, ansible-staging]
+    runs-on: self-hosted
+    steps:
+      - name: Record new active slot in bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ needs.resolve-slots.outputs.environment }}"
+          vault kv put secret/torrent/$ENV/active-slot \
+            slot="${{ needs.resolve-slots.outputs.staging_slot }}" \
+            vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
+            ip="${{ needs.resolve-slots.outputs.staging_ip }}"
+
+  teardown-old-active:
+    needs: [resolve-slots, flip-active]
+    if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
+    runs-on: self-hosted
+    env:
+      ENV:         ${{ needs.resolve-slots.outputs.environment }}
+      ACTIVE_SLOT: ${{ needs.resolve-slots.outputs.active_slot }}
+      ACTIVE_VMID: ${{ needs.resolve-slots.outputs.active_vmid }}
+      ACTIVE_IP:   ${{ needs.resolve-slots.outputs.active_ip }}
+      ACTIVE_HOST: ${{ needs.resolve-slots.outputs.active_host }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
+          TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
+          TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/torrent init -input=false
+
+      - name: Terraform Destroy old active CT
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
+          TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
+          TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/torrent destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${ACTIVE_SLOT}.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${ACTIVE_VMID} 2>/dev/null || true; pct destroy ${ACTIVE_VMID} 2>/dev/null || true"
+
+  cleanup-on-failure:
+    needs: [resolve-slots, terraform-staging, ansible-staging]
+    if: failure()
+    runs-on: self-hosted
+    env:
+      ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/torrent init -input=false
+
+      - name: Terraform Destroy staging CT
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/torrent destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/torrent/terraform.${STAGING_SLOT}.${ENV}.tfstate

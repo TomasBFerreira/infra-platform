@@ -25,6 +25,7 @@ All nodes share the `192.168.50.0/24` subnet, gateway `192.168.50.1`.
 Existing assignments:
 - vault-ct: prod=145/146 (.145/.146), dev=245/246 (.245/.246), qa=345/346 (.243/.244)
 - network-vm: prod=155/156 (.155/.156), dev=255/256 (.250/.251), qa=355/356 (.240/.241)
+- torrent: prod=165/166 (.165/.166), dev=265/266 (.252/.253)
 
 ## Vault architecture
 
