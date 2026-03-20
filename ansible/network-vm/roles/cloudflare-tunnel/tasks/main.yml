@@ -29,9 +29,20 @@
     creates: /etc/systemd/system/cloudflared.service
   when: cloudflare_tunnel_token | default('') | length > 0
 
+- name: Increase cloudflared startup timeout
+  # On boot, DNS resolution can take >15s before the tunnel connects.
+  # Type=notify means systemd waits for READY signal — raise the limit to 90s.
+  lineinfile:
+    path: /etc/systemd/system/cloudflared.service
+    regexp: '^TimeoutStartSec='
+    line: 'TimeoutStartSec=90'
+  notify: reload systemd
+  when: cloudflare_tunnel_token | default('') | length > 0
+
 - name: Ensure cloudflared service is running
   systemd:
     name: cloudflared
     enabled: yes
     state: started
+    daemon_reload: yes
   when: cloudflare_tunnel_token | default('') | length > 0
