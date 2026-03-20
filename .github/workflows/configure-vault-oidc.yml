@@ -116,30 +116,36 @@ jobs:
       - name: Update Authentik redirect_uris
         run: |
           SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
-          BOOTSTRAP_TOKEN=$(vault kv get -field=bootstrap_token secret/sso 2>/dev/null || echo "")
+          echo "SSO IP: $SSO_IP"
 
+          BOOTSTRAP_TOKEN=$(vault kv get -field=bootstrap_token secret/sso 2>/dev/null || echo "")
           if [ -z "$BOOTSTRAP_TOKEN" ]; then
             echo "No bootstrap token in secret/sso — skipping Authentik redirect_uris update"
             exit 0
           fi
-
           echo "::add-mask::$BOOTSTRAP_TOKEN"
+          echo "Bootstrap token found (${#BOOTSTRAP_TOKEN} chars)"
 
-          # Find the vault provider UUID
-          PROVIDER_RESP=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/oauth2/?name=vault" \
+          # Find the vault provider — show full response for debugging
+          PROVIDER_RESP=$(curl -s "http://${SSO_IP}:9000/api/v3/providers/oauth2/?name=vault" \
             -H "Authorization: Token $BOOTSTRAP_TOKEN")
+          echo "Provider search response: $PROVIDER_RESP" | head -c 500
+
           PROVIDER_UUID=$(echo "$PROVIDER_RESP" | python3 -c \
-            "import sys,json; results=json.load(sys.stdin)['results']; print(results[0]['pk'] if results else '')")
+            "import sys,json; results=json.load(sys.stdin)['results']; print(results[0]['pk'] if results else '')" 2>/dev/null || echo "")
 
           if [ -z "$PROVIDER_UUID" ]; then
-            echo "Vault OAuth2 provider not found in Authentik — skipping"
-            exit 0
+            echo "Vault OAuth2 provider not found — trying name=Vault (capital V)"
+            PROVIDER_RESP=$(curl -s "http://${SSO_IP}:9000/api/v3/providers/oauth2/" \
+              -H "Authorization: Token $BOOTSTRAP_TOKEN")
+            echo "All providers: $PROVIDER_RESP" | head -c 1000
+            exit 1
           fi
 
           echo "Vault provider UUID: $PROVIDER_UUID"
 
           # Patch redirect_uris
-          curl -sf -X PATCH \
+          PATCH_RESULT=$(curl -s -X PATCH \
             "http://${SSO_IP}:9000/api/v3/providers/oauth2/${PROVIDER_UUID}/" \
             -H "Authorization: Token $BOOTSTRAP_TOKEN" \
             -H "Content-Type: application/json" \
@@ -154,4 +160,6 @@ jobs:
                 {"url": "http://localhost:8250/oidc/callback", "matching_mode": "strict"},
                 {"url": "http://localhost:8200/oidc/callback", "matching_mode": "strict"}
               ]
-            }' | python3 -c "import sys,json; r=json.load(sys.stdin); print('Authentik redirect_uris updated OK — provider:', r.get('pk'))"
+            }')
+          echo "$PATCH_RESULT" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Updated OK — provider:', r.get('pk'))" \
+            || echo "PATCH failed: $PATCH_RESULT"
