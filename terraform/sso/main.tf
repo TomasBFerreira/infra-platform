@@ -23,6 +23,10 @@ resource "proxmox_lxc" "sso" {
 
   unprivileged = false
 
+  features {
+    nesting = true
+  }
+
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]
   start           = true
   target_node     = var.target_node
