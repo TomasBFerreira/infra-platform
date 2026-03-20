@@ -390,6 +390,37 @@
       when: vault_admin_token != ''
       no_log: true
 
+    - name: Seed env vault — authentik OIDC credentials
+      delegate_to: localhost
+      become: no
+      shell: |
+        # Read from bootstrap vault (written there by SSO pipeline on first deploy)
+        CLIENT_ID=$(VAULT_ADDR="{{ lookup('env', 'VAULT_DEV_ADDR') }}" \
+                    VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                    vault kv get -field=client_id secret/authentik/{{ vault_env | default('dev') }}/vault-oidc 2>/dev/null || true)
+        if [ -z "$CLIENT_ID" ]; then
+          echo "SKIP: secret/authentik/{{ vault_env | default('dev') }}/vault-oidc not found in bootstrap vault (run SSO pipeline first)"
+          exit 0
+        fi
+        CLIENT_SECRET=$(VAULT_ADDR="{{ lookup('env', 'VAULT_DEV_ADDR') }}" \
+                        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                        vault kv get -field=client_secret secret/authentik/{{ vault_env | default('dev') }}/vault-oidc)
+        SSO_IP=$(VAULT_ADDR="{{ lookup('env', 'VAULT_DEV_ADDR') }}" \
+                 VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                 vault kv get -field=sso_ip secret/authentik/{{ vault_env | default('dev') }}/vault-oidc)
+        DISCOVERY_URL=$(VAULT_ADDR="{{ lookup('env', 'VAULT_DEV_ADDR') }}" \
+                        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                        vault kv get -field=discovery_url secret/authentik/{{ vault_env | default('dev') }}/vault-oidc)
+        VAULT_ADDR="http://{{ vault_ct_ip }}:8200" VAULT_TOKEN="{{ vault_admin_token }}" \
+          vault kv put secret/authentik/vault-oidc \
+            client_id="$CLIENT_ID" \
+            client_secret="$CLIENT_SECRET" \
+            sso_ip="$SSO_IP" \
+            discovery_url="$DISCOVERY_URL"
+        echo "Seeded secret/authentik/vault-oidc from bootstrap vault"
+      when: vault_admin_token != ''
+      no_log: true
+
     - name: Seed summary
       debug:
         msg: "Shared secrets seeded from bootstrap vault into http://{{ vault_ct_ip }}:8200"
