@@ -1,0 +1,122 @@
+name: Configure Vault OIDC
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  configure:
+    runs-on: self-hosted
+    steps:
+      - name: Set vault credentials
+        run: |
+          case "${{ inputs.environment }}" in
+            dev)
+              echo "VAULT_ADDR=${{ secrets.VAULT_ADDR }}"   >> $GITHUB_ENV
+              echo "VAULT_TOKEN=${{ secrets.VAULT_TOKEN }}" >> $GITHUB_ENV
+              ;;
+            prod)
+              echo "VAULT_ADDR=${{ secrets.VAULT_PROD_ADDR }}"   >> $GITHUB_ENV
+              echo "VAULT_TOKEN=${{ secrets.VAULT_PROD_TOKEN }}" >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Configure Vault OIDC auth method
+        run: |
+          CLIENT_ID=$(vault kv get -field=client_id secret/authentik/vault-oidc)
+          CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/vault-oidc)
+          DISCOVERY_URL=$(vault kv get -field=discovery_url secret/authentik/vault-oidc)
+          SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
+
+          echo "::add-mask::$CLIENT_SECRET"
+          echo "Discovery URL: $DISCOVERY_URL"
+          echo "SSO IP: $SSO_IP"
+
+          # Enable OIDC auth method if not already enabled
+          if ! vault auth list -format=json 2>/dev/null | grep -q '"oidc/"'; then
+            vault auth enable oidc
+            echo "Enabled OIDC auth method"
+          else
+            echo "OIDC auth method already enabled"
+          fi
+
+          # Configure OIDC
+          vault write auth/oidc/config \
+            oidc_discovery_url="$DISCOVERY_URL" \
+            oidc_client_id="$CLIENT_ID" \
+            oidc_client_secret="$CLIENT_SECRET" \
+            default_role="admin"
+          echo "OIDC config written"
+
+          # Create admin policy
+          vault policy write admin - <<'EOF'
+          path "*" {
+            capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+          }
+          EOF
+          echo "Admin policy written"
+
+          # Create OIDC admin role with all redirect URIs (IPs + domain)
+          vault write auth/oidc/role/admin \
+            bound_audiences="$CLIENT_ID" \
+            allowed_redirect_uris="http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback" \
+            allowed_redirect_uris="http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback" \
+            allowed_redirect_uris="http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback" \
+            allowed_redirect_uris="http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback" \
+            allowed_redirect_uris="https://vault-dev.databaes.net/ui/vault/auth/oidc/oidc/callback" \
+            allowed_redirect_uris="https://vault.databaes.net/ui/vault/auth/oidc/oidc/callback" \
+            allowed_redirect_uris="http://localhost:8250/oidc/callback" \
+            allowed_redirect_uris="http://localhost:8200/oidc/callback" \
+            user_claim="sub" \
+            policies="admin" \
+            ttl="12h"
+          echo "Admin OIDC role written"
+
+      - name: Update Authentik redirect_uris
+        run: |
+          SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
+          BOOTSTRAP_TOKEN=$(vault kv get -field=bootstrap_token secret/sso 2>/dev/null || echo "")
+
+          if [ -z "$BOOTSTRAP_TOKEN" ]; then
+            echo "No bootstrap token in secret/sso — skipping Authentik redirect_uris update"
+            exit 0
+          fi
+
+          echo "::add-mask::$BOOTSTRAP_TOKEN"
+
+          # Find the vault provider UUID
+          PROVIDER_RESP=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/oauth2/?name=vault" \
+            -H "Authorization: Token $BOOTSTRAP_TOKEN")
+          PROVIDER_UUID=$(echo "$PROVIDER_RESP" | python3 -c \
+            "import sys,json; results=json.load(sys.stdin)['results']; print(results[0]['pk'] if results else '')")
+
+          if [ -z "$PROVIDER_UUID" ]; then
+            echo "Vault OAuth2 provider not found in Authentik — skipping"
+            exit 0
+          fi
+
+          echo "Vault provider UUID: $PROVIDER_UUID"
+
+          # Patch redirect_uris
+          curl -sf -X PATCH \
+            "http://${SSO_IP}:9000/api/v3/providers/oauth2/${PROVIDER_UUID}/" \
+            -H "Authorization: Token $BOOTSTRAP_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "redirect_uris": [
+                {"url": "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "https://vault-dev.databaes.net/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "https://vault.databaes.net/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://localhost:8250/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://localhost:8200/oidc/callback", "matching_mode": "strict"}
+              ]
+            }' | python3 -c "import sys,json; r=json.load(sys.stdin); print('Authentik redirect_uris updated OK — provider:', r.get('pk'))"
