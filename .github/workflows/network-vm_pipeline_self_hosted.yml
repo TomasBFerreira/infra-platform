@@ -285,7 +285,14 @@ jobs:
           fi
           ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
           ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
-          CF_TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel 2>/dev/null || echo "")
+          # Prod tunnel token lives in env vault; dev tunnel token lives in bootstrap vault
+          if [ "$ENV" = "prod" ]; then
+            CF_TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel 2>/dev/null || echo "")
+          else
+            # Switch to bootstrap vault to read the dev tunnel token
+            CF_TUNNEL_TOKEN=$(VAULT_ADDR="${{ secrets.VAULT_DEV_ADDR }}" VAULT_TOKEN="${{ secrets.VAULT_DEV_TOKEN }}" \
+              vault kv get -field=token secret/cloudflare/dev-tunnel 2>/dev/null || echo "")
+          fi
           echo "::add-mask::$TS_AUTHKEY"
           echo "::add-mask::$WG_PRIVATE_KEY"
           echo "::add-mask::$WG_PEER_PUBLIC_KEY"

@@ -3,23 +3,23 @@ name: Setup dev Cloudflare tunnel
 on:
   workflow_dispatch:
 
-# Stores the dev tunnel token in the dev env vault so the network-vm pipeline
-# picks it up on next run, then triggers traefik-gitops backfill to move
-# all *-dev CNAMEs to the dev tunnel.
+# Stores the dev tunnel token in the bootstrap vault, then triggers traefik-gitops
+# backfill to move all *-dev CNAMEs to the dev tunnel.
 
 jobs:
   setup:
     runs-on: self-hosted
     steps:
-      - name: Store dev tunnel token in dev env vault
+      - name: Store dev tunnel token in bootstrap vault
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
           DEV_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_DEV_TUNNEL_TOKEN }}
         run: |
-          vault kv put secret/cloudflare-tunnel \
-            token="$DEV_TUNNEL_TOKEN"
-          echo "Stored dev tunnel token in dev env vault at secret/cloudflare-tunnel"
+          vault kv put secret/cloudflare/dev-tunnel \
+            token="$DEV_TUNNEL_TOKEN" \
+            hostname="80b044ef-7217-4215-8e4f-b3c9d59add34.cfargotunnel.com"
+          echo "Stored dev tunnel credentials in bootstrap vault at secret/cloudflare/dev-tunnel"
 
       - name: Trigger traefik-gitops backfill to update dev CNAMEs
         env:
@@ -28,4 +28,3 @@ jobs:
           gh workflow run backfill-dns.yml \
             --repo TomasBFerreira/traefik-gitops
           echo "Triggered backfill-dns — *-dev CNAMEs will move to dev tunnel"
-          echo "Dev tunnel: 80b044ef-7217-4215-8e4f-b3c9d59add34.cfargotunnel.com"
