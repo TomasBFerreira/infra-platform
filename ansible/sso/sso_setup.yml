@@ -313,7 +313,13 @@
           name: "Vault"
           client_type: "confidential"
           # All known vault-ct blue/green IPs for dev + prod, plus CLI redirect port
-          redirect_uris: "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback\nhttp://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback\nhttp://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback\nhttp://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback\nhttp://localhost:8250/oidc/callback\nhttp://localhost:8200/oidc/callback"
+          redirect_uris:
+            - "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback"
+            - "http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback"
+            - "http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback"
+            - "http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback"
+            - "http://localhost:8250/oidc/callback"
+            - "http://localhost:8200/oidc/callback"
           sub_mode: "user_id"
           include_claims_in_id_token: true
           signing_key: "{{ _signing_key }}"
