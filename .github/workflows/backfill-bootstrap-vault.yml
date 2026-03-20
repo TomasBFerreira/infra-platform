@@ -1,0 +1,51 @@
+name: Backfill bootstrap vault with OIDC creds
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to backfill'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  backfill:
+    runs-on: self-hosted
+    steps:
+      - name: Copy OIDC creds from env vault to bootstrap vault
+        run: |
+          case "${{ inputs.environment }}" in
+            dev)
+              export VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
+              export VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
+              ;;
+            prod)
+              export VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
+              export VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
+              ;;
+          esac
+
+          CLIENT_ID=$(vault kv get -field=client_id secret/authentik/vault-oidc 2>/dev/null || echo "")
+          if [ -z "$CLIENT_ID" ]; then
+            echo "secret/authentik/vault-oidc not found in ${{ inputs.environment }} vault — nothing to backfill"
+            exit 0
+          fi
+
+          CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/vault-oidc)
+          SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
+          DISCOVERY_URL=$(vault kv get -field=discovery_url secret/authentik/vault-oidc)
+
+          echo "::add-mask::$CLIENT_SECRET"
+          echo "Found OIDC creds for ${{ inputs.environment }}: client_id=$CLIENT_ID, sso_ip=$SSO_IP"
+
+          VAULT_ADDR="${{ secrets.VAULT_DEV_ADDR }}" \
+          VAULT_TOKEN="${{ secrets.VAULT_DEV_TOKEN }}" \
+            vault kv put secret/authentik/${{ inputs.environment }}/vault-oidc \
+              client_id="$CLIENT_ID" \
+              client_secret="$CLIENT_SECRET" \
+              sso_ip="$SSO_IP" \
+              discovery_url="$DISCOVERY_URL"
+
+          echo "Written to bootstrap vault at secret/authentik/${{ inputs.environment }}/vault-oidc"
