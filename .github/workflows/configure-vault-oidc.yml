@@ -9,6 +9,12 @@ on:
         default: 'dev'
         type: choice
         options: [dev, prod]
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: string
 
 jobs:
   configure:
