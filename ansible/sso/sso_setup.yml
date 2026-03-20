@@ -301,6 +301,15 @@
         _existing_client_id: "{{ existing_vault_provider.json.results[0].client_id | default('') }}"
         _existing_client_secret: "{{ existing_vault_provider.json.results[0].client_secret | default('') }}"
         _existing_provider_pk: "{{ existing_vault_provider.json.results[0].pk | default('') }}"
+        # Build redirect_uris as a proper list of dicts via set_fact to avoid
+        # Ansible uri module serialising inline YAML map-in-list items as strings.
+        _vault_redirect_uris:
+          - {url: "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
+          - {url: "http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
+          - {url: "http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
+          - {url: "http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
+          - {url: "http://localhost:8250/oidc/callback", matching_mode: "strict"}
+          - {url: "http://localhost:8200/oidc/callback", matching_mode: "strict"}
 
     - name: Create Vault OAuth2 provider in Authentik
       uri:
@@ -312,20 +321,7 @@
         body:
           name: "Vault"
           client_type: "confidential"
-          # All known vault-ct blue/green IPs for dev + prod, plus CLI redirect port
-          redirect_uris:
-            - url: "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback"
-              matching_mode: "strict"
-            - url: "http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback"
-              matching_mode: "strict"
-            - url: "http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback"
-              matching_mode: "strict"
-            - url: "http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback"
-              matching_mode: "strict"
-            - url: "http://localhost:8250/oidc/callback"
-              matching_mode: "strict"
-            - url: "http://localhost:8200/oidc/callback"
-              matching_mode: "strict"
+          redirect_uris: "{{ _vault_redirect_uris }}"
           sub_mode: "user_id"
           include_claims_in_id_token: true
           signing_key: "{{ _signing_key }}"
