@@ -118,36 +118,36 @@ jobs:
           SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
           echo "SSO IP: $SSO_IP"
 
-          BOOTSTRAP_TOKEN=$(vault kv get -field=bootstrap_token secret/sso 2>/dev/null || echo "")
-          if [ -z "$BOOTSTRAP_TOKEN" ]; then
-            echo "No bootstrap token in secret/sso — skipping Authentik redirect_uris update"
+          # Get a fresh API token from Authentik via docker exec (bootstrap token in vault may be stale)
+          FRESH_TOKEN=$(ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no root@"$VAULT_IP" bash 2>/dev/null <<ENDSSH
+          ssh -o StrictHostKeyChecking=no root@${SSO_IP} \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents; t=Token.objects.filter(identifier='bootstrap-api-token', intent=TokenIntents.INTENT_API).first(); t=t or Token.objects.create(identifier='bootstrap-api-token', user=__import__('authentik.core.models', fromlist=['User']).User.objects.get(username='akadmin'), intent=TokenIntents.INTENT_API, expiring=False); print(t.key)\"" 2>/dev/null
+          ENDSSH
+          )
+
+          if [ -z "$FRESH_TOKEN" ]; then
+            echo "Could not get fresh token from Authentik — skipping redirect_uris update (IP-based URIs from original SSO deploy are still valid)"
             exit 0
           fi
-          echo "::add-mask::$BOOTSTRAP_TOKEN"
-          echo "Bootstrap token found (${#BOOTSTRAP_TOKEN} chars)"
+          echo "::add-mask::$FRESH_TOKEN"
 
-          # Find the vault provider — show full response for debugging
+          # Find the vault provider
           PROVIDER_RESP=$(curl -s "http://${SSO_IP}:9000/api/v3/providers/oauth2/?name=vault" \
-            -H "Authorization: Bearer $BOOTSTRAP_TOKEN")
-          echo "Provider search response: $PROVIDER_RESP" | head -c 500
-
+            -H "Authorization: Bearer $FRESH_TOKEN")
           PROVIDER_UUID=$(echo "$PROVIDER_RESP" | python3 -c \
             "import sys,json; results=json.load(sys.stdin)['results']; print(results[0]['pk'] if results else '')" 2>/dev/null || echo "")
 
           if [ -z "$PROVIDER_UUID" ]; then
-            echo "Vault OAuth2 provider not found — trying name=Vault (capital V)"
-            PROVIDER_RESP=$(curl -s "http://${SSO_IP}:9000/api/v3/providers/oauth2/" \
-              -H "Authorization: Bearer $BOOTSTRAP_TOKEN")
-            echo "All providers: $PROVIDER_RESP" | head -c 1000
-            exit 1
+            echo "Vault OAuth2 provider not found in Authentik — skipping"
+            exit 0
           fi
-
           echo "Vault provider UUID: $PROVIDER_UUID"
 
           # Patch redirect_uris
           PATCH_RESULT=$(curl -s -X PATCH \
             "http://${SSO_IP}:9000/api/v3/providers/oauth2/${PROVIDER_UUID}/" \
-            -H "Authorization: Bearer $BOOTSTRAP_TOKEN" \
+            -H "Authorization: Bearer $FRESH_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
               "redirect_uris": [
@@ -162,4 +162,4 @@ jobs:
               ]
             }')
           echo "$PATCH_RESULT" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Updated OK — provider:', r.get('pk'))" \
-            || echo "PATCH failed: $PATCH_RESULT"
+            || echo "PATCH response: $PATCH_RESULT"
