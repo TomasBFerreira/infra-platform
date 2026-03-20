@@ -128,7 +128,7 @@ jobs:
 
           # Find the vault provider — show full response for debugging
           PROVIDER_RESP=$(curl -s "http://${SSO_IP}:9000/api/v3/providers/oauth2/?name=vault" \
-            -H "Authorization: Token $BOOTSTRAP_TOKEN")
+            -H "Authorization: Bearer $BOOTSTRAP_TOKEN")
           echo "Provider search response: $PROVIDER_RESP" | head -c 500
 
           PROVIDER_UUID=$(echo "$PROVIDER_RESP" | python3 -c \
@@ -137,7 +137,7 @@ jobs:
           if [ -z "$PROVIDER_UUID" ]; then
             echo "Vault OAuth2 provider not found — trying name=Vault (capital V)"
             PROVIDER_RESP=$(curl -s "http://${SSO_IP}:9000/api/v3/providers/oauth2/" \
-              -H "Authorization: Token $BOOTSTRAP_TOKEN")
+              -H "Authorization: Bearer $BOOTSTRAP_TOKEN")
             echo "All providers: $PROVIDER_RESP" | head -c 1000
             exit 1
           fi
@@ -147,7 +147,7 @@ jobs:
           # Patch redirect_uris
           PATCH_RESULT=$(curl -s -X PATCH \
             "http://${SSO_IP}:9000/api/v3/providers/oauth2/${PROVIDER_UUID}/" \
-            -H "Authorization: Token $BOOTSTRAP_TOKEN" \
+            -H "Authorization: Bearer $BOOTSTRAP_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
               "redirect_uris": [
