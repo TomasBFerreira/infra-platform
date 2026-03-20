@@ -1,0 +1,28 @@
+name: Extract and store dev tunnel hostname
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: self-hosted
+    steps:
+      - name: Decode tunnel token and store hostname in traefik-gitops
+        env:
+          DEV_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_DEV_TUNNEL_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          # JWT payload is the second dot-separated segment, base64url-encoded
+          PAYLOAD=$(echo "$DEV_TUNNEL_TOKEN" | cut -d. -f2)
+          # Pad to multiple of 4 for base64 decoding
+          PAD=$(( 4 - ${#PAYLOAD} % 4 ))
+          [ $PAD -lt 4 ] && PAYLOAD="${PAYLOAD}$(printf '=%.0s' $(seq 1 $PAD))"
+          TUNNEL_ID=$(echo "$PAYLOAD" | tr '_-' '/+' | base64 -d 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['t'])")
+          HOSTNAME="${TUNNEL_ID}.cfargotunnel.com"
+          echo "Dev tunnel hostname: $HOSTNAME"
+          echo "::add-mask::$HOSTNAME"
+
+          # Store in traefik-gitops repo
+          gh secret set CLOUDFLARE_DEV_TUNNEL_HOSTNAME \
+            --body "$HOSTNAME" \
+            --repo TomasBFerreira/traefik-gitops
