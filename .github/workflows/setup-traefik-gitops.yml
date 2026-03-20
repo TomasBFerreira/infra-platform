@@ -1,0 +1,35 @@
+name: Setup traefik-gitops secrets
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: self-hosted
+    steps:
+      - name: Seed vault credentials into traefik-gitops
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          GH_PAT:      ${{ secrets.GH_PAT }}
+        run: |
+          GH_TOKEN="$GH_PAT" gh secret set VAULT_DEV_ADDR \
+            --body "$VAULT_ADDR" --repo TomasBFerreira/traefik-gitops
+          GH_TOKEN="$GH_PAT" gh secret set VAULT_DEV_TOKEN \
+            --body "$VAULT_TOKEN" --repo TomasBFerreira/traefik-gitops
+          echo "Vault credentials seeded"
+
+      - name: Derive Cloudflare tunnel hostname from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          GH_PAT:      ${{ secrets.GH_PAT }}
+        run: |
+          TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel)
+          TUNNEL_ID=$(echo "$TUNNEL_TOKEN" | python3 -c \
+            "import sys,json,base64; t=sys.stdin.read().strip(); print(json.loads(base64.b64decode(t + '=='))['t'])")
+          TUNNEL_HOSTNAME="${TUNNEL_ID}.cfargotunnel.com"
+          echo "Tunnel hostname: $TUNNEL_HOSTNAME"
+          GH_TOKEN="$GH_PAT" gh secret set CLOUDFLARE_TUNNEL_HOSTNAME \
+            --body "$TUNNEL_HOSTNAME" --repo TomasBFerreira/traefik-gitops
+          echo "Cloudflare tunnel hostname seeded"
