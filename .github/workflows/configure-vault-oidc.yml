@@ -18,12 +18,12 @@ jobs:
         run: |
           case "${{ inputs.environment }}" in
             dev)
-              echo "VAULT_ADDR=${{ secrets.VAULT_ADDR }}"   >> $GITHUB_ENV
-              echo "VAULT_TOKEN=${{ secrets.VAULT_TOKEN }}" >> $GITHUB_ENV
+              echo "VAULT_ADDR=${{ secrets.VAULT_ADDR }}"             >> $GITHUB_ENV
+              echo "VAULT_TOKEN=${{ secrets.VAULT_DEV_ROOT_TOKEN }}"  >> $GITHUB_ENV
               ;;
             prod)
               echo "VAULT_ADDR=${{ secrets.VAULT_PROD_ADDR }}"   >> $GITHUB_ENV
-              echo "VAULT_TOKEN=${{ secrets.VAULT_PROD_TOKEN }}" >> $GITHUB_ENV
+              echo "VAULT_TOKEN=${{ secrets.VAULT_ROOT_TOKEN }}" >> $GITHUB_ENV
               ;;
           esac
 
