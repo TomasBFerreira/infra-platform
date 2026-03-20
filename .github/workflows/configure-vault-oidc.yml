@@ -14,7 +14,7 @@ jobs:
   configure:
     runs-on: self-hosted
     steps:
-      - name: Fetch SSH key and resolve vault IP
+      - name: Fetch SSH keys and resolve IPs
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
@@ -23,17 +23,24 @@ jobs:
             | awk 'NF > 0' > /tmp/vault_ct_key
           chmod 600 /tmp/vault_ct_key
 
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_key
+          chmod 600 /tmp/sso_key
+
           case "${{ inputs.environment }}" in
             dev)
               VAULT_IP=$(vault kv get -field=ip secret/vault-ct/dev/active-slot)
+              SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
               echo "VAULT_ADDR=http://${VAULT_IP}:8200" >> $GITHUB_ENV
               ;;
             prod)
               VAULT_IP=$(vault kv get -field=ip secret/vault-ct/prod/active-slot)
+              SSO_IP=$(vault kv get -field=ip secret/sso/prod/active-slot)
               echo "VAULT_ADDR=http://${VAULT_IP}:8200" >> $GITHUB_ENV
               ;;
           esac
           echo "VAULT_IP=$VAULT_IP" >> $GITHUB_ENV
+          echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
 
       - name: Generate root token on vault CT
         run: |
@@ -118,12 +125,10 @@ jobs:
           SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
           echo "SSO IP: $SSO_IP"
 
-          # Get a fresh API token from Authentik via docker exec (bootstrap token in vault may be stale)
-          FRESH_TOKEN=$(ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no root@"$VAULT_IP" bash 2>/dev/null <<ENDSSH
-          ssh -o StrictHostKeyChecking=no root@${SSO_IP} \
+          # Get a fresh API token from Authentik via docker exec directly
+          FRESH_TOKEN=$(ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
             "docker exec authentik-server ak shell --command \
-              \"from authentik.core.models import Token, TokenIntents; t=Token.objects.filter(identifier='bootstrap-api-token', intent=TokenIntents.INTENT_API).first(); t=t or Token.objects.create(identifier='bootstrap-api-token', user=__import__('authentik.core.models', fromlist=['User']).User.objects.get(username='akadmin'), intent=TokenIntents.INTENT_API, expiring=False); print(t.key)\"" 2>/dev/null
-          ENDSSH
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null \
           )
 
           if [ -z "$FRESH_TOKEN" ]; then
@@ -163,3 +168,7 @@ jobs:
             }')
           echo "$PATCH_RESULT" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Updated OK — provider:', r.get('pk'))" \
             || echo "PATCH response: $PATCH_RESULT"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/vault_ct_key /tmp/sso_key
