@@ -1,0 +1,52 @@
+name: Debug dev network-vm
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: self-hosted
+    steps:
+      - name: Fetch SSH key
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/network_vm_key
+          chmod 600 /tmp/network_vm_key
+          ACTIVE_IP=$(vault kv get -field=ip secret/network-vm/dev/active-slot)
+          echo "ACTIVE_IP=$ACTIVE_IP" >> $GITHUB_ENV
+
+      - name: Check Traefik and vault connectivity
+        run: |
+          ssh -i /tmp/network_vm_key -o StrictHostKeyChecking=no root@"$ACTIVE_IP" bash <<'EOF'
+          echo "=== Active IP ==="
+          hostname -I
+
+          echo ""
+          echo "=== services.yml vault routes ==="
+          grep -A5 "vault" /opt/traefik/config/dynamic/services.yml || echo "No vault routes found"
+
+          echo ""
+          echo "=== Traefik containers ==="
+          docker ps --format "{{.Names}}\t{{.Status}}"
+
+          echo ""
+          echo "=== Vault health from this host ==="
+          curl -s -o /dev/null -w "245: %{http_code}\n" http://192.168.50.245:8200/v1/sys/health || echo "245: unreachable"
+          curl -s -o /dev/null -w "246: %{http_code}\n" http://192.168.50.246:8200/v1/sys/health || echo "246: unreachable"
+
+          echo ""
+          echo "=== cloudflared status ==="
+          systemctl is-active cloudflared
+          journalctl -u cloudflared -n 5 --no-pager
+
+          echo ""
+          echo "=== Traefik logs (last 20) ==="
+          docker logs traefik --tail 20 2>&1
+          EOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/network_vm_key
