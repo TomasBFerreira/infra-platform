@@ -21,11 +21,7 @@ resource "proxmox_lxc" "sso" {
     gw     = "192.168.50.1"
   }
 
-  unprivileged = true
-
-  features {
-    nesting = true
-  }
+  unprivileged = false
 
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]
   start           = true
