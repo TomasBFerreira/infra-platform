@@ -297,6 +297,13 @@
         esac
         gh secret set $ADDR_SECRET  --body "http://{{ vault_ct_ip }}:8200" --repo TomasBFerreira/infra-platform
         gh secret set $TOKEN_SECRET --body "{{ ci_token_result.json.auth.client_token }}" --repo TomasBFerreira/infra-platform
+        # Also store root token in bootstrap vault for admin operations (OIDC setup etc.)
+        case "{{ vault_env | default('dev') }}" in
+          dev)  ROOT_SECRET="VAULT_DEV_ROOT_TOKEN"  ;;
+          qa)   ROOT_SECRET="VAULT_QA_ROOT_TOKEN"   ;;
+          prod) ROOT_SECRET="VAULT_ROOT_TOKEN"       ;;
+        esac
+        gh secret set $ROOT_SECRET --body "{{ vault_admin_token }}" --repo TomasBFerreira/infra-platform
       environment:
         GH_TOKEN: "{{ lookup('env', 'GH_PAT') }}"
       when: vault_admin_token != '' and ci_token_result is not skipped

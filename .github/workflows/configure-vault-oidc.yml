@@ -14,18 +14,53 @@ jobs:
   configure:
     runs-on: self-hosted
     steps:
-      - name: Set vault credentials
+      - name: Fetch SSH key and resolve vault IP
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
+          vault kv get -field=private_key secret/ssh_keys/vault_ct_worker \
+            | awk 'NF > 0' > /tmp/vault_ct_key
+          chmod 600 /tmp/vault_ct_key
+
           case "${{ inputs.environment }}" in
             dev)
-              echo "VAULT_ADDR=${{ secrets.VAULT_ADDR }}"             >> $GITHUB_ENV
-              echo "VAULT_TOKEN=${{ secrets.VAULT_DEV_ROOT_TOKEN }}"  >> $GITHUB_ENV
+              VAULT_IP=$(vault kv get -field=ip secret/vault-ct/dev/active-slot)
+              echo "VAULT_ADDR=http://${VAULT_IP}:8200" >> $GITHUB_ENV
               ;;
             prod)
-              echo "VAULT_ADDR=${{ secrets.VAULT_PROD_ADDR }}"   >> $GITHUB_ENV
-              echo "VAULT_TOKEN=${{ secrets.VAULT_ROOT_TOKEN }}" >> $GITHUB_ENV
+              VAULT_IP=$(vault kv get -field=ip secret/vault-ct/prod/active-slot)
+              echo "VAULT_ADDR=http://${VAULT_IP}:8200" >> $GITHUB_ENV
               ;;
           esac
+          echo "VAULT_IP=$VAULT_IP" >> $GITHUB_ENV
+
+      - name: Generate root token on vault CT
+        run: |
+          ROOT_TOKEN=$(ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no root@"$VAULT_IP" bash <<'ENDSSH'
+          export VAULT_ADDR=http://127.0.0.1:8200
+
+          # Fast path: root token still in init file from first deploy
+          if [ -f /root/vault-init.json ]; then
+            python3 -c "import json; print(json.load(open('/root/vault-init.json'))['root_token'])"
+            exit 0
+          fi
+
+          # Slow path: generate-root using the stored unseal keys (threshold=2)
+          INIT=$(vault operator generate-root -init -format=json)
+          NONCE=$(echo "$INIT" | python3 -c "import sys,json; print(json.load(sys.stdin)['nonce'])")
+          OTP=$(echo "$INIT"   | python3 -c "import sys,json; print(json.load(sys.stdin)['otp'])")
+          mapfile -t KEYS < /etc/vault.d/.unseal_keys
+          RESULT=""
+          for KEY in "${KEYS[@]}"; do
+            RESULT=$(printf '%s' "$KEY" | vault operator generate-root -nonce="$NONCE" -format=json -)
+          done
+          ENCODED=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['encoded_root_token'])")
+          vault operator generate-root -decode="$ENCODED" -otp="$OTP"
+          ENDSSH
+          )
+          echo "::add-mask::$ROOT_TOKEN"
+          echo "VAULT_TOKEN=$ROOT_TOKEN" >> $GITHUB_ENV
 
       - name: Configure Vault OIDC auth method
         run: |
