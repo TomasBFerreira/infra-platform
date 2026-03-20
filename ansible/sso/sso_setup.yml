@@ -182,19 +182,62 @@
       retries: 30
       delay: 10
 
-    - name: Wait for Authentik bootstrap token to be active
-      # The health check passes once DB/Redis/migrations are ready, but the
-      # worker processes the bootstrap task (creating admin user + API token)
-      # asynchronously. Poll until the token is accepted (can take 30-90s).
-      uri:
-        url: "http://localhost:9000/api/v3/core/users/me/"
-        headers:
-          Authorization: "Bearer {{ sso_bootstrap_token }}"
-        status_code: [200, 403]
-      register: token_ready
-      until: token_ready.status == 200
-      retries: 20
+    - name: Show Authentik startup logs (for diagnostics)
+      shell: |
+        echo "=== Server ===" && docker logs authentik-server --tail 40 2>&1 || echo "(no server logs)"
+        echo "=== Worker ===" && docker logs authentik-worker --tail 40 2>&1 || echo "(no worker logs)"
+      register: startup_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Debug Authentik startup logs
+      debug:
+        msg: "{{ startup_logs.stdout }}"
+
+    - name: Write bootstrap token script
+      copy:
+        dest: /tmp/ensure_authentik_token.py
+        content: |
+          # Run inside Authentik's Django shell to ensure the bootstrap API token exists.
+          # This is called via: ak shell --command "exec(open(...)read())"
+          import sys
+          try:
+              from authentik.core.models import Token, User, TokenIntents
+              user = User.objects.filter(username='akadmin').first()
+              if not user:
+                  print('NO_USER')
+                  sys.exit(1)
+              key = '{{ sso_bootstrap_token }}'
+              t, _ = Token.objects.get_or_create(
+                  identifier='authentik-bootstrap-token',
+                  defaults={'user': user, 'intent': TokenIntents.INTENT_API, 'key': key}
+              )
+              if t.key != key:
+                  t.key = key
+                  t.save()
+              print('OK:' + key[:8])
+          except Exception as e:
+              print('ERROR:', str(e))
+              sys.exit(1)
+
+    - name: Copy bootstrap token script to container
+      shell: docker cp /tmp/ensure_authentik_token.py authentik-server:/tmp/ensure_authentik_token.py
+
+    - name: Ensure bootstrap token exists in Authentik DB
+      # Wait for akadmin to be created (part of Authentik's own bootstrap),
+      # then get_or_create the API token so subsequent API calls work.
+      shell: |
+        docker exec authentik-server ak shell \
+          --command "exec(open('/tmp/ensure_authentik_token.py').read())" 2>&1
+      register: token_ensure
+      until: "'OK:' in token_ensure.stdout"
+      retries: 10
       delay: 15
+      changed_when: false
+
+    - name: Debug token creation result
+      debug:
+        msg: "{{ token_ensure.stdout }}"
 
     # ── Authentik API — configure Vault OIDC provider ────────────────────────
     # Idempotent: checks if the provider/application already exists before creating.
