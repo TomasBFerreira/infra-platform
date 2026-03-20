@@ -182,6 +182,20 @@
       retries: 30
       delay: 10
 
+    - name: Wait for Authentik bootstrap token to be active
+      # The health check passes once DB/Redis/migrations are ready, but the
+      # worker processes the bootstrap task (creating admin user + API token)
+      # asynchronously. Poll until the token is accepted (can take 30-90s).
+      uri:
+        url: "http://localhost:9000/api/v3/core/users/me/"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        status_code: [200, 403]
+      register: token_ready
+      until: token_ready.status == 200
+      retries: 20
+      delay: 15
+
     # ── Authentik API — configure Vault OIDC provider ────────────────────────
     # Idempotent: checks if the provider/application already exists before creating.
     # Writes client_id, client_secret, and discovery_url to the env vault so
