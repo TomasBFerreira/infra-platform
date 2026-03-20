@@ -207,8 +207,40 @@ jobs:
             -no-color -input=false -auto-approve \
             -state=terraform.${STAGING_SLOT}.${ENV}.tfstate
 
-  ansible-staging:
+  configure-lxc:
     needs: [resolve-slots, terraform-staging]
+    runs-on: self-hosted
+    env:
+      ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
+    steps:
+      - name: Patch LXC config and reboot
+        env:
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} bash -s -- "${STAGING_VMID}" << 'SSHEOF'
+            VMID="$1"
+            CONF="/etc/pve/lxc/${VMID}.conf"
+            # Allow Docker containers inside the LXC to set net sysctl namespaces
+            grep -q 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start' "$CONF" \
+              || echo 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start = 0' >> "$CONF"
+            pct reboot "${VMID}"
+          SSHEOF
+          echo "LXC config patched, waiting for reboot..."
+          sleep 15
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${STAGING_IP}..."
+          timeout 120 bash -c "until nc -z ${STAGING_IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+  ansible-staging:
+    needs: [resolve-slots, configure-lxc]
     runs-on: self-hosted
     env:
       LC_ALL: C.UTF-8
@@ -357,7 +389,7 @@ jobs:
             "pct stop ${ACTIVE_VMID} 2>/dev/null || true; pct destroy ${ACTIVE_VMID} 2>/dev/null || true"
 
   cleanup-on-failure:
-    needs: [resolve-slots, terraform-staging, ansible-staging]
+    needs: [resolve-slots, terraform-staging, configure-lxc, ansible-staging]
     if: failure()
     runs-on: self-hosted
     env:
