@@ -21,7 +21,7 @@ resource "proxmox_lxc" "sso" {
     gw     = "192.168.50.1"
   }
 
-  unprivileged = false
+  unprivileged = true
 
   features {
     nesting = true
