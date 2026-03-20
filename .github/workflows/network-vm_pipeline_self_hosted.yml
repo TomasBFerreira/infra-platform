@@ -1,11 +1,6 @@
 name: Network-VM Pipeline (Self-Hosted)
 
 on:
-  push:
-    branches: [main, 'feature/**']
-    paths:
-      - 'terraform/network-vm/**'
-      - 'ansible/network-vm/**'
   workflow_dispatch:
     inputs:
       environment:

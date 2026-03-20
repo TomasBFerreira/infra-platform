@@ -1,4 +1,26 @@
 http:
+  middlewares:
+    # ── Authentik forward auth ───────────────────────────────────────────────
+    # Attach to any router to gate it behind Authentik SSO.
+    # After adding, the Authentik Proxy Provider for that app must also be
+    # configured in the Authentik UI (Admin → Applications → Providers).
+    authentik-dev:
+      forwardAuth:
+        address: "http://192.168.50.247:9000/outpost.goauthentik.io/auth/traefik"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-authentik-username
+          - X-authentik-groups
+          - X-authentik-email
+          - X-authentik-name
+          - X-authentik-uid
+          - X-authentik-jwt
+          - X-authentik-meta-jwks
+          - X-authentik-meta-outpost
+          - X-authentik-meta-provider
+          - X-authentik-meta-app
+          - X-authentik-meta-version
+
   routers:
     # ============================================
     # PRODUCTION ROUTERS
@@ -93,6 +115,14 @@ http:
       entryPoints:
         - web
 
+    # Authentik UI — the SSO login/admin portal itself must NOT be behind the
+    # middleware (it is the auth endpoint), but the outpost path must pass through.
+    auth-dev-router:
+      rule: "Host(`auth-dev.databaes.net`)"
+      service: auth-dev-service
+      entryPoints:
+        - web
+
   services:
     # ============================================
     # PRODUCTION SERVICES
@@ -172,3 +202,8 @@ http:
       loadBalancer:
         servers:
           - url: "http://192.168.50.202:3001/"
+
+    auth-dev-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.247:9000"

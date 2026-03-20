@@ -1,14 +1,6 @@
 name: Dev Infrastructure Management
 
 on:
-  push:
-    branches: [dev]
-    paths:
-      - 'terraform/dev/**'
-      - 'ansible/dev/**'
-      - '.github/workflows/dev-infrastructure.yml'
-  pull_request:
-    branches: [dev]
   workflow_dispatch:
     inputs:
       terraform_action:
@@ -48,17 +40,10 @@ jobs:
       - name: Detect file changes
         id: changes
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "terraform=true" >> $GITHUB_OUTPUT
-            echo "ansible=true" >> $GITHUB_OUTPUT
-            echo "media_stack=true" >> $GITHUB_OUTPUT
-            echo "network_vm=true" >> $GITHUB_OUTPUT
-          else
-            echo "terraform=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^terraform/dev/' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
-            echo "ansible=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^ansible/dev/' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
-            echo "media_stack=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^(terraform/dev/media-stack|ansible/dev/media-stack)' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
-            echo "network_vm=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} 2>/dev/null | grep -E '^(terraform/dev/network-vm|ansible/dev/network-vm)' | wc -l > /dev/null && echo true || echo false)" >> $GITHUB_OUTPUT
-          fi
+          echo "terraform=true" >> $GITHUB_OUTPUT
+          echo "ansible=true" >> $GITHUB_OUTPUT
+          echo "media_stack=true" >> $GITHUB_OUTPUT
+          echo "network_vm=true" >> $GITHUB_OUTPUT
 
   terraform-media-stack:
     needs: detect-changes

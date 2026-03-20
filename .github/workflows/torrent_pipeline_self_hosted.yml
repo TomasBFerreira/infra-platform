@@ -1,11 +1,6 @@
 name: Torrent Pipeline (Self-Hosted)
 
 on:
-  push:
-    branches: [main, 'feature/**']
-    paths:
-      - 'terraform/torrent/**'
-      - 'ansible/torrent/**'
   workflow_dispatch:
     inputs:
       environment:

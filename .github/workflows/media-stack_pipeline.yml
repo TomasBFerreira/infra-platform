@@ -1,13 +1,7 @@
 name: Media-Stack pipeline
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'terraform/**'
-      - 'ansible/**'
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   secrets:

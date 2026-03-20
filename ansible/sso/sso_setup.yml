@@ -1,0 +1,313 @@
+---
+- name: Configure SSO LXC (Authentik)
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    # ── Docker ──────────────────────────────────────────────────────────────
+
+    - name: Install Docker prerequisites
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - python3-pip
+        state: present
+        update_cache: yes
+
+    - name: Add Docker GPG key
+      shell: |
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Add Docker apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Enable and start Docker
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    # ── Authentik ────────────────────────────────────────────────────────────
+
+    - name: Create Authentik directory
+      file:
+        path: /opt/authentik
+        state: directory
+        mode: '0750'
+
+    - name: Write Authentik environment file
+      copy:
+        dest: /opt/authentik/.env
+        mode: '0600'
+        content: |
+          PG_PASS={{ sso_db_password }}
+          AUTHENTIK_SECRET_KEY={{ sso_secret_key }}
+          AUTHENTIK_BOOTSTRAP_PASSWORD={{ sso_bootstrap_password }}
+          AUTHENTIK_BOOTSTRAP_TOKEN={{ sso_bootstrap_token }}
+          # Error reporting — set to true to help Authentik developers
+          AUTHENTIK_ERROR_REPORTING__ENABLED=false
+          # Outpost host — used by embedded outpost to reach the Authentik server
+          AUTHENTIK_HOST=http://{{ ansible_host }}:9000
+          # Used by Traefik forward auth — the externally reachable URL of this Authentik instance
+          AUTHENTIK_HOST_BROWSER=http://auth-dev.databaes.net
+
+    - name: Deploy Authentik docker-compose
+      copy:
+        dest: /opt/authentik/docker-compose.yml
+        mode: '0644'
+        content: |
+          ---
+          services:
+            postgresql:
+              image: postgres:16-alpine
+              container_name: authentik-postgresql
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+                start_period: 20s
+                interval: 30s
+                retries: 5
+                timeout: 5s
+              volumes:
+                - pg-data:/var/lib/postgresql/data
+              environment:
+                POSTGRES_PASSWORD: ${PG_PASS}
+                POSTGRES_USER: authentik
+                POSTGRES_DB: authentik
+
+            redis:
+              image: redis:alpine
+              container_name: authentik-redis
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+                start_period: 20s
+                interval: 30s
+                retries: 5
+                timeout: 3s
+              command: --save 60 1 --loglevel warning
+              volumes:
+                - redis-data:/data
+
+            server:
+              image: ghcr.io/goauthentik/server:2024.12.3
+              container_name: authentik-server
+              restart: unless-stopped
+              command: server
+              environment:
+                AUTHENTIK_REDIS__HOST: redis
+                AUTHENTIK_POSTGRESQL__HOST: postgresql
+                AUTHENTIK_POSTGRESQL__USER: authentik
+                AUTHENTIK_POSTGRESQL__NAME: authentik
+                AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+                AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+                AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD}
+                AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN}
+                AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED}
+              volumes:
+                - media:/media
+                - custom-templates:/templates
+              ports:
+                - "9000:9000"
+                - "9443:9443"
+              depends_on:
+                postgresql:
+                  condition: service_healthy
+                redis:
+                  condition: service_healthy
+
+            worker:
+              image: ghcr.io/goauthentik/server:2024.12.3
+              container_name: authentik-worker
+              restart: unless-stopped
+              command: worker
+              environment:
+                AUTHENTIK_REDIS__HOST: redis
+                AUTHENTIK_POSTGRESQL__HOST: postgresql
+                AUTHENTIK_POSTGRESQL__USER: authentik
+                AUTHENTIK_POSTGRESQL__NAME: authentik
+                AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+                AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+                AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED}
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - media:/media
+                - custom-templates:/templates
+              depends_on:
+                postgresql:
+                  condition: service_healthy
+                redis:
+                  condition: service_healthy
+
+          volumes:
+            pg-data:
+            redis-data:
+            media:
+            custom-templates:
+
+    - name: Start Authentik
+      command: docker compose --env-file .env up -d
+      args:
+        chdir: /opt/authentik
+
+    - name: Wait for Authentik server to be ready
+      uri:
+        url: "http://localhost:9000/-/health/ready/"
+        status_code: 200
+      register: health
+      until: health.status == 200
+      retries: 30
+      delay: 10
+
+    # ── Authentik API — configure Vault OIDC provider ────────────────────────
+    # Idempotent: checks if the provider/application already exists before creating.
+    # Writes client_id, client_secret, and discovery_url to the env vault so
+    # vault-ct can read them and configure its OIDC auth method.
+
+    - name: Get Authentik signing keys
+      uri:
+        url: "http://localhost:9000/api/v3/crypto/certificatekeypairs/"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: authentik_signing_keys
+
+    - name: Get Authentik authorization flows
+      uri:
+        url: "http://localhost:9000/api/v3/flows/instances/?designation=authorization"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: authentik_auth_flows
+
+    - name: Get Authentik invalidation flows
+      uri:
+        url: "http://localhost:9000/api/v3/flows/instances/?designation=invalidation"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: authentik_invalidation_flows
+
+    - name: Get Authentik OIDC scope property mappings
+      uri:
+        url: "http://localhost:9000/api/v3/propertymappings/scope/"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: authentik_scope_mappings
+
+    - name: Check if Vault OAuth2 provider already exists
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/?name=Vault"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_vault_provider
+
+    - name: Set Authentik resource facts
+      set_fact:
+        # Take the first signing key (Authentik always has one default)
+        _signing_key: "{{ authentik_signing_keys.json.results[0].pk }}"
+        # Prefer implicit consent flow (better UX for homelab), fallback to first
+        _auth_flow: >-
+          {{ (authentik_auth_flows.json.results
+              | selectattr('slug', 'search', 'implicit')
+              | map(attribute='pk')
+              | list
+              + authentik_auth_flows.json.results | map(attribute='pk') | list)
+             | first }}
+        _invalidation_flow: "{{ authentik_invalidation_flows.json.results[0].pk | default('') }}"
+        # Standard OIDC scopes: openid, email, profile, plus groups for policy mapping
+        _scope_mappings: >-
+          {{ authentik_scope_mappings.json.results
+             | selectattr('managed', 'search', 'goauthentik.io/providers/oauth2/scope-(openid|email|profile|groups)')
+             | map(attribute='pk') | list }}
+        _vault_provider_exists: "{{ existing_vault_provider.json.pagination.count > 0 }}"
+        _existing_client_id: "{{ existing_vault_provider.json.results[0].client_id | default('') }}"
+        _existing_client_secret: "{{ existing_vault_provider.json.results[0].client_secret | default('') }}"
+        _existing_provider_pk: "{{ existing_vault_provider.json.results[0].pk | default('') }}"
+
+    - name: Create Vault OAuth2 provider in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Vault"
+          client_type: "confidential"
+          # All known vault-ct blue/green IPs for dev + prod, plus CLI redirect port
+          redirect_uris: "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback\nhttp://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback\nhttp://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback\nhttp://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback\nhttp://localhost:8250/oidc/callback\nhttp://localhost:8200/oidc/callback"
+          sub_mode: "user_id"
+          include_claims_in_id_token: true
+          signing_key: "{{ _signing_key }}"
+          authorization_flow: "{{ _auth_flow }}"
+          invalidation_flow: "{{ _invalidation_flow }}"
+          property_mappings: "{{ _scope_mappings }}"
+        status_code: 201
+      register: created_vault_provider
+      when: not _vault_provider_exists
+
+    - name: Resolve final provider facts (created vs existing)
+      set_fact:
+        _vault_provider_pk: "{{ created_vault_provider.json.pk if not _vault_provider_exists else _existing_provider_pk }}"
+        _vault_client_id: "{{ created_vault_provider.json.client_id if not _vault_provider_exists else _existing_client_id }}"
+        _vault_client_secret: "{{ created_vault_provider.json.client_secret if not _vault_provider_exists else _existing_client_secret }}"
+
+    - name: Check if Vault application already exists
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/?slug=vault"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_vault_app
+
+    - name: Create Vault application in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Vault"
+          slug: "vault"
+          provider: "{{ _vault_provider_pk }}"
+          open_in_new_tab: true
+        status_code: 201
+      when: existing_vault_app.json.pagination.count == 0
+
+    - name: Store Vault OIDC credentials in env vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
+            ;;
+          prod)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
+            ;;
+        esac
+        vault kv put secret/authentik/vault-oidc \
+          client_id="{{ _vault_client_id }}" \
+          client_secret="{{ _vault_client_secret }}" \
+          sso_ip="{{ ansible_host }}" \
+          discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
+      no_log: true

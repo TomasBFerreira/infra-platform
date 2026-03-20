@@ -1,13 +1,6 @@
 name: Media-Stack Pipeline (Self-Hosted)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'terraform/dev/media-stack/**'
-      - 'ansible/dev/media-stack/**'
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:

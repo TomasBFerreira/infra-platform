@@ -253,6 +253,18 @@
             path "secret/metadata/network-vm/*" {
               capabilities = ["read", "list", "delete"]
             }
+            path "secret/data/authentik/*" {
+              capabilities = ["create", "update", "read", "list"]
+            }
+            path "secret/metadata/authentik/*" {
+              capabilities = ["read", "list", "delete"]
+            }
+            path "secret/data/sso" {
+              capabilities = ["create", "update", "read", "list"]
+            }
+            path "secret/metadata/sso" {
+              capabilities = ["read", "list"]
+            }
         status_code: [200, 204]
       when: vault_admin_token != ''
       no_log: true
@@ -375,3 +387,77 @@
       debug:
         msg: "Shared secrets seeded from bootstrap vault into http://{{ vault_ct_ip }}:8200"
       when: vault_admin_token != ''
+
+    # --- OIDC auth method (configured only when SSO has been deployed) ---
+    # The SSO pipeline writes `secret/authentik/vault-oidc` to this env vault
+    # after Authentik is running. On subsequent vault-ct deploys, this block
+    # reads those credentials and wires up Vault's OIDC auth method automatically.
+    # Safe to skip: if the secret doesn't exist yet, all tasks are no-ops.
+
+    - name: Check if Authentik OIDC credentials are available
+      delegate_to: localhost
+      become: no
+      shell: |
+        VAULT_ADDR="http://{{ vault_ct_ip }}:8200" \
+        VAULT_TOKEN="{{ vault_admin_token }}" \
+          vault kv get -field=client_id secret/authentik/vault-oidc 2>/dev/null || true
+      register: oidc_client_id_check
+      changed_when: false
+      when: vault_admin_token != ''
+      no_log: true
+
+    - name: Configure Vault OIDC auth method
+      delegate_to: localhost
+      become: no
+      shell: |
+        export VAULT_ADDR="http://{{ vault_ct_ip }}:8200"
+        export VAULT_TOKEN="{{ vault_admin_token }}"
+
+        CLIENT_ID=$(vault kv get -field=client_id secret/authentik/vault-oidc)
+        CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/vault-oidc)
+        DISCOVERY_URL=$(vault kv get -field=discovery_url secret/authentik/vault-oidc)
+
+        # Enable OIDC auth method if not already enabled
+        if ! vault auth list -format=json 2>/dev/null | grep -q '"oidc/"'; then
+          vault auth enable oidc
+        fi
+
+        # Configure OIDC (idempotent — safe to re-apply)
+        vault write auth/oidc/config \
+          oidc_discovery_url="$DISCOVERY_URL" \
+          oidc_client_id="$CLIENT_ID" \
+          oidc_client_secret="$CLIENT_SECRET" \
+          default_role="admin"
+
+        # Create admin Vault policy (full access — appropriate for homelab admin)
+        vault policy write admin - <<'EOF'
+        path "*" {
+          capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+        }
+        EOF
+
+        # Create OIDC admin role
+        # Redirect URIs must cover both blue/green IPs for all envs + CLI port
+        vault write auth/oidc/role/admin \
+          bound_audiences="$CLIENT_ID" \
+          allowed_redirect_uris="http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback" \
+          allowed_redirect_uris="http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback" \
+          allowed_redirect_uris="http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback" \
+          allowed_redirect_uris="http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback" \
+          allowed_redirect_uris="http://localhost:8250/oidc/callback" \
+          allowed_redirect_uris="http://localhost:8200/oidc/callback" \
+          user_claim="sub" \
+          policies="admin" \
+          ttl="12h"
+      when: vault_admin_token != '' and oidc_client_id_check.stdout | length > 0
+      no_log: true
+
+    - name: OIDC configuration summary
+      debug:
+        msg: "Vault OIDC auth method configured. Login via: vault login -method=oidc -address=http://{{ vault_ct_ip }}:8200"
+      when: vault_admin_token != '' and oidc_client_id_check is not skipped and oidc_client_id_check.stdout | length > 0
+
+    - name: OIDC not yet configured (SSO not deployed)
+      debug:
+        msg: "No Authentik credentials found in vault — OIDC not configured. Deploy SSO first, then re-run this pipeline."
+      when: vault_admin_token != '' and oidc_client_id_check is not skipped and oidc_client_id_check.stdout | length == 0

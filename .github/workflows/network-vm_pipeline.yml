@@ -1,11 +1,6 @@
 name: Network-VM Pipeline
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'terraform/dev/network-vm/**'
-      - 'ansible/dev/network-vm/**'
   workflow_dispatch:
 
 # Set environment variables that can be used across jobs
