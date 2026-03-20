@@ -23,6 +23,23 @@ http:
 
   routers:
     # ============================================
+    # VAULT ROUTERS (dev + prod)
+    # ============================================
+    # Health check routes to the active vault node only.
+    # Vault active returns 200, standby/sealed returns non-200 → Traefik skips it.
+    vault-dev-router:
+      rule: "Host(`vault-dev.databaes.net`)"
+      service: vault-dev-service
+      entryPoints:
+        - web
+
+    vault-prod-router:
+      rule: "Host(`vault.databaes.net`)"
+      service: vault-prod-service
+      entryPoints:
+        - web
+
+    # ============================================
     # PRODUCTION ROUTERS
     # ============================================
     plex-router:
@@ -124,6 +141,29 @@ http:
         - web
 
   services:
+    # ============================================
+    # VAULT SERVICES
+    # ============================================
+    vault-dev-service:
+      loadBalancer:
+        healthCheck:
+          path: /v1/sys/health
+          interval: 10s
+          timeout: 3s
+        servers:
+          - url: "http://192.168.50.245:8200"
+          - url: "http://192.168.50.246:8200"
+
+    vault-prod-service:
+      loadBalancer:
+        healthCheck:
+          path: /v1/sys/health
+          interval: 10s
+          timeout: 3s
+        servers:
+          - url: "http://192.168.50.145:8200"
+          - url: "http://192.168.50.146:8200"
+
     # ============================================
     # PRODUCTION SERVICES
     # ============================================
