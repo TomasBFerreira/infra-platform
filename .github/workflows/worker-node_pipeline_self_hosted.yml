@@ -1,0 +1,269 @@
+name: Worker Node Pipeline (Self-Hosted)
+
+# Worker nodes follow a numbered singleton scheme (111, 112, 113…) rather than
+# blue/green pairs. Each node has exactly one VMID and one IP, and stays running
+# indefinitely. Kubernetes provides workload resilience — VM-level blue/green is
+# not applicable here.
+#
+# Adapted 6-job structure:
+#   resolve-node       → resolve-slots equivalent  (computes VMID/IP from node_number)
+#   terraform-node     → terraform-staging equivalent
+#   ansible-node       → ansible-staging equivalent
+#   register-node      → flip-active equivalent    (records node in bootstrap vault)
+#   (teardown-old-active skipped — no slot rotation; use deprovision workflow)
+#   cleanup-on-failure → unchanged
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_number:
+        description: 'Worker node number (e.g. 2 for worker-node-02, VMID 112, IP .112)'
+        required: true
+        type: string
+      target_node:
+        description: 'Proxmox node to deploy on'
+        required: true
+        default: 'benedict'
+        type: choice
+        options:
+          - benedict
+          - betsy
+          - vladimir
+      template_name:
+        description: 'Cloud-init template VM name on the target Proxmox node'
+        required: true
+        default: 'debian-12-cloud'
+        type: string
+
+concurrency:
+  group: worker-node-pipeline-${{ github.event.inputs.node_number }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-node:
+    runs-on: self-hosted
+    outputs:
+      node_number:  ${{ steps.resolve.outputs.node_number }}
+      vmid:         ${{ steps.resolve.outputs.vmid }}
+      ip_address:   ${{ steps.resolve.outputs.ip_address }}
+      vm_hostname:  ${{ steps.resolve.outputs.vm_hostname }}
+      pve_api_url:  ${{ steps.resolve.outputs.pve_api_url }}
+      pve_node:     ${{ steps.resolve.outputs.pve_node }}
+    steps:
+      - name: Resolve node parameters
+        id: resolve
+        run: |
+          NODE_NUM="${{ github.event.inputs.node_number }}"
+          TARGET_NODE="${{ github.event.inputs.target_node }}"
+
+          # Validate node_number is a positive integer
+          if ! echo "$NODE_NUM" | grep -qE '^[1-9][0-9]*$'; then
+            echo "ERROR: node_number must be a positive integer, got: $NODE_NUM"
+            exit 1
+          fi
+
+          VMID=$((110 + NODE_NUM))
+          IP_ADDRESS="192.168.50.${VMID}"
+          PADDED=$(printf '%02d' "$NODE_NUM")
+          VM_HOSTNAME="worker-node-${PADDED}"
+
+          case "$TARGET_NODE" in
+            benedict) PVE_API_URL="https://192.168.50.4:8006/api2/json" ;;
+            betsy)    PVE_API_URL="https://192.168.50.2:8006/api2/json" ;;
+            vladimir) PVE_API_URL="https://192.168.50.4:8006/api2/json" ;;
+            *)
+              echo "ERROR: unknown target_node: $TARGET_NODE"
+              exit 1
+              ;;
+          esac
+
+          echo "node_number=$NODE_NUM"     >> "$GITHUB_OUTPUT"
+          echo "vmid=$VMID"               >> "$GITHUB_OUTPUT"
+          echo "ip_address=$IP_ADDRESS"   >> "$GITHUB_OUTPUT"
+          echo "vm_hostname=$VM_HOSTNAME" >> "$GITHUB_OUTPUT"
+          echo "pve_api_url=$PVE_API_URL" >> "$GITHUB_OUTPUT"
+          echo "pve_node=$TARGET_NODE"    >> "$GITHUB_OUTPUT"
+
+          echo "Resolved: $VM_HOSTNAME — VMID $VMID — $IP_ADDRESS — $TARGET_NODE"
+
+  terraform-node:
+    needs: resolve-node
+    runs-on: self-hosted
+    env:
+      NODE_NUM:    ${{ needs.resolve-node.outputs.node_number }}
+      VMID:        ${{ needs.resolve-node.outputs.vmid }}
+      IP_ADDRESS:  ${{ needs.resolve-node.outputs.ip_address }}
+      VM_HOSTNAME: ${{ needs.resolve-node.outputs.vm_hostname }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
+          TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node init -input=false
+
+      - name: Pre-flight — destroy any stale VM with this VMID
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
+          TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+          PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.node-${VMID}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "qm stop ${VMID} 2>/dev/null || true; qm destroy ${VMID} --purge 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/worker-node/terraform.node-${VMID}.tfstate
+
+      - name: Terraform Apply
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
+          TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node apply \
+            -no-color -input=false -auto-approve \
+            -state=terraform.node-${VMID}.tfstate
+
+  ansible-node:
+    needs: [resolve-node, terraform-node]
+    runs-on: self-hosted
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      VMID:        ${{ needs.resolve-node.outputs.vmid }}
+      IP_ADDRESS:  ${{ needs.resolve-node.outputs.ip_address }}
+      VM_HOSTNAME: ${{ needs.resolve-node.outputs.vm_hostname }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Fetch SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${IP_ADDRESS}..."
+          timeout 180 bash -c "until nc -z ${IP_ADDRESS} 22; do sleep 5; done"
+          echo "SSH is up"
+
+      - name: Run Ansible playbook
+        run: |
+          ssh-keygen -R "${IP_ADDRESS}" || true
+          ansible-playbook \
+            -i "${IP_ADDRESS}," \
+            -v \
+            --private-key /tmp/worker_node_key \
+            -e "ansible_host=${IP_ADDRESS}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            ansible/worker-node/worker-node_setup.yml
+
+  register-node:
+    needs: [resolve-node, ansible-node]
+    runs-on: self-hosted
+    steps:
+      - name: Record node state in bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          NODE_NUM="${{ needs.resolve-node.outputs.node_number }}"
+          vault kv put secret/worker-node/${NODE_NUM}/state \
+            vmid="${{ needs.resolve-node.outputs.vmid }}" \
+            ip="${{ needs.resolve-node.outputs.ip_address }}" \
+            hostname="${{ needs.resolve-node.outputs.vm_hostname }}" \
+            pve_node="${{ needs.resolve-node.outputs.pve_node }}" \
+            provisioned_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  cleanup-on-failure:
+    needs: [resolve-node, terraform-node, ansible-node]
+    if: failure()
+    runs-on: self-hosted
+    env:
+      VMID: ${{ needs.resolve-node.outputs.vmid }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
+          TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node init -input=false
+
+      - name: Terraform Destroy failed VM
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
+          TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+          PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.node-${VMID}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "qm stop ${VMID} 2>/dev/null || true; qm destroy ${VMID} --purge 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/worker-node/terraform.node-${VMID}.tfstate

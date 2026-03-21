@@ -1,0 +1,79 @@
+---
+- name: Configure worker node
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    # ── System prerequisites ─────────────────────────────────────────────────
+
+    - name: Install prerequisites
+      apt:
+        name:
+          - curl
+          - apt-transport-https
+          - ca-certificates
+          - open-iscsi      # required by k3s for some storage backends
+          - nfs-common      # required for NFS PersistentVolumes
+          - qemu-guest-agent
+        state: present
+        update_cache: yes
+
+    - name: Enable and start qemu-guest-agent
+      systemd:
+        name: qemu-guest-agent
+        enabled: yes
+        state: started
+
+    # ── k3s ─────────────────────────────────────────────────────────────────
+    # Single-node install: server + embedded agent on the same VM.
+    # Installs to /usr/local/bin/k3s, systemd unit: k3s.service.
+    # Kubeconfig written to /etc/rancher/k3s/k3s.yaml (root-only by default).
+
+    - name: Install k3s
+      shell: |
+        curl -sfL https://get.k3s.io | sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for k3s node to be Ready
+      command: k3s kubectl get nodes
+      register: k3s_nodes
+      retries: 12
+      delay: 10
+      until: k3s_nodes.rc == 0 and 'Ready' in k3s_nodes.stdout
+
+    - name: Ensure k3s is enabled and running
+      systemd:
+        name: k3s
+        enabled: yes
+        state: started
+
+    # ── Kubeconfig (world-readable copy for tomas user) ──────────────────────
+
+    - name: Create .kube directory for tomas
+      file:
+        path: /home/tomas/.kube
+        state: directory
+        mode: '0700'
+        owner: tomas
+        group: tomas
+
+    - name: Copy kubeconfig for tomas
+      copy:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: /home/tomas/.kube/config
+        remote_src: yes
+        owner: tomas
+        group: tomas
+        mode: '0600'
+
+    # ── Verify ───────────────────────────────────────────────────────────────
+
+    - name: Show node status
+      command: k3s kubectl get nodes -o wide
+      register: node_status
+      changed_when: false
+
+    - name: Print node status
+      debug:
+        msg: "{{ node_status.stdout }}"

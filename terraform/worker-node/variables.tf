@@ -1,0 +1,53 @@
+variable "vault_token" {
+  description = "Vault access token"
+  type        = string
+  sensitive   = true
+}
+
+variable "vault_address" {
+  description = "Vault server address"
+  type        = string
+}
+
+variable "pve_api" {
+  description = "Proxmox API URL"
+  type        = string
+}
+
+variable "pve_user" {
+  description = "Proxmox user (e.g. root@pam)"
+  type        = string
+  sensitive   = true
+}
+
+variable "pve_pass" {
+  description = "Proxmox password"
+  type        = string
+  sensitive   = true
+}
+
+variable "vmid" {
+  description = "Proxmox VM ID"
+  type        = number
+}
+
+variable "ip_address" {
+  description = "IP address for the VM (without prefix length)"
+  type        = string
+}
+
+variable "vm_hostname" {
+  description = "Hostname for the VM"
+  type        = string
+}
+
+variable "target_node" {
+  description = "Proxmox target node name"
+  type        = string
+}
+
+variable "template_name" {
+  description = "Name of the Proxmox cloud-init template VM to clone (must exist on target node)"
+  type        = string
+  default     = "debian-12-cloud"
+}

@@ -26,6 +26,15 @@ All nodes share `192.168.50.0/24`, gateway `192.168.50.1`.
 
 > **Note:** QA uses .243/.244 instead of .245/.246 since dev owns those.
 
+### Worker Nodes — Numbered Singletons
+
+Worker nodes do not follow the blue/green dual-slot pattern. Each is a permanent VM numbered sequentially: `VMID = 110 + N`, `IP = 192.168.50.(110+N)`. Kubernetes provides workload resilience at the application layer.
+
+| Node | VMID | IP | Proxmox host | Status |
+|------|------|----|--------------|--------|
+| worker-node-01 | 111 | 192.168.50.111 | betsy | existing (manual, pending pipeline migration) |
+| worker-node-02 | 112 | 192.168.50.112 | benedict | pipeline-managed (dev) |
+
 ## Cloudflare Tunnels
 
 Two tunnels exist — one for prod, one for dev. All external traffic enters via Cloudflare, terminating at the appropriate network-vm.
