@@ -29,6 +29,8 @@ Active slot for each env vault is tracked in the bootstrap vault:
 | `secret/ssh_keys/vault_ct_worker` | `private_key` | Manual setup |
 | `secret/ssh_keys/network_vm_worker` | `private_key` | Manual setup |
 | `secret/ssh_keys/sso_worker` | `private_key` | Manual setup |
+| `secret/ssh_keys/worker_node_worker` | `private_key`, `public_key` | Manual setup |
+| `secret/worker-node/<N>/state` | `vmid, ip, hostname, pve_node, provisioned_at` | worker-node pipeline |
 | `secret/tailscale` | `authkey` | Manual setup |
 | `secret/wireguard` | `private_key, peer_public_key, endpoint, address, dns` | Manual setup |
 | `secret/adguard` | `username, password` | Manual setup |

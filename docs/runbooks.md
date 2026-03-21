@@ -152,6 +152,83 @@ If you need to fully redeploy the dev vault (e.g. after CT corruption):
 
 ---
 
+## Provisioning a new worker node
+
+Worker nodes are real VMs (not LXC containers) provisioned via the **Worker Node Pipeline**.
+
+### Prerequisites (one-time per Proxmox node)
+
+**1. Create the cloud-init template VM on the target node**
+
+SSH into the Proxmox node (e.g. `ssh root@192.168.50.4` for benedict) and run:
+
+```bash
+# Download Debian 12 generic cloud image
+wget -O /tmp/debian-12-genericcloud-amd64.qcow2 \
+  https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
+
+# Create template VM (VMID 9000 reserved for this)
+qm create 9000 --name debian-12-cloud --memory 2048 --cores 2 \
+  --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci
+
+# Import disk
+qm importdisk 9000 /tmp/debian-12-genericcloud-amd64.qcow2 local-lvm
+
+# Attach disk and cloud-init drive
+qm set 9000 --scsi0 local-lvm:vm-9000-disk-0
+qm set 9000 --ide2 local-lvm:cloudinit
+qm set 9000 --boot c --bootdisk scsi0
+qm set 9000 --serial0 socket --vga serial0
+qm set 9000 --agent enabled=1
+
+# Convert to template
+qm template 9000
+
+# Clean up
+rm /tmp/debian-12-genericcloud-amd64.qcow2
+```
+
+**2. Add SSH keypair to bootstrap vault**
+
+```bash
+ssh-keygen -t ed25519 -C "worker-node" -f /tmp/worker_node_key -N ""
+vault kv put secret/ssh_keys/worker_node_worker \
+  private_key="$(cat /tmp/worker_node_key)" \
+  public_key="$(cat /tmp/worker_node_key.pub)"
+rm /tmp/worker_node_key /tmp/worker_node_key.pub
+```
+
+### Running the pipeline
+
+Go to **infra-platform → Actions → Worker Node Pipeline → Run workflow**:
+- `node_number`: next available number (2 for worker-node-02, 3 for worker-node-03, etc.)
+- `target_node`: Proxmox node to deploy on (benedict for dev)
+- `template_name`: `debian-12-cloud` (or whatever you named the template above)
+
+VMID and IP are computed automatically: VMID = `110 + node_number`, IP = `192.168.50.<vmid>`.
+
+### Decommissioning a worker node
+
+To tear down a worker node cleanly:
+
+```bash
+# 1. Drain the node in k3s (if it's part of a cluster)
+k3s kubectl drain worker-node-02 --ignore-daemonsets --delete-emptydir-data
+k3s kubectl delete node worker-node-02
+
+# 2. Destroy the VM from Proxmox
+ssh root@192.168.50.4  # target Proxmox node
+qm stop 112 && qm destroy 112 --purge
+
+# 3. Remove state file from runner
+rm /app/infra-platform/terraform/worker-node/terraform.node-112.tfstate
+
+# 4. Remove node record from bootstrap vault
+vault kv delete secret/worker-node/2/state
+```
+
+---
+
 ## Proxmox LXC template is missing
 
 **Symptom:** Terraform fails with `template not found` on a Proxmox node.

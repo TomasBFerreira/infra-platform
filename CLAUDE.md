@@ -1,3 +1,23 @@
+# Rules
+
+1. **All changes must be made on a branch** — never commit directly to `main` or `master`. Create a descriptive branch before making any changes to a repo.
+2. **Documentation must be updated with any infra, network, or app changes** — if you add, modify, or remove anything in the infrastructure, network, application, or any other critical part of the homelab, update the relevant documentation (runbooks, CLAUDE.md, or other docs) in the same PR.
+
+## New app onboarding checklist
+
+Every new app/service being onboarded must satisfy all of the following before it is considered complete:
+
+3. **Deploy on a worker node or static host** — must be provisioned on a Proxmox worker node (benedict/vladimir/betsy) or a designated static host. Ad-hoc deployments directly on the hypervisor are not allowed.
+4. **VMID and IP registration** — claim the next available VMID slot following the `1xx` (prod) / `2xx` (dev) / `3xx` (QA) prefix scheme and update the assignment table in this file. No unregistered or ad-hoc IPs.
+5. **Blue/green pipeline** — every service must have a pipeline with all 6 standard jobs in order: `resolve-slots` → `terraform-staging` → `ansible-staging` → `flip-active` → `teardown-old-active` → `cleanup-on-failure`. Single-slot deployments are not allowed.
+6. **Authentik SSO** — the service must be gated behind Authentik via the Traefik `forwardAuth` middleware (`authentik-dev` / `authentik-prod`). Unauthenticated public exposure is not allowed unless explicitly approved.
+7. **Cloudflare CNAME via traefik-gitops** — routing and the public CNAME must be added to the `TomasBFerreira/traefik-gitops` repo (`config/dynamic/services.yml`). Do not configure ingress directly in pipelines or hardcode hostnames elsewhere.
+8. **Vault secrets structure** — SSH keys go in the bootstrap vault at `secret/ssh_keys/<service>_worker`. Application secrets go in the env-specific vault. All secret paths must be documented in `docs/vaults.md`.
+9. **Terraform/Ansible paths** — new services go in `terraform/<service>/` and `ansible/<service>/` (shared, env-injected via variables). The legacy `terraform/dev/<service>/` and `ansible/dev/<service>/` paths are frozen — nothing new goes there.
+10. **LXC template** — use `local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst` unless there is a specific technical reason not to; any deviation must be documented.
+
+---
+
 # infra-platform
 
 Proxmox homelab infrastructure managed via Terraform + Ansible + GitHub Actions on a self-hosted runner at `/app/infra-platform`.
@@ -27,6 +47,12 @@ Existing assignments:
 - network-vm: prod=155/156 (.155/.156), dev=255/256 (.250/.251), qa=355/356 (.240/.241)
 - torrent: prod=165/166 (.165/.166), dev=265/266 (.252/.253)
 - sso: prod=175/176 (.175/.176), dev=275/276 (.247/.248)
+
+**Worker nodes — numbered singletons (deviation from blue/green):**
+Worker nodes use a flat sequential scheme: VMID = 110+N, IP = 192.168.50.(110+N).
+Kubernetes provides workload resilience; VM-level blue/green does not apply.
+- worker-node-01: VMID 111, IP .111 (betsy — existing manual VM, pending migration to pipeline)
+- worker-node-02: VMID 112, IP .112 (benedict — first pipeline-managed dev node)
 
 ## Vault architecture
 
