@@ -169,7 +169,7 @@ wget -O /tmp/debian-12-genericcloud-amd64.qcow2 \
 
 # Create template VM (VMID 9000 reserved for this)
 qm create 9000 --name debian-12-cloud --memory 2048 --cores 2 \
-  --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci
+ --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci
 
 # Import disk
 qm importdisk 9000 /tmp/debian-12-genericcloud-amd64.qcow2 local-lvm
@@ -192,6 +192,11 @@ rm /tmp/debian-12-genericcloud-amd64.qcow2
 
 ```bash
 ssh-keygen -t ed25519 -C "worker-node" -f /tmp/worker_node_key -N ""
+
+# Point at the bootstrap vault (get VAULT_DEV_TOKEN from GitHub secrets)
+export VAULT_ADDR=http://192.168.50.200:8200
+export VAULT_TOKEN=<VAULT_DEV_TOKEN>
+
 vault kv put secret/ssh_keys/worker_node_worker \
   private_key="$(cat /tmp/worker_node_key)" \
   public_key="$(cat /tmp/worker_node_key.pub)"
