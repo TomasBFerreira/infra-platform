@@ -2,54 +2,78 @@ data "vault_generic_secret" "ssh_key" {
   path = "secret/ssh_keys/worker_node_worker"
 }
 
-resource "proxmox_vm_qemu" "worker_node" {
-  name        = var.vm_hostname
-  vmid        = var.vmid
-  target_node = var.target_node
+resource "proxmox_virtual_environment_vm" "worker_node" {
+  name      = var.vm_hostname
+  vm_id     = var.vmid
+  node_name = var.target_node
 
-  # Clone from a cloud-init template VM (see runbooks.md — "Create cloud-init template")
-  clone      = var.template_name
-  full_clone = true
-
-  cores   = 4
-  sockets = 1
-  memory  = 8192
-
-  # SCSI controller required for iothread
-  scsihw = "virtio-scsi-pci"
-
-  disk {
-    slot     = 0
-    type     = "scsi"
-    storage  = "local-lvm"
-    size     = "50G"
-    iothread = 1
+  clone {
+    vm_id = var.template_vmid
+    full  = true
   }
 
-  network {
+  cpu {
+    cores   = 4
+    sockets = 1
+    type    = "host"
+  }
+
+  memory {
+    dedicated = 8192
+  }
+
+  disk {
+    datastore_id = "local-lvm"
+    interface    = "scsi0"
+    size         = 50
+    iothread     = true
+    file_format  = "raw"
+  }
+
+  network_device {
     model  = "virtio"
     bridge = "vmbr0"
   }
 
-  # Cloud-init configuration
-  os_type    = "cloud-init"
-  ipconfig0  = "ip=${var.ip_address}/24,gw=192.168.50.1"
-  nameserver = "192.168.50.1"
-  ciuser     = "root"
-  sshkeys    = data.vault_generic_secret.ssh_key.data["public_key"]
-
-  # Required for console access and guest agent
-  serial {
-    id   = 0
-    type = "socket"
+  initialization {
+    ip_config {
+      ipv4 {
+        address = "${var.ip_address}/24"
+        gateway = "192.168.50.1"
+      }
+    }
+    dns {
+      servers = ["192.168.50.1"]
+    }
+    user_account {
+      username = "root"
+      keys     = [trimspace(data.vault_generic_secret.ssh_key.data["public_key"])]
+    }
   }
 
-  agent = 1
+  # Match template: serial0=socket, vga=serial0
+  serial_device {
+    device = "socket"
+  }
+
+  vga {
+    type = "serial0"
+  }
+
+  agent {
+    enabled = true
+    timeout = "15m"
+  }
+
+  timeouts {
+    create = "20m"
+    update = "10m"
+    delete = "5m"
+  }
 
   lifecycle {
     ignore_changes = [
-      # Prevents drift on network MAC addr and disk after initial clone
-      network,
+      network_device,
       disk,
     ]
   }

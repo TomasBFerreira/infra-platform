@@ -4,6 +4,27 @@
   environment:
     DEBIAN_FRONTEND: noninteractive
 
+  pre_tasks:
+    # ── Standard users ───────────────────────────────────────────────────────
+    # appadm  — service/app owner
+    # tomas   — admin user for interactive access (sudo)
+
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
   roles:
     - role: common
     - role: tailscale

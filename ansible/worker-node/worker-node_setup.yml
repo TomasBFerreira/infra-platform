@@ -48,7 +48,27 @@
         enabled: yes
         state: started
 
-    # ── Kubeconfig (world-readable copy for tomas user) ──────────────────────
+    # ── Standard users ───────────────────────────────────────────────────────
+    # appadm  — service/app owner (owns k3s workloads, files, etc.)
+    # tomas   — admin user for interactive access (sudo)
+
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
+    # ── Kubeconfig (copy for tomas admin user) ────────────────────────────────
 
     - name: Create .kube directory for tomas
       file:

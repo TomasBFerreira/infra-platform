@@ -16,6 +16,26 @@
         state: present
         update_cache: yes
 
+    # ── Standard users ───────────────────────────────────────────────────────
+    # appadm  — service/app owner
+    # tomas   — admin user for interactive access (sudo)
+
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
     - name: Add Docker GPG key
       shell: |
         install -m 0755 -d /etc/apt/keyrings

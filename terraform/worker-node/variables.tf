@@ -46,8 +46,8 @@ variable "target_node" {
   type        = string
 }
 
-variable "template_name" {
-  description = "Name of the Proxmox cloud-init template VM to clone (must exist on target node)"
-  type        = string
-  default     = "debian-12-cloud"
+variable "template_vmid" {
+  description = "VMID of the Proxmox cloud-init template VM to clone (must exist on target node)"
+  type        = number
+  default     = 9000
 }

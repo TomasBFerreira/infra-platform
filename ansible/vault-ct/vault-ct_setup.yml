@@ -23,6 +23,26 @@
           - lsb-release
         state: present
 
+    # ── Standard users ───────────────────────────────────────────────────────
+    # appadm  — service/app owner
+    # tomas   — admin user for interactive access (sudo)
+
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
     - name: Add HashiCorp GPG key
       shell: |
         curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg

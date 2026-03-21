@@ -29,10 +29,10 @@ on:
           - benedict
           - betsy
           - vladimir
-      template_name:
-        description: 'Cloud-init template VM name on the target Proxmox node'
+      template_vmid:
+        description: 'VMID of the cloud-init template VM to clone (must exist on target node)'
         required: true
-        default: 'debian-12-cloud'
+        default: '9000'
         type: string
 
 concurrency:
@@ -113,7 +113,7 @@ jobs:
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
-          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/worker-node init -input=false
@@ -129,7 +129,7 @@ jobs:
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
-          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
           PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
@@ -154,7 +154,7 @@ jobs:
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
-          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/worker-node apply \
@@ -242,7 +242,7 @@ jobs:
           TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
           TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
-          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/worker-node init -input=false
@@ -258,7 +258,7 @@ jobs:
           TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
           TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
-          TF_VAR_template_name:  ${{ github.event.inputs.template_name }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
           PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
