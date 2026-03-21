@@ -19,7 +19,7 @@ resource "proxmox_vm_qemu" "worker_node" {
   scsihw = "virtio-scsi-pci"
 
   disk {
-    slot     = "scsi0"
+    slot     = 0
     type     = "scsi"
     storage  = "local-lvm"
     size     = "50G"
