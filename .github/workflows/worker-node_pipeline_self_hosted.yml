@@ -56,9 +56,13 @@ jobs:
           NODE_NUM="${{ github.event.inputs.node_number }}"
           TARGET_NODE="${{ github.event.inputs.target_node }}"
 
-          # Validate node_number is a positive integer
+          # Validate node_number is a positive integer and within valid IP range
           if ! echo "$NODE_NUM" | grep -qE '^[1-9][0-9]*$'; then
             echo "ERROR: node_number must be a positive integer, got: $NODE_NUM"
+            exit 1
+          fi
+          if [ "$((110 + NODE_NUM))" -gt 254 ]; then
+            echo "ERROR: node_number $NODE_NUM would produce VMID $((110 + NODE_NUM)) > 254 (invalid IP)"
             exit 1
           fi
 
