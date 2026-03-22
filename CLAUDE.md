@@ -9,7 +9,7 @@ Every new app/service being onboarded must satisfy all of the following before i
 
 3. **Deploy on a worker node or static host** — must be provisioned on a Proxmox worker node (benedict/vladimir/betsy) or a designated static host. Ad-hoc deployments directly on the hypervisor are not allowed.
 4. **VMID and IP registration** — claim the next available VMID slot following the `1xx` (prod) / `2xx` (dev) / `3xx` (QA) prefix scheme and update the assignment table in this file. No unregistered or ad-hoc IPs.
-5. **Blue/green pipeline** — every service must have a pipeline with all 6 standard jobs in order: `resolve-slots` → `terraform-staging` → `ansible-staging` → `flip-active` → `teardown-old-active` → `cleanup-on-failure`. Single-slot deployments are not allowed.
+5. **Blue/green pipeline** — every service must have a pipeline with all 6 standard jobs in order: `resolve-slots` → `terraform-staging` → `ansible-staging` → `flip-active` → `teardown-old-active` → `cleanup-on-failure`. Single-slot deployments are not allowed. Pipelines must use the shared env runner via `runs-on: [self-hosted, <env>]` (e.g. `[self-hosted, dev]`). Do not assume a personal dev machine or ad-hoc host.
 6. **Authentik SSO** — the service must be gated behind Authentik via the Traefik `forwardAuth` middleware (`authentik-dev` / `authentik-prod`). Unauthenticated public exposure is not allowed unless explicitly approved.
 7. **Cloudflare CNAME via traefik-gitops** — routing and the public CNAME must be added to the `TomasBFerreira/traefik-gitops` repo (`config/dynamic/services.yml`). Do not configure ingress directly in pipelines or hardcode hostnames elsewhere.
 8. **Vault secrets structure** — SSH keys go in the bootstrap vault at `secret/ssh_keys/<service>_worker`. Application secrets go in the env-specific vault. All secret paths must be documented in `docs/vaults.md`.
@@ -54,6 +54,12 @@ Worker nodes use a flat sequential scheme: VMID = 110+N, IP = 192.168.50.(110+N)
 Kubernetes provides workload resilience; VM-level blue/green does not apply.
 - worker-node-01: VMID 111, IP .111 (betsy — existing manual VM, pending migration to pipeline)
 - worker-node-02: VMID 112, IP .112 (benedict — first pipeline-managed dev node)
+
+**GitHub Actions runners — env singletons (deviation from blue/green):**
+One runner LXC per environment, permanently assigned. Replaced in-place (destroy + reprovision) by the `github-runner` pipeline. Runners start at `order=5` — after vault, network, and sso. New apps targeting an env use `runs-on: [self-hosted, <env>]`.
+- github-runner-prod: VMID 101, IP 192.168.50.101 (betsy)
+- github-runner-dev:  VMID 201, IP 192.168.50.201 (benedict)
+- github-runner-qa:   VMID 301, IP 192.168.50.301 (vladimir)
 
 ## Vault architecture
 
