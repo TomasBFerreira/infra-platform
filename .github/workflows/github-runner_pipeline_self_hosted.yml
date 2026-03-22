@@ -86,8 +86,7 @@ jobs:
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false \
-            -state=terraform.${ENV}.tfstate
+          ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false
 
       - name: Pre-flight — destroy any existing runner CT
         env:
@@ -229,8 +228,7 @@ jobs:
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
         run: |
           cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false \
-            -state=terraform.${ENV}.tfstate
+          ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false
 
       - name: Terraform Destroy failed CT
         env:
