@@ -212,8 +212,9 @@ jobs:
 
       - name: Run Ansible playbook
         env:
-          VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_DEV_TOKEN:      ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_BOOTSTRAP_ADDR:       ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_DEV_TOKEN:            ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_BOOTSTRAP_ROOT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           ssh-keygen -R "${IP}" || true
           ansible-playbook \
