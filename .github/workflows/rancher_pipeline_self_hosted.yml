@@ -124,7 +124,7 @@ jobs:
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
-            "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true"
+            "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true" || true
           rm -f "$GITHUB_WORKSPACE/terraform/rancher/terraform.${ENV}.tfstate"
 
       - name: Terraform Apply
@@ -270,5 +270,5 @@ jobs:
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
-            "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true"
+            "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true" || true
           rm -f "$GITHUB_WORKSPACE/terraform/rancher/terraform.${ENV}.tfstate"
