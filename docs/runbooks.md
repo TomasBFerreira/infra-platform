@@ -247,6 +247,52 @@ Download from the Proxmox UI: Datacenter → node → local → CT Templates →
 
 ---
 
+## Registering a GitHub Actions runner for a new repo
+
+Each repo that needs CI/CD runs its jobs on the shared env runner LXC. Use the `register-runner.yml` workflow to register a new repo — this is a one-time step per repo per environment.
+
+### Prerequisites
+
+1. The env runner LXC must already exist (provisioned by the `github-runner` pipeline).
+2. `secret/ssh_keys/github_runner_worker` must be in bootstrap vault (runner LXC SSH key).
+3. `secret/github-runner/<env>/state` must be in bootstrap vault with field `ip` (runner LXC IP — written by the github-runner pipeline on provision).
+4. The infra-platform runner for the env must be running (so the workflow job can execute).
+
+### Trigger the workflow
+
+```bash
+gh workflow run register-runner.yml \
+  --repo TomasBFerreira/infra-platform \
+  --field repo=<owner/repo> \
+  --field env=<dev|qa|prod>
+```
+
+Or via GitHub UI: **infra-platform → Actions → Register GitHub Actions Runner → Run workflow**
+
+### What it does
+
+- SSHes into the runner LXC for the target env
+- Runs `ansible/github-runner/github-runner_setup.yml` with `github_repo=<repo>` and `runner_env=<env>`
+- Creates an isolated runner directory at `/opt/github-runners/<repo-slug>/`
+- Registers the runner with GitHub using a fresh JIT token
+- Installs and starts a per-repo systemd service (`github-runner-<repo-slug>.service`)
+
+### Verify the runner is online
+
+After the workflow completes, check the runner appears in the target repo:
+
+```
+https://github.com/<owner>/<repo>/settings/actions/runners
+```
+
+The runner label will include the env name (e.g. `dev`). Jobs using `runs-on: [self-hosted, dev]` will be picked up by this runner.
+
+### Re-registering or replacing a runner
+
+Re-run the same workflow. The Ansible playbook is idempotent — it de-registers any existing runner for the repo and registers a fresh one.
+
+---
+
 ## Deploying to a new environment (QA or Prod)
 
 1. Ensure the LXC template is on the target Proxmox node
