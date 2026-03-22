@@ -214,12 +214,29 @@ jobs:
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           NODE_NUM="${{ needs.resolve-node.outputs.node_number }}"
+          PVE_NODE="${{ needs.resolve-node.outputs.pve_node }}"
+          IP="${{ needs.resolve-node.outputs.ip_address }}"
+
+          # Node state — keyed by node number (canonical record)
           vault kv put secret/worker-node/${NODE_NUM}/state \
             vmid="${{ needs.resolve-node.outputs.vmid }}" \
-            ip="${{ needs.resolve-node.outputs.ip_address }}" \
+            ip="${IP}" \
             hostname="${{ needs.resolve-node.outputs.vm_hostname }}" \
-            pve_node="${{ needs.resolve-node.outputs.pve_node }}" \
+            pve_node="${PVE_NODE}" \
             provisioned_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Env-keyed active slot — used by app pipelines (e.g. media-stack) to
+          # resolve the current worker node IP without knowing the node number.
+          case "${PVE_NODE}" in
+            benedict) ENV=dev ;;
+            betsy)    ENV=prod ;;
+            vladimir) ENV=qa ;;
+            *) echo "Unknown pve_node '${PVE_NODE}', skipping env slot write"; exit 0 ;;
+          esac
+          vault kv put secret/worker-node/${ENV}/active-slot \
+            ip="${IP}" \
+            node_number="${NODE_NUM}" \
+            vmid="${{ needs.resolve-node.outputs.vmid }}"
 
   cleanup-on-failure:
     needs: [resolve-node, terraform-node, ansible-node]
