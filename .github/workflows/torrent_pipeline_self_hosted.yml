@@ -201,10 +201,14 @@ jobs:
             grep -q 'lxc.mount.entry.*tun' /etc/pve/lxc/${VMID}.conf \
               || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/${VMID}.conf
 
-            # Bind-mount shared media from host into LXC (prod only — betsy has /mnt/shared-media)
+            # Bind-mount shared media from host into LXC (prod only — betsy has /mnt/nfs-shared-data/media)
             if [ "$ENV" = "prod" ]; then
               grep -q 'mp0:' /etc/pve/lxc/${VMID}.conf \
-                || echo 'mp0: /mnt/shared-media,mp=/mnt/media' >> /etc/pve/lxc/${VMID}.conf
+                || echo 'mp0: /mnt/nfs-shared-data/media,mp=/mnt/media' >> /etc/pve/lxc/${VMID}.conf
+              # Pre-create downloads dir and set ownership to the LXC root UID mapping (100000:100000)
+              # so that root inside the unprivileged LXC can manage it via the bind mount.
+              mkdir -p /mnt/nfs-shared-data/media/downloads
+              chown 100000:100000 /mnt/nfs-shared-data/media/downloads
             fi
 
             pct reboot ${VMID}
