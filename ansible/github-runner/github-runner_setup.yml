@@ -1,0 +1,204 @@
+---
+- name: GitHub Actions Runner Setup
+  hosts: all
+  become: yes
+
+  vars:
+    runner_version: "2.321.0"
+    runner_home: /opt/github-runner
+    runner_user: appadm
+    github_org: TomasBFerreira
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies
+      apt:
+        name:
+          - curl
+          - tar
+          - git
+          - jq
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+
+    # ── Standard users ───────────────────────────────────────────────────────
+    # appadm  — service/app owner (runs the runner process, owns all files)
+    # tomas   — admin user for interactive access (sudo)
+
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
+    # ── Docker ───────────────────────────────────────────────────────────────
+    # Required for container-based workflow steps and the run-terraform.sh
+    # docker-compose wrapper used by all existing pipelines.
+
+    - name: Add Docker GPG key
+      shell: |
+        curl -fsSL https://download.docker.com/linux/debian/gpg \
+          | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/docker-archive-keyring.gpg
+
+    - name: Add Docker apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Add appadm to docker group
+      user:
+        name: appadm
+        groups: docker
+        append: yes
+
+    - name: Enable and start Docker
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    # ── Runner binary ─────────────────────────────────────────────────────────
+
+    - name: Create runner directory
+      file:
+        path: "{{ runner_home }}"
+        state: directory
+        owner: "{{ runner_user }}"
+        group: "{{ runner_user }}"
+        mode: '0755'
+
+    - name: Check if runner binary already present
+      stat:
+        path: "{{ runner_home }}/bin/Runner.Listener"
+      register: runner_binary
+
+    - name: Download actions-runner
+      get_url:
+        url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        dest: "/tmp/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        mode: '0644'
+      when: not runner_binary.stat.exists
+
+    - name: Extract actions-runner
+      unarchive:
+        src: "/tmp/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        dest: "{{ runner_home }}"
+        remote_src: yes
+        owner: "{{ runner_user }}"
+        group: "{{ runner_user }}"
+      when: not runner_binary.stat.exists
+
+    - name: Install runner dependencies
+      shell: "{{ runner_home }}/bin/installdependencies.sh"
+      args:
+        chdir: "{{ runner_home }}"
+
+    # ── Runner registration ───────────────────────────────────────────────────
+    # GH_PAT is injected into bootstrap vault by the pipeline before this
+    # playbook runs. Ansible fetches it here so no secrets are passed on the
+    # command line.
+
+    - name: Fetch GH_PAT from bootstrap vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        vault kv get -field=token secret/github-runner/gh_pat
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+      register: gh_pat_result
+      no_log: true
+
+    - name: Get GitHub org runner registration token
+      delegate_to: localhost
+      become: no
+      uri:
+        url: "https://api.github.com/orgs/{{ github_org }}/actions/runners/registration-token"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ gh_pat_result.stdout }}"
+          Accept: "application/vnd.github+json"
+          X-GitHub-Api-Version: "2022-11-28"
+        status_code: 201
+      register: runner_reg_token
+      no_log: true
+
+    - name: Stop existing runner service if running
+      shell: |
+        if [ -f "{{ runner_home }}/svc.sh" ]; then
+          {{ runner_home }}/svc.sh stop 2>/dev/null || true
+          {{ runner_home }}/svc.sh uninstall 2>/dev/null || true
+        fi
+      args:
+        chdir: "{{ runner_home }}"
+      ignore_errors: yes
+
+    - name: Remove existing runner configuration
+      become_user: "{{ runner_user }}"
+      shell: |
+        if [ -f "{{ runner_home }}/config.sh" ] && [ -f "{{ runner_home }}/.runner" ]; then
+          {{ runner_home }}/config.sh remove \
+            --token "{{ runner_reg_token.json.token }}" 2>/dev/null || true
+        fi
+      args:
+        chdir: "{{ runner_home }}"
+      no_log: true
+      ignore_errors: yes
+
+    - name: Configure runner
+      become_user: "{{ runner_user }}"
+      shell: |
+        {{ runner_home }}/config.sh \
+          --url "https://github.com/{{ github_org }}" \
+          --token "{{ runner_reg_token.json.token }}" \
+          --name "github-runner-{{ runner_env }}" \
+          --labels "self-hosted,linux,{{ runner_env }}" \
+          --work "_work" \
+          --unattended \
+          --replace
+      args:
+        chdir: "{{ runner_home }}"
+      no_log: true
+
+    - name: Install runner as systemd service
+      shell: "{{ runner_home }}/svc.sh install {{ runner_user }}"
+      args:
+        chdir: "{{ runner_home }}"
+
+    - name: Start runner service
+      shell: "{{ runner_home }}/svc.sh start"
+      args:
+        chdir: "{{ runner_home }}"
+
+    - name: Runner setup summary
+      debug:
+        msg: "GitHub Actions runner 'github-runner-{{ runner_env }}' registered to org {{ github_org }} with labels: self-hosted, linux, {{ runner_env }}"

@@ -22,15 +22,23 @@ Active slot for each env vault is tracked in the bootstrap vault:
 - `secret/vault-ct/dev/active-slot` → `{slot, vmid, ip}`
 - `secret/vault-ct/prod/active-slot` → `{slot, vmid, ip}`
 
+Runner state (singletons, no slot rotation):
+- `secret/github-runner/dev/state` → `{vmid, ip, hostname, runner_name, provisioned_at}`
+- `secret/github-runner/qa/state` → `{vmid, ip, hostname, runner_name, provisioned_at}`
+- `secret/github-runner/prod/state` → `{vmid, ip, hostname, runner_name, provisioned_at}`
+
 ## Bootstrap Vault — Secrets Inventory
 
 | Path | Fields | Written by |
 |------|--------|------------|
-| `secret/ssh_keys/vault_ct_worker` | `private_key` | Manual setup |
-| `secret/ssh_keys/network_vm_worker` | `private_key` | Manual setup |
-| `secret/ssh_keys/sso_worker` | `private_key` | Manual setup |
+| `secret/ssh_keys/vault_ct_worker` | `private_key`, `public_key` | Manual setup |
+| `secret/ssh_keys/network_vm_worker` | `private_key`, `public_key` | Manual setup |
+| `secret/ssh_keys/sso_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/ssh_keys/worker_node_worker` | `private_key`, `public_key` | Manual setup |
+| `secret/ssh_keys/github_runner_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/worker-node/<N>/state` | `vmid, ip, hostname, pve_node, provisioned_at` | worker-node pipeline |
+| `secret/github-runner/gh_pat` | `token` | github-runner pipeline (injected from GH_PAT secret each run) |
+| `secret/github-runner/<env>/state` | `vmid, ip, hostname, runner_name, provisioned_at` | github-runner pipeline |
 | `secret/tailscale` | `authkey` | Manual setup |
 | `secret/wireguard` | `private_key, peer_public_key, endpoint, address, dns` | Manual setup |
 | `secret/adguard` | `username, password` | Manual setup |

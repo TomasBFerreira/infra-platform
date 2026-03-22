@@ -1,0 +1,258 @@
+name: GitHub Runner Pipeline (Self-Hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+
+concurrency:
+  group: github-runner-pipeline-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-runner:
+    runs-on: self-hosted
+    outputs:
+      environment:  ${{ steps.runner.outputs.environment }}
+      pve_api_url:  ${{ steps.runner.outputs.pve_api_url }}
+      pve_node:     ${{ steps.runner.outputs.pve_node }}
+      vmid:         ${{ steps.runner.outputs.vmid }}
+      ip:           ${{ steps.runner.outputs.ip }}
+      hostname:     ${{ steps.runner.outputs.hostname }}
+    steps:
+      - name: Resolve runner VMID, IP, and node
+        id: runner
+        run: |
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+
+          # github-runner uses singleton scheme (no blue/green):
+          # prod=101/.101 on betsy, dev=201/.201 on benedict, qa=301/.301 on vladimir
+          case "$ENV" in
+            dev)
+              VMID=201; IP="192.168.50.201"
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_NODE="benedict"
+              ;;
+            qa)
+              VMID=301; IP="192.168.50.301"
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_NODE="vladimir"
+              ;;
+            prod)
+              VMID=101; IP="192.168.50.101"
+              PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              PVE_NODE="betsy"
+              ;;
+          esac
+
+          echo "environment=$ENV"         >> "$GITHUB_OUTPUT"
+          echo "pve_api_url=$PVE_API_URL" >> "$GITHUB_OUTPUT"
+          echo "pve_node=$PVE_NODE"       >> "$GITHUB_OUTPUT"
+          echo "vmid=$VMID"               >> "$GITHUB_OUTPUT"
+          echo "ip=$IP"                   >> "$GITHUB_OUTPUT"
+          echo "hostname=github-runner-$ENV" >> "$GITHUB_OUTPUT"
+
+  terraform-runner:
+    needs: resolve-runner
+    runs-on: self-hosted
+    env:
+      ENV:      ${{ needs.resolve-runner.outputs.environment }}
+      VMID:     ${{ needs.resolve-runner.outputs.vmid }}
+      IP:       ${{ needs.resolve-runner.outputs.ip }}
+      HOSTNAME: ${{ needs.resolve-runner.outputs.hostname }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-runner.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.VMID }}
+          TF_VAR_ip_address:    ${{ env.IP }}
+          TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
+          TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false \
+            -state=terraform.${ENV}.tfstate
+
+      - name: Pre-flight — destroy any existing runner CT
+        env:
+          PVE_API:  ${{ needs.resolve-runner.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+          TF_VAR_pve_api:       ${{ needs.resolve-runner.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.VMID }}
+          TF_VAR_ip_address:    ${{ env.IP }}
+          TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
+          TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/github-runner destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/github-runner/terraform.${ENV}.tfstate
+
+      - name: Terraform Apply
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-runner.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.VMID }}
+          TF_VAR_ip_address:    ${{ env.IP }}
+          TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
+          TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/github-runner apply \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${ENV}.tfstate
+
+  ansible-runner:
+    needs: [resolve-runner, terraform-runner]
+    runs-on: self-hosted
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      ENV: ${{ needs.resolve-runner.outputs.environment }}
+      IP:  ${{ needs.resolve-runner.outputs.ip }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Inject GH_PAT into bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv put secret/github-runner/gh_pat token="${{ secrets.GH_PAT }}"
+
+      - name: Fetch SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+            | awk 'NF > 0' > /tmp/ansible_github_runner_id_ed25519
+          chmod 600 /tmp/ansible_github_runner_id_ed25519
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${IP}..."
+          timeout 120 bash -c "until nc -z ${IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+      - name: Run Ansible playbook
+        env:
+          VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_DEV_TOKEN:      ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ssh-keygen -R "${IP}" || true
+          ansible-playbook \
+            -i "${IP}," \
+            -v \
+            --private-key /tmp/ansible_github_runner_id_ed25519 \
+            -e "ansible_host=${IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "runner_env=${ENV}" \
+            ansible/github-runner/github-runner_setup.yml
+
+  save-runner-state:
+    needs: [resolve-runner, ansible-runner]
+    runs-on: self-hosted
+    steps:
+      - name: Write runner state to bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ needs.resolve-runner.outputs.environment }}"
+          vault kv put secret/github-runner/${ENV}/state \
+            vmid="${{ needs.resolve-runner.outputs.vmid }}" \
+            ip="${{ needs.resolve-runner.outputs.ip }}" \
+            hostname="${{ needs.resolve-runner.outputs.hostname }}" \
+            runner_name="github-runner-${ENV}" \
+            provisioned_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  cleanup-on-failure:
+    needs: [resolve-runner, terraform-runner, ansible-runner]
+    if: failure()
+    runs-on: self-hosted
+    env:
+      ENV:  ${{ needs.resolve-runner.outputs.environment }}
+      VMID: ${{ needs.resolve-runner.outputs.vmid }}
+      IP:   ${{ needs.resolve-runner.outputs.ip }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-runner.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.VMID }}
+          TF_VAR_ip_address:    ${{ env.IP }}
+          TF_VAR_vm_hostname:   ${{ needs.resolve-runner.outputs.hostname }}
+          TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false \
+            -state=terraform.${ENV}.tfstate
+
+      - name: Terraform Destroy failed CT
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-runner.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.VMID }}
+          TF_VAR_ip_address:    ${{ env.IP }}
+          TF_VAR_vm_hostname:   ${{ needs.resolve-runner.outputs.hostname }}
+          TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+          PVE_API:  ${{ needs.resolve-runner.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/github-runner destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/github-runner/terraform.${ENV}.tfstate
