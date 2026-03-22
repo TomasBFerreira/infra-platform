@@ -60,6 +60,12 @@ http:
       entryPoints:
         - web
 
+    qbittorrent-router:
+      rule: "Host(`torrent.databaes.net`)"
+      service: qbittorrent-service
+      entryPoints:
+        - web
+
     # ============================================
     # QA/TEST ROUTERS
     # ============================================
@@ -181,6 +187,12 @@ http:
       loadBalancer:
         servers:
           - url: "http://192.168.50.105"
+
+    qbittorrent-service:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.50.165:8080"
+          - url: "http://192.168.50.166:8080"
 
     # ============================================
     # QA/TEST SERVICES
