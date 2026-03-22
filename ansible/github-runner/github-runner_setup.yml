@@ -149,9 +149,14 @@
           Authorization: "Bearer {{ gh_pat_result.stdout }}"
           Accept: "application/vnd.github+json"
           X-GitHub-Api-Version: "2022-11-28"
-        status_code: 201
+        status_code: [201, 401, 403, 404, 422]
       register: runner_reg_token
       no_log: true
+
+    - name: Fail with diagnostic message if registration token request failed
+      fail:
+        msg: "GitHub API returned HTTP {{ runner_reg_token.status }} for repo {{ github_repo }}. Expected 201. Check GH_PAT has 'repo' scope and write access to the repo."
+      when: runner_reg_token.status != 201
 
     - name: Stop existing runner service if running
       shell: |
