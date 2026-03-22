@@ -10,10 +10,11 @@ services:
       - terraform_cache:/root/.terraform.d/plugin-cache
     environment:
       - TF_CACHE_PLUGIN_CACHE_DIR=/root/.terraform.d/plugin-cache
-    networks:
-      - infra-network
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    # host networking: shares the host network namespace, so no new netns is
+    # created and Docker does not attempt to write net.ipv4.* sysctls that are
+    # blocked inside an LXC. Terraform only needs to reach Vault and Proxmox
+    # APIs which are on the LAN — host network access is sufficient.
+    network_mode: host
     profiles:
       - tools
 
@@ -26,17 +27,10 @@ services:
       - .:/workspace
       - ~/.ssh:/root/.ssh:ro
       - ansible_cache:/root/.ansible
-    networks:
-      - infra-network
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    network_mode: host
     profiles:
       - tools
 
 volumes:
   terraform_cache:
   ansible_cache:
-
-networks:
-  infra-network:
-    driver: bridge
