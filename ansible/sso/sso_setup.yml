@@ -401,7 +401,7 @@
           discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
 
         # Also write to bootstrap vault so vault-ct redeploys can re-seed this secret
-        VAULT_ADDR="{{ lookup('env', 'VAULT_DEV_ADDR') }}" \
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
         VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
           vault kv put secret/authentik/{{ vault_env | default('dev') }}/vault-oidc \
             client_id="{{ _vault_client_id }}" \

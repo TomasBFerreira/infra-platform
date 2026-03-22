@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: Store dev tunnel token in bootstrap vault
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
           DEV_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_DEV_TUNNEL_TOKEN }}
         run: |

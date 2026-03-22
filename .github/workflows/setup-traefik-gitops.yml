@@ -9,13 +9,13 @@ jobs:
     steps:
       - name: Seed vault credentials into traefik-gitops
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           # Unset GITHUB_TOKEN so gh falls back to the runner's local auth
           # (the local session has access to both infra-platform and traefik-gitops)
           unset GITHUB_TOKEN
-          gh secret set VAULT_DEV_ADDR \
+          gh secret set VAULT_BOOTSTRAP_ADDR \
             --body "$VAULT_ADDR" --repo TomasBFerreira/traefik-gitops
           gh secret set VAULT_DEV_TOKEN \
             --body "$VAULT_TOKEN" --repo TomasBFerreira/traefik-gitops
@@ -23,7 +23,7 @@ jobs:
 
       - name: Derive Cloudflare tunnel hostname from bootstrap vault
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel)
