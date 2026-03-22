@@ -12,6 +12,18 @@ on:
           - adguard
           - wireguard
           - cloudflare-tunnel
+          - ssh-key
+          - qbittorrent
+      # ssh-key
+      ssh_key_name:
+        description: '[ssh-key] Key name (e.g. torrent_worker) — stored at secret/ssh_keys/<key_name>'
+        required: false
+      ssh_private_key:
+        description: '[ssh-key] Private key (PEM/OpenSSH)'
+        required: false
+      ssh_public_key:
+        description: '[ssh-key] Public key'
+        required: false
       # tailscale
       ts_authkey:
         description: '[tailscale] authkey'
@@ -43,6 +55,13 @@ on:
       cf_tunnel_token:
         description: '[cloudflare-tunnel] Tunnel token from Cloudflare dashboard'
         required: false
+      # qbittorrent
+      qb_username:
+        description: '[qbittorrent] WebUI username'
+        required: false
+      qb_password:
+        description: '[qbittorrent] WebUI password'
+        required: false
 
 jobs:
   seed:
@@ -55,6 +74,12 @@ jobs:
         run: |
           SECRET="${{ github.event.inputs.secret_path }}"
           case "$SECRET" in
+            ssh-key)
+              KEY_NAME="${{ github.event.inputs.ssh_key_name }}"
+              vault kv put "secret/ssh_keys/${KEY_NAME}" \
+                private_key="${{ github.event.inputs.ssh_private_key }}" \
+                public_key="${{ github.event.inputs.ssh_public_key }}"
+              ;;
             tailscale)
               vault kv put secret/tailscale \
                 authkey="${{ github.event.inputs.ts_authkey }}"
@@ -75,6 +100,11 @@ jobs:
             cloudflare-tunnel)
               vault kv put secret/cloudflare-tunnel \
                 token="${{ github.event.inputs.cf_tunnel_token }}"
+              ;;
+            qbittorrent)
+              vault kv put secret/qbittorrent \
+                username="${{ github.event.inputs.qb_username }}" \
+                password="${{ github.event.inputs.qb_password }}"
               ;;
           esac
           echo "Written secret/$SECRET to bootstrap vault."
