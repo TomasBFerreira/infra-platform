@@ -1,0 +1,175 @@
+---
+- name: Rancher (K3s) Setup
+  hosts: all
+  become: yes
+
+  vars:
+    k3s_version: "v1.32.3+k3s1"
+    helm_version: "v3.17.1"
+    cert_manager_version: "v1.17.1"
+    rancher_version: "2.10.3"
+    rancher_hostname: "rancher-{{ runner_env }}.databaes.net"
+    # runner_env is passed as an extra var from the pipeline.
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies
+      apt:
+        name:
+          - curl
+          - tar
+          - git
+          - jq
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - sudo
+          - unzip
+          - open-iscsi
+          - nfs-common
+        state: present
+
+    # ── Standard users ───────────────────────────────────────────────────────
+
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
+    # ── K3s ──────────────────────────────────────────────────────────────────
+
+    - name: Install K3s
+      shell: |
+        curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" sh -s - \
+          server \
+          --tls-san "{{ rancher_hostname }}" \
+          --tls-san "{{ ansible_host }}" \
+          --write-kubeconfig-mode 644
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for K3s to be ready
+      shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
+      register: k3s_ready
+      retries: 20
+      delay: 10
+      until: k3s_ready.rc == 0
+
+    - name: Create .kube directory for appadm
+      file:
+        path: /home/appadm/.kube
+        state: directory
+        owner: appadm
+        group: appadm
+        mode: '0700'
+
+    - name: Copy kubeconfig for appadm
+      copy:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: /home/appadm/.kube/config
+        remote_src: yes
+        owner: appadm
+        group: appadm
+        mode: '0600'
+
+    - name: Set KUBECONFIG in appadm bashrc
+      lineinfile:
+        path: /home/appadm/.bashrc
+        line: 'export KUBECONFIG=/home/appadm/.kube/config'
+        state: present
+
+    # ── Helm ─────────────────────────────────────────────────────────────────
+
+    - name: Download Helm installer
+      get_url:
+        url: "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+        dest: /tmp/get-helm-3.sh
+        mode: '0700'
+
+    - name: Install Helm
+      shell: /tmp/get-helm-3.sh
+      args:
+        creates: /usr/local/bin/helm
+      environment:
+        DESIRED_VERSION: "{{ helm_version }}"
+
+    # ── cert-manager ─────────────────────────────────────────────────────────
+    # Required by Rancher for TLS certificate management.
+
+    - name: Add cert-manager Helm repo
+      become_user: appadm
+      shell: |
+        helm repo add jetstack https://charts.jetstack.io
+        helm repo update
+      environment:
+        KUBECONFIG: /home/appadm/.kube/config
+
+    - name: Install cert-manager CRDs
+      shell: k3s kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_version }}/cert-manager.crds.yaml
+
+    - name: Create cert-manager namespace
+      shell: k3s kubectl create namespace cert-manager --dry-run=client -o yaml | k3s kubectl apply -f -
+
+    - name: Install cert-manager
+      become_user: appadm
+      shell: |
+        helm upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --version "{{ cert_manager_version }}" \
+          --wait
+      environment:
+        KUBECONFIG: /home/appadm/.kube/config
+
+    - name: Wait for cert-manager to be ready
+      shell: k3s kubectl -n cert-manager rollout status deployment/cert-manager --timeout=120s
+
+    # ── Rancher ───────────────────────────────────────────────────────────────
+
+    - name: Add Rancher Helm repo
+      become_user: appadm
+      shell: |
+        helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+        helm repo update
+      environment:
+        KUBECONFIG: /home/appadm/.kube/config
+
+    - name: Create cattle-system namespace
+      shell: k3s kubectl create namespace cattle-system --dry-run=client -o yaml | k3s kubectl apply -f -
+
+    - name: Install Rancher
+      become_user: appadm
+      shell: |
+        helm upgrade --install rancher rancher-stable/rancher \
+          --namespace cattle-system \
+          --version "{{ rancher_version }}" \
+          --set hostname="{{ rancher_hostname }}" \
+          --set bootstrapPassword=admin \
+          --set ingress.tls.source=letsEncrypt \
+          --set letsEncrypt.email=admin@databaes.net \
+          --set letsEncrypt.ingress.class=traefik \
+          --wait \
+          --timeout 10m
+      environment:
+        KUBECONFIG: /home/appadm/.kube/config
+
+    - name: Wait for Rancher rollout
+      shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=300s
+
+    - name: Rancher setup summary
+      debug:
+        msg: "Rancher {{ rancher_version }} deployed on K3s {{ k3s_version }} at https://{{ rancher_hostname }}"

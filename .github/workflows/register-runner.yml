@@ -33,23 +33,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure Vault CLI is installed
+        run: |
+          if ! command -v vault &>/dev/null; then
+            curl -fsSL https://apt.releases.hashicorp.com/gpg \
+              | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+              | sudo tee /etc/apt/sources.list.d/hashicorp.list
+            sudo apt-get update -qq && sudo apt-get install -y vault
+          fi
+
       - name: Fetch runner LXC SSH key
         run: |
-          RAW=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-            "${VAULT_ADDR}/v1/secret/data/ssh_keys/github_runner_worker" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['private_key'])")
-          echo "$RAW" \
-            | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
-            > /tmp/runner_lxc_key
+          vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+            | python3 -c "
+          import sys, textwrap
+          raw = sys.stdin.read().strip().replace('\r', '')
+          B = '-----BEGIN OPENSSH PRIVATE KEY-----'
+          E = '-----END OPENSSH PRIVATE KEY-----'
+          body = raw[raw.find(B)+len(B):raw.find(E)].replace(' ', '').replace('\n', '').replace('\t', '')
+          print(B); print(textwrap.fill(body, width=70)); print(E)
+          " > /tmp/runner_lxc_key
           chmod 600 /tmp/runner_lxc_key
           grep -q "BEGIN OPENSSH PRIVATE KEY" /tmp/runner_lxc_key \
-            || { echo "ERROR: key missing PEM header"; exit 1; }
+            || { echo "ERROR: key missing PEM header — check secret/ssh_keys/github_runner_worker"; exit 1; }
 
       - name: Resolve runner LXC IP
         run: |
-          RUNNER_IP=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
-            "${VAULT_ADDR}/v1/secret/data/github-runner/${{ inputs.env }}/state" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['ip'])")
+          RUNNER_IP=$(vault kv get -field=ip secret/github-runner/${{ inputs.env }}/state)
           echo "RUNNER_IP=${RUNNER_IP}" >> $GITHUB_ENV
 
       - name: Run Ansible to register runner for repo
