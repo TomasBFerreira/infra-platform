@@ -65,12 +65,6 @@ resource "proxmox_virtual_environment_vm" "worker_node" {
     timeout = "15m"
   }
 
-  timeouts {
-    create = "20m"
-    update = "10m"
-    delete = "5m"
-  }
-
   lifecycle {
     ignore_changes = [
       network_device,
