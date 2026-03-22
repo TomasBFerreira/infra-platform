@@ -167,6 +167,10 @@ jobs:
           chmod 600 /tmp/ansible_github_runner_id_ed25519
           grep -q "BEGIN OPENSSH PRIVATE KEY" /tmp/ansible_github_runner_id_ed25519 \
             || { echo "ERROR: key file missing PEM header — check secret/ssh_keys/github_runner_worker in bootstrap vault"; exit 1; }
+          echo "Key file lines: $(wc -l < /tmp/ansible_github_runner_id_ed25519)"
+          echo "Key file size:  $(wc -c < /tmp/ansible_github_runner_id_ed25519) bytes"
+          echo "First line: $(head -1 /tmp/ansible_github_runner_id_ed25519)"
+          echo "Last line:  $(tail -1 /tmp/ansible_github_runner_id_ed25519)"
 
       - name: Wait for SSH to be ready
         run: |
