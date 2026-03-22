@@ -133,6 +133,22 @@
         groups: docker
         append: yes
 
+    # Docker daemon config: disable iptables manipulation so Docker does not
+    # attempt to set net.ipv4.ping_group_range or similar sysctls in the
+    # container network namespace. These sysctl writes fail inside an LXC
+    # (even a privileged one) because PVE 7 does not grant the host netns
+    # capability to nested containers. Disabling iptables/ip-masq is safe for
+    # a CI runner where the host network provides outbound NAT.
+    - name: Configure Docker daemon (disable iptables to avoid LXC sysctl errors)
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "iptables": false,
+            "ip-masq": false
+          }
+        mode: '0644'
+
     - name: Enable and start Docker
       systemd:
         name: docker
