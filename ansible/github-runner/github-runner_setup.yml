@@ -19,6 +19,7 @@
       apt:
         update_cache: yes
         cache_valid_time: 3600
+        lock_timeout: 300
 
     - name: Install dependencies
       apt:
@@ -36,6 +37,7 @@
           - python3-venv
           - python3-full
         state: present
+        lock_timeout: 300
 
     # ── Ansible ──────────────────────────────────────────────────────────────
     # Required so the runner can execute ansible-playbook and ansible-galaxy
@@ -70,6 +72,7 @@
         name: vault
         state: present
         update_cache: yes
+        lock_timeout: 300
 
     # ── Standard users ───────────────────────────────────────────────────────
     # appadm  — service/app owner (runs the runner process, owns all files)
@@ -123,6 +126,7 @@
           - docker-compose-plugin
         state: present
         update_cache: yes
+        lock_timeout: 300
 
     - name: Add appadm to docker group
       user:

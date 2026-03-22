@@ -16,6 +16,7 @@
       apt:
         update_cache: yes
         cache_valid_time: 3600
+        lock_timeout: 300
 
     - name: Install dependencies
       apt:
@@ -32,6 +33,7 @@
           - open-iscsi
           - nfs-common
         state: present
+        lock_timeout: 300
 
     # ── Standard users ───────────────────────────────────────────────────────
 
