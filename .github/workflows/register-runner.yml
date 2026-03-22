@@ -35,8 +35,10 @@ jobs:
 
       - name: Fetch runner LXC SSH key
         run: |
-          set -o pipefail
-          vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+          RAW=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/ssh_keys/github_runner_worker" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['private_key'])")
+          echo "$RAW" \
             | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
             > /tmp/runner_lxc_key
           chmod 600 /tmp/runner_lxc_key
@@ -45,7 +47,9 @@ jobs:
 
       - name: Resolve runner LXC IP
         run: |
-          RUNNER_IP=$(vault kv get -field=ip secret/github-runner/${{ inputs.env }}/state)
+          RUNNER_IP=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/github-runner/${{ inputs.env }}/state" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['ip'])")
           echo "RUNNER_IP=${RUNNER_IP}" >> $GITHUB_ENV
 
       - name: Run Ansible to register runner for repo
