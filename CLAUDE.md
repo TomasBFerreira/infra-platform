@@ -62,6 +62,12 @@ One runner LXC per environment, permanently assigned. Replaced in-place (destroy
 - github-runner-dev:  VMID 201, IP 192.168.50.201 (benedict)
 - github-runner-qa:   VMID 301, IP 192.168.50.301 (vladimir)
 
+**Rancher (K3s management plane) — env singletons (deviation from blue/green):**
+One Rancher LXC per environment. Runs a single-node K3s cluster with Rancher deployed via Helm. Replaced in-place by the `rancher` pipeline. Starts at `order=6` — after all other infra. Manages workload clusters for that env.
+- rancher-prod: VMID 102, IP 192.168.50.102 (betsy)
+- rancher-dev:  VMID 202, IP 192.168.50.202 (benedict)
+- rancher-qa:   VMID 302, IP 192.168.50.302 (vladimir)
+
 ## Vault architecture
 
 - **Bootstrap vault** (CT 200, always stable): stores SSH keys and slot state for all envs. Credentials: `VAULT_BOOTSTRAP_ADDR` / `VAULT_DEV_TOKEN` GitHub secrets.
