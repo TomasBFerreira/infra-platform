@@ -161,16 +161,11 @@ jobs:
         run: |
           set -o pipefail
           vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
-            | tr -d '\r' \
-            | sed 's/\\n/\n/g' \
-            | awk 'NF > 0' > /tmp/ansible_github_runner_id_ed25519
+            | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
+            > /tmp/ansible_github_runner_id_ed25519
           chmod 600 /tmp/ansible_github_runner_id_ed25519
           grep -q "BEGIN OPENSSH PRIVATE KEY" /tmp/ansible_github_runner_id_ed25519 \
-            || { echo "ERROR: key file missing PEM header — check secret/ssh_keys/github_runner_worker in bootstrap vault"; exit 1; }
-          echo "Key file lines: $(wc -l < /tmp/ansible_github_runner_id_ed25519)"
-          echo "Key file size:  $(wc -c < /tmp/ansible_github_runner_id_ed25519) bytes"
-          echo "First line: $(head -1 /tmp/ansible_github_runner_id_ed25519)"
-          echo "Last line:  $(tail -1 /tmp/ansible_github_runner_id_ed25519)"
+            || { echo "ERROR: key missing PEM header"; exit 1; }
 
       - name: Wait for SSH to be ready
         run: |
