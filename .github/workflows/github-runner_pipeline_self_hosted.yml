@@ -12,6 +12,11 @@ on:
           - dev
           - qa
           - prod
+      github_repo:
+        description: 'GitHub repo to register runner against (owner/repo). Personal accounts: repo-level only.'
+        required: false
+        default: 'TomasBFerreira/infra-platform'
+        type: string
 
 concurrency:
   group: github-runner-pipeline-${{ github.event.inputs.environment || 'dev' }}
@@ -187,6 +192,7 @@ jobs:
             -e "ansible_user=root" \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "runner_env=${ENV}" \
+            -e "github_repo=${{ github.event.inputs.github_repo || 'TomasBFerreira/infra-platform' }}" \
             ansible/github-runner/github-runner_setup.yml
 
   save-runner-state:
