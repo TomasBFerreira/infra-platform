@@ -191,7 +191,7 @@ jobs:
             --private-key /tmp/ansible_rancher_id_ed25519 \
             -e "ansible_host=${IP}" \
             -e "ansible_user=root" \
-            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10'" \
             -e "runner_env=${ENV}" \
             ansible/rancher/rancher_setup.yml
 
