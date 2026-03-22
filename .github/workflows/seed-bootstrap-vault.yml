@@ -12,6 +12,17 @@ on:
           - adguard
           - wireguard
           - cloudflare-tunnel
+          - ssh-key
+      # ssh-key
+      ssh_key_name:
+        description: '[ssh-key] Key name (e.g. torrent_worker) — stored at secret/ssh_keys/<key_name>'
+        required: false
+      ssh_private_key:
+        description: '[ssh-key] Private key (PEM/OpenSSH)'
+        required: false
+      ssh_public_key:
+        description: '[ssh-key] Public key'
+        required: false
       # tailscale
       ts_authkey:
         description: '[tailscale] authkey'
@@ -75,6 +86,12 @@ jobs:
             cloudflare-tunnel)
               vault kv put secret/cloudflare-tunnel \
                 token="${{ github.event.inputs.cf_tunnel_token }}"
+              ;;
+            ssh-key)
+              KEY_NAME="${{ github.event.inputs.ssh_key_name }}"
+              vault kv put "secret/ssh_keys/${KEY_NAME}" \
+                private_key="${{ github.event.inputs.ssh_private_key }}" \
+                public_key="${{ github.event.inputs.ssh_public_key }}"
               ;;
           esac
           echo "Written secret/$SECRET to bootstrap vault."
