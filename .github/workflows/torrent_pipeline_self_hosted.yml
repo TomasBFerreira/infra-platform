@@ -308,6 +308,16 @@ jobs:
             vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
             ip="${{ needs.resolve-slots.outputs.staging_ip }}"
 
+  register-dns:
+    needs: [resolve-slots, flip-active]
+    uses: TomasBFerreira/traefik-gitops/.github/workflows/register-route.yml@main
+    with:
+      router_name:  qbittorrent-router
+      service_name: qbittorrent-service
+      hostname:     torrent.databaes.net
+      backend_urls: "http://${{ needs.resolve-slots.outputs.staging_ip }}:8080"
+      # middleware: authentik-dev  # uncomment once SSO is configured for this service
+
   teardown-old-active:
     needs: [resolve-slots, flip-active]
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'

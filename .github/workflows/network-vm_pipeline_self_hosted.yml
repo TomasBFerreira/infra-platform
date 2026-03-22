@@ -241,6 +241,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Pull latest traefik-gitops (canonical Traefik config source)
+        run: git -C /app/traefik-gitops pull --rebase origin main
+
       - name: Install Ansible collections
         run: |
           ansible-galaxy collection install -r ansible/requirements.yml
