@@ -20,15 +20,20 @@ if docker compose version &> /dev/null; then
     DOCKER_COMPOSE_CMD="docker compose"
 fi
 
+# Run Docker as the current user so created files (e.g. .terraform/) are
+# owned by the runner user, not root. This prevents permission errors when
+# actions/checkout tries to clean the workspace between runs.
+DOCKER_USER="$(id -u):$(id -g)"
+
 # Function to run terraform command
 run_terraform() {
     local cmd="$1"
     shift
-    
+
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@"
-            $DOCKER_COMPOSE_CMD run --rm -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid terraform "$cmd" "$@"
+            $DOCKER_COMPOSE_CMD run --rm --user "$DOCKER_USER" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid terraform "$cmd" "$@"
             ;;
         "help"|"-h"|"--help")
             $DOCKER_COMPOSE_CMD run --rm terraform help
@@ -50,7 +55,7 @@ run_terraform_with_chdir() {
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@ (in directory: $chdir)"
-            $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid terraform "$cmd" "$@"
+            $DOCKER_COMPOSE_CMD run --rm --user "$DOCKER_USER" -w "/workspace/$chdir" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid terraform "$cmd" "$@"
             ;;
         "help"|"-h"|"--help")
             $DOCKER_COMPOSE_CMD run --rm terraform help
