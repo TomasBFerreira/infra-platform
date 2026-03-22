@@ -29,7 +29,10 @@ resource "proxmox_lxc" "sso" {
 
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]
   start           = true
+  onboot          = true
   target_node     = var.target_node
+
+  startup = "order=3,up=30"
 }
 
 output "sso_ip" {

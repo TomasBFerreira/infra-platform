@@ -2,21 +2,22 @@
 # Manual edits may be lost in future updates.
 
 provider "registry.terraform.io/hashicorp/vault" {
-  version = "5.6.0"
+  version     = "5.8.0"
+  constraints = "~> 5.0"
   hashes = [
-    "h1:qRzvy+n5SM0Dz1TSW/DGSK8jfG3Lwj+dv0xM7in2AhM=",
-    "zh:062bfab310e25164ea1bd9a2b86eb0e07ebf67d66f1cea32af84432a8a0a3f15",
-    "zh:0fbff85de06502af491dc1992a1a9de5b7066d9dd12095350c73cd9e2a80d11e",
-    "zh:255dd6c50d9f069486b36ed13612a1fb7fcaed1949861fb6bc1681bd668ab223",
-    "zh:2e99f2dbff55363e1b97370858735a1a8f680d4f4ff28e4665727bafd504d253",
-    "zh:3deba8d0c6987cf4613664ec46be0caa071621295a51135a6142742bd73e9c9c",
-    "zh:50b6660462cc9fb20b8343c5e11fa7d026e5f805c96223b032eb10de76583349",
-    "zh:6338f19114edc8b754bfc8c144d37c71dd6b1a511d388e0118f5eac446a8c5eb",
-    "zh:6671aeecd9f056509612b22c20cf5c52392bd7ca52ee5db9988e68d34cde2c8d",
+    "h1:eSJgYoJoVMce2xjJJCeAZnJELsC4RoqaotD0fgfn6dw=",
+    "zh:18e79b42c8c155a5c541a45d54a6ccdeab23c404c239acdeed336a17cbfc2fd4",
+    "zh:241f50d1ea40030578034b4440e41676f1c9b5e8a2be5cd3afdb6e387914e0bf",
+    "zh:3c25da9ca98df3ae13fd08aa32a94ae4d15959cbb7165044b5f411d16317dfa1",
     "zh:78d5eefdd9e494defcb3c68d282b8f96630502cac21d1ea161f53cfe9bb483b3",
-    "zh:944692c575f710ff6412efecee401b56981df7cfe2ae6a0c0e54b7c38a92934e",
-    "zh:d5a73da30ac8db0ecc4bf4bab733ddcad009ae768d30dc6ae212db2e1d1ad34f",
-    "zh:fbd46583f3037a85cbc5995e15bb72a08903e9afc5a06dd9b23de251efc58225",
+    "zh:85a2cf2e47fe7eab5c81ad5051668c09dcdfd6b6318420f42b91ea179dee8eb0",
+    "zh:861d09d5ab848704cea3bf6c6765288e60938634bf54ed3c29dd2d9a9dc8f7c9",
+    "zh:9822fc41def7ef6f9ffe6ef8d6aaf5014870961d12f5050b60997fa0c12699e1",
+    "zh:9b63003071d47299bd2cb85af0a7d9b33329a8152a5ed06cdd3ba46e839f0c43",
+    "zh:c3ce51f4ab24ac788a0a3eeb0ec16c04f38b74ad9997f86d4dca384ab1472a5a",
+    "zh:c53702a1e829226c63baac15af2f727a8979e00384e220862c8047fd2fcf6b38",
+    "zh:e68cebb3c78f0fed01a3e15ac54f09b4276418d7b7d12811bcc79568e58dcfc1",
+    "zh:f8d97c753305077ddcbd9e60780c5b06b173de2127943b9590d7e8decda4bd7a",
   ]
 }
 

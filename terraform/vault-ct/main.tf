@@ -30,7 +30,10 @@ resource "proxmox_lxc" "vault_ct" {
 
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]
   start           = true
+  onboot          = true
   target_node     = var.target_node
+
+  startup = "order=1,up=30"
 }
 
 output "vault_ct_ip" {

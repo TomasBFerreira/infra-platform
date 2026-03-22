@@ -3,8 +3,8 @@ terraform {
 
   required_providers {
     proxmox = {
-      source  = "telmate/proxmox"
-      version = "~> 2.9"
+      source  = "bpg/proxmox"
+      version = "~> 0.98.0"
     }
     vault = {
       source  = "hashicorp/vault"
@@ -17,18 +17,16 @@ terraform {
   }
 }
 
+locals {
+  # bpg/proxmox expects the Proxmox base URL, not the /api2/json path
+  pve_endpoint = replace(var.pve_api, "/api2/json", "")
+}
+
 provider "proxmox" {
-  pm_api_url      = var.pve_api
-  pm_user         = var.pve_user
-  pm_password     = var.pve_pass
-  pm_tls_insecure = true
-  pm_log_enable   = true
-  pm_log_file     = "terraform-plugin-proxmox.log"
-  pm_debug        = true
-  pm_log_levels = {
-    _default    = "debug"
-    _capturelog = ""
-  }
+  endpoint  = local.pve_endpoint
+  username  = var.pve_user
+  password  = var.pve_pass
+  insecure  = true
 }
 
 provider "vault" {

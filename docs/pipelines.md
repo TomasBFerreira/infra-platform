@@ -130,6 +130,58 @@ All other domains → prod tunnel CNAME (`CLOUDFLARE_TUNNEL_HOSTNAME`)
 
 ---
 
+## Worker Node Pipeline
+
+**File:** `.github/workflows/worker-node_pipeline_self_hosted.yml`
+**Purpose:** Provision a Debian 12 cloud-init VM on a Proxmox node and install k3s (single-node)
+
+### Design: numbered singletons (not blue/green)
+
+Worker nodes use a flat sequential scheme instead of blue/green slots. Kubernetes itself provides workload resilience; VM-level slot-swapping adds no value here.
+
+| Parameter | Formula |
+|-----------|---------|
+| VMID | `110 + node_number` |
+| IP | `192.168.50.<vmid>` |
+| Hostname | `worker-node-<NN>` (zero-padded) |
+
+### Inputs
+
+| Input | Description | Example |
+|-------|-------------|---------|
+| `node_number` | Sequential node number (1–144) | `2` for worker-node-02 |
+| `target_node` | Proxmox node to deploy on | `benedict` |
+| `template_vmid` | VMID of the cloud-init template VM on the target node | `9000` |
+
+### Jobs
+
+| Job | What it does |
+|-----|-------------|
+| `resolve-node` | Validates `node_number`, computes VMID/IP/hostname, resolves Proxmox API URL |
+| `terraform-node` | Pre-flight destroys any stale VM at that VMID, then provisions the new VM by cloning the template |
+| `ansible-node` | Installs k3s, creates `appadm` + `tomas` users, copies kubeconfig for tomas |
+| `register-node` | Writes `{vmid, ip, hostname, pve_node, provisioned_at}` to bootstrap vault at `secret/worker-node/<N>/state` |
+| `cleanup-on-failure` | Destroys the VM if any job fails |
+
+### Terraform provider
+
+Uses `bpg/proxmox` (`~> 0.98.0`) — **not** `telmate/proxmox`. The Telmate provider v2.9.14 has an unfixed panic in `NewConfigQemuFromApi` (`interface {} is string, not float64`) that fires when reading back VM config after clone. The bpg provider is the actively maintained alternative and does not have this issue.
+
+The `.terraform.lock.hcl` is committed to the repo because the bpg provider's `SHA256SUMS` release asset is not accessible via `github.com/releases/download/...` from the Docker bridge network used by `run-terraform.sh`. The committed lock file lets `terraform init` skip the checksum fetch.
+
+### Standard users
+
+Every worker node gets:
+- `appadm` — owns k3s workloads and files
+- `tomas` — admin user (`sudo` group), kubeconfig at `~/.kube/config`
+
+### When to run
+
+- Adding a new node to the cluster
+- Rebuilding a node after hardware failure
+
+---
+
 ## Helper / Utility Workflows
 
 | Workflow | Purpose |

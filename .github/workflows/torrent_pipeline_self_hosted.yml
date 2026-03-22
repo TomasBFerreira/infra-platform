@@ -201,10 +201,14 @@ jobs:
             grep -q 'lxc.mount.entry.*tun' /etc/pve/lxc/${VMID}.conf \
               || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/${VMID}.conf
 
-            # Bind-mount shared media from host into LXC (prod only — betsy has /mnt/shared-media)
+            # Bind-mount shared media from host into LXC (prod only — betsy NVMe)
+            # Pre-create downloads dir and chown to LXC root UID mapping (100000:100000)
+            # so that root inside the unprivileged LXC can manage it via the bind mount.
             if [ "$ENV" = "prod" ]; then
               grep -q 'mp0:' /etc/pve/lxc/${VMID}.conf \
-                || echo 'mp0: /mnt/shared-media,mp=/mnt/media' >> /etc/pve/lxc/${VMID}.conf
+                || echo 'mp0: /mnt/nfs-shared-data/media,mp=/mnt/media' >> /etc/pve/lxc/${VMID}.conf
+              mkdir -p /mnt/nfs-shared-data/media/downloads
+              chown 100000:100000 /mnt/nfs-shared-data/media/downloads
             fi
 
             pct reboot ${VMID}
@@ -307,6 +311,16 @@ jobs:
             slot="${{ needs.resolve-slots.outputs.staging_slot }}" \
             vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
             ip="${{ needs.resolve-slots.outputs.staging_ip }}"
+
+  register-dns:
+    needs: [resolve-slots, flip-active]
+    uses: TomasBFerreira/traefik-gitops/.github/workflows/register-route.yml@main
+    with:
+      router_name:  qbittorrent-router
+      service_name: qbittorrent-service
+      hostname:     torrent.databaes.net
+      backend_urls: "http://${{ needs.resolve-slots.outputs.staging_ip }}:8080"
+      # middleware: authentik-dev  # uncomment once SSO is configured for this service
 
   teardown-old-active:
     needs: [resolve-slots, flip-active]

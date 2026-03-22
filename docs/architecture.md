@@ -27,6 +27,8 @@ Services (all LXC containers, Debian 12)
 
 **Bootstrap vault is the stable anchor.** A permanently-running vault on CT 200 stores SSH keys, slot state, and shared infra secrets. It never gets blue/green deployed — if it goes down, nothing can deploy, but running services are unaffected.
 
+**Critical infra starts first on host reboot.** `vault-ct`, `network-vm`, and `sso` have `onboot = true` and Proxmox startup order configured (`vault-ct` order 1, `network-vm` order 2, `sso` order 3, each with a 30 s `up_delay`). This ensures secrets, networking, and authentication are available before any downstream services attempt to start.
+
 **GitOps for Traefik.** The `traefik-gitops` repo is the single source of truth for routing rules. Committing a new router automatically deploys the config to the active network-vm and creates the Cloudflare DNS CNAME.
 
 ## Data Flow on a Deploy

@@ -15,6 +15,7 @@ Every new app/service being onboarded must satisfy all of the following before i
 8. **Vault secrets structure** — SSH keys go in the bootstrap vault at `secret/ssh_keys/<service>_worker`. Application secrets go in the env-specific vault. All secret paths must be documented in `docs/vaults.md`.
 9. **Terraform/Ansible paths** — new services go in `terraform/<service>/` and `ansible/<service>/` (shared, env-injected via variables). The legacy `terraform/dev/<service>/` and `ansible/dev/<service>/` paths are frozen — nothing new goes there.
 10. **LXC template** — use `local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst` unless there is a specific technical reason not to; any deviation must be documented.
+11. **Standard users on every VM/LXC** — every Ansible playbook must create two users: `appadm` (owns the service — runs processes, owns files) and `tomas` (admin for interactive access, member of `sudo` group). No service should run as root, and no interactive access should rely solely on the root account.
 
 ---
 
