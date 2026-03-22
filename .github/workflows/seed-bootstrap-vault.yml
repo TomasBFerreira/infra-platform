@@ -14,6 +14,20 @@ on:
           - cloudflare-tunnel
           - ssh-key
           - qbittorrent
+          - media-stack-api-keys
+      # media-stack-api-keys
+      ms_radarr_api_key:
+        description: '[media-stack-api-keys] Radarr API key'
+        required: false
+      ms_sonarr_api_key:
+        description: '[media-stack-api-keys] Sonarr API key'
+        required: false
+      ms_overseerr_api_key:
+        description: '[media-stack-api-keys] Overseerr API key'
+        required: false
+      ms_prowlarr_api_key:
+        description: '[media-stack-api-keys] Prowlarr API key'
+        required: false
       # ssh-key
       ssh_key_name:
         description: '[ssh-key] Key name (e.g. torrent_worker) — stored at secret/ssh_keys/<key_name>'
@@ -105,6 +119,13 @@ jobs:
               vault kv put secret/qbittorrent \
                 username="${{ github.event.inputs.qb_username }}" \
                 password="${{ github.event.inputs.qb_password }}"
+              ;;
+            media-stack-api-keys)
+              vault kv put secret/media-stack/api-keys \
+                radarr_api_key="${{ github.event.inputs.ms_radarr_api_key }}" \
+                sonarr_api_key="${{ github.event.inputs.ms_sonarr_api_key }}" \
+                overseerr_api_key="${{ github.event.inputs.ms_overseerr_api_key }}" \
+                prowlarr_api_key="${{ github.event.inputs.ms_prowlarr_api_key }}"
               ;;
           esac
           echo "Written secret/$SECRET to bootstrap vault."
