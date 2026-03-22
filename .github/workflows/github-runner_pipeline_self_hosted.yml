@@ -75,7 +75,13 @@ jobs:
       HOSTNAME: ${{ needs.resolve-runner.outputs.hostname }}
     steps:
       - name: Clean stale root-owned Terraform artifacts
-        run: find "${GITHUB_WORKSPACE:-.}" -name '.terraform' -type d -exec sudo rm -rf {} + 2>/dev/null || true
+        run: |
+          # Docker runs as root so it can delete root-owned .terraform dirs
+          # created by previous runs before the --user flag was added.
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE:-$(pwd)}:/workspace" \
+            alpine:latest \
+            sh -c 'find /workspace -name .terraform -type d -exec rm -rf {} + 2>/dev/null; true'
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -248,7 +254,13 @@ jobs:
       IP:   ${{ needs.resolve-runner.outputs.ip }}
     steps:
       - name: Clean stale root-owned Terraform artifacts
-        run: find "${GITHUB_WORKSPACE:-.}" -name '.terraform' -type d -exec sudo rm -rf {} + 2>/dev/null || true
+        run: |
+          # Docker runs as root so it can delete root-owned .terraform dirs
+          # created by previous runs before the --user flag was added.
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE:-$(pwd)}:/workspace" \
+            alpine:latest \
+            sh -c 'find /workspace -name .terraform -type d -exec rm -rf {} + 2>/dev/null; true'
 
       - name: Checkout code
         uses: actions/checkout@v4

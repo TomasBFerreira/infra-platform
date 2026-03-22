@@ -75,7 +75,11 @@ jobs:
       HOSTNAME: ${{ needs.resolve-rancher.outputs.hostname }}
     steps:
       - name: Clean stale root-owned Terraform artifacts
-        run: find "${GITHUB_WORKSPACE:-.}" -name '.terraform' -type d -exec sudo rm -rf {} + 2>/dev/null || true
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE:-$(pwd)}:/workspace" \
+            alpine:latest \
+            sh -c 'find /workspace -name .terraform -type d -exec rm -rf {} + 2>/dev/null; true'
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -217,7 +221,11 @@ jobs:
       IP:   ${{ needs.resolve-rancher.outputs.ip }}
     steps:
       - name: Clean stale root-owned Terraform artifacts
-        run: find "${GITHUB_WORKSPACE:-.}" -name '.terraform' -type d -exec sudo rm -rf {} + 2>/dev/null || true
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE:-$(pwd)}:/workspace" \
+            alpine:latest \
+            sh -c 'find /workspace -name .terraform -type d -exec rm -rf {} + 2>/dev/null; true'
 
       - name: Checkout code
         uses: actions/checkout@v4
