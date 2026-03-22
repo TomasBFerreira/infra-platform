@@ -1,0 +1,60 @@
+name: Register GitHub Actions Runner
+
+# Registers a self-hosted runner on the env runner LXC for any repo.
+# Run this once when onboarding a new repo that needs its own runner.
+# Each repo gets an isolated directory + systemd service on the shared LXC.
+#
+# Usage:
+#   gh workflow run register-runner.yml \
+#     --field repo=TomasBFerreira/media-stack \
+#     --field env=dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Target repo to register runner for (owner/repo)'
+        required: true
+      env:
+        description: 'Environment runner LXC to register on'
+        type: choice
+        options: [dev, prod, qa]
+        default: dev
+
+jobs:
+  register:
+    runs-on: [self-hosted, "${{ inputs.env }}"]
+    env:
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_BOOTSTRAP_ROOT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch runner LXC SSH key
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+            | awk 'NF > 0' > /tmp/runner_lxc_key
+          chmod 600 /tmp/runner_lxc_key
+
+      - name: Resolve runner LXC IP
+        run: |
+          RUNNER_IP=$(vault kv get -field=ip secret/github-runner/${{ inputs.env }}/state)
+          echo "RUNNER_IP=${RUNNER_IP}" >> $GITHUB_ENV
+
+      - name: Run Ansible to register runner for repo
+        run: |
+          ansible-playbook \
+            -i "${RUNNER_IP}," \
+            --private-key /tmp/runner_lxc_key \
+            -u root \
+            -e "github_repo=${{ inputs.repo }}" \
+            -e "runner_env=${{ inputs.env }}" \
+            -e "VAULT_BOOTSTRAP_ADDR=${VAULT_ADDR}" \
+            ansible/github-runner/github-runner_setup.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/runner_lxc_key

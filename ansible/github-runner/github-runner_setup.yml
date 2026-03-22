@@ -5,10 +5,14 @@
 
   vars:
     runner_version: "2.321.0"
-    runner_home: /opt/github-runner
     runner_user: appadm
-    # github_repo is passed as an extra var from the pipeline (-e "github_repo=...")
-    # Format: owner/repo  e.g. TomasBFerreira/infra-platform
+    # github_repo and runner_env are passed as extra vars from the pipeline.
+    # Format: github_repo=owner/repo  runner_env=dev|prod
+    #
+    # Each repo gets its own isolated directory and systemd service so multiple
+    # repos can share the same runner LXC without conflicting.
+    repo_slug: "{{ github_repo | regex_replace('/', '-') | lower }}"
+    runner_home: "/opt/github-runners/{{ repo_slug }}"
 
   tasks:
     - name: Update apt cache
@@ -136,7 +140,7 @@
         vault kv get -field=token secret/github-runner/gh_pat
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_ROOT_TOKEN') }}"
       register: gh_pat_result
       no_log: true
 
