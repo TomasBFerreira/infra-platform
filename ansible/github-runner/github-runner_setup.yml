@@ -99,6 +99,12 @@
         content: "appadm ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt\n"
         mode: '0440'
 
+    - name: Allow appadm passwordless sudo for workspace cleanup
+      copy:
+        dest: /etc/sudoers.d/appadm-workspace-cleanup
+        content: "appadm ALL=(ALL) NOPASSWD: /usr/bin/find /opt/github-runners*\n"
+        mode: '0440'
+
     # ── Docker ───────────────────────────────────────────────────────────────
     # Required for container-based workflow steps and the run-terraform.sh
     # docker-compose wrapper used by all existing pipelines.

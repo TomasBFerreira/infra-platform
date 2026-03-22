@@ -76,12 +76,14 @@ jobs:
     steps:
       - name: Clean stale root-owned Terraform artifacts
         run: |
-          # Docker runs as root so it can delete root-owned .terraform dirs
-          # created by previous runs before the --user flag was added.
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE:-$(pwd)}:/workspace" \
-            alpine:latest \
-            sh -c 'find /workspace -name .terraform -type d -exec rm -rf {} + 2>/dev/null; true'
+          # run-terraform.sh uses --user so new files are appadm-owned.
+          # Sudo find covers any residual root-owned .terraform dirs from
+          # older runs. Falls back to plain find if sudo is unavailable
+          # (e.g. tomas-dev runner where appadm sudoers may not include find).
+          sudo find "${GITHUB_WORKSPACE:-$(pwd)}" -name .terraform -type d \
+            -exec rm -rf {} + 2>/dev/null || \
+          find "${GITHUB_WORKSPACE:-$(pwd)}" -name .terraform -type d \
+            -user "$(id -u)" -exec rm -rf {} + 2>/dev/null || true
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -237,12 +239,14 @@ jobs:
     steps:
       - name: Clean stale root-owned Terraform artifacts
         run: |
-          # Docker runs as root so it can delete root-owned .terraform dirs
-          # created by previous runs before the --user flag was added.
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE:-$(pwd)}:/workspace" \
-            alpine:latest \
-            sh -c 'find /workspace -name .terraform -type d -exec rm -rf {} + 2>/dev/null; true'
+          # run-terraform.sh uses --user so new files are appadm-owned.
+          # Sudo find covers any residual root-owned .terraform dirs from
+          # older runs. Falls back to plain find if sudo is unavailable
+          # (e.g. tomas-dev runner where appadm sudoers may not include find).
+          sudo find "${GITHUB_WORKSPACE:-$(pwd)}" -name .terraform -type d \
+            -exec rm -rf {} + 2>/dev/null || \
+          find "${GITHUB_WORKSPACE:-$(pwd)}" -name .terraform -type d \
+            -user "$(id -u)" -exec rm -rf {} + 2>/dev/null || true
 
       - name: Checkout code
         uses: actions/checkout@v4
