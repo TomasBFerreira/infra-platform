@@ -79,6 +79,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Terraform Init
         env:
@@ -169,6 +171,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Install Ansible collections
         run: |
@@ -248,6 +252,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Terraform Init
         env:
