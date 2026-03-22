@@ -193,7 +193,6 @@
           --replace
       args:
         chdir: "{{ runner_home }}"
-      no_log: true
 
     - name: Install runner as systemd service
       shell: "{{ runner_home }}/svc.sh install {{ runner_user }}"
