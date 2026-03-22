@@ -37,6 +37,18 @@
           - python3-full
         state: present
 
+    # ── Ansible ──────────────────────────────────────────────────────────────
+    # Required so the runner can execute ansible-playbook and ansible-galaxy
+    # as part of infra pipeline jobs.
+
+    - name: Install Ansible via pip
+      pip:
+        name:
+          - ansible
+          - ansible-core
+        state: present
+        executable: pip3
+
     # ── Vault CLI ────────────────────────────────────────────────────────────
     # Required so workflow steps can call `vault kv get` at runtime.
 

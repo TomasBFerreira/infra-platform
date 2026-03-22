@@ -90,7 +90,7 @@ jobs:
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
         run: |
-          cd /app/infra-platform
+          cd "$GITHUB_WORKSPACE"
           ./scripts/run-terraform.sh -chdir terraform/rancher init -input=false
 
       - name: Pre-flight — destroy any existing rancher CT
@@ -108,7 +108,7 @@ jobs:
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
         run: |
-          cd /app/infra-platform
+          cd "$GITHUB_WORKSPACE"
           ./scripts/run-terraform.sh -chdir terraform/rancher destroy \
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate || true
@@ -116,7 +116,7 @@ jobs:
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true"
-          rm -f /app/infra-platform/terraform/rancher/terraform.${ENV}.tfstate
+          rm -f "$GITHUB_WORKSPACE/terraform/rancher/terraform.${ENV}.tfstate"
 
       - name: Terraform Apply
         env:
@@ -131,7 +131,7 @@ jobs:
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
         run: |
-          cd /app/infra-platform
+          cd "$GITHUB_WORKSPACE"
           ./scripts/run-terraform.sh -chdir terraform/rancher apply \
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate
@@ -225,7 +225,7 @@ jobs:
           TF_VAR_vm_hostname:   ${{ needs.resolve-rancher.outputs.hostname }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
         run: |
-          cd /app/infra-platform
+          cd "$GITHUB_WORKSPACE"
           ./scripts/run-terraform.sh -chdir terraform/rancher init -input=false
 
       - name: Terraform Destroy failed CT
@@ -243,7 +243,7 @@ jobs:
           PVE_API:  ${{ needs.resolve-rancher.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
-          cd /app/infra-platform
+          cd "$GITHUB_WORKSPACE"
           ./scripts/run-terraform.sh -chdir terraform/rancher destroy \
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate || true
@@ -251,4 +251,4 @@ jobs:
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true"
-          rm -f /app/infra-platform/terraform/rancher/terraform.${ENV}.tfstate
+          rm -f "$GITHUB_WORKSPACE/terraform/rancher/terraform.${ENV}.tfstate"
