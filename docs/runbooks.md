@@ -207,8 +207,8 @@ rm /tmp/worker_node_key /tmp/worker_node_key.pub
 
 Go to **infra-platform → Actions → Worker Node Pipeline → Run workflow**:
 - `node_number`: next available number (2 for worker-node-02, 3 for worker-node-03, etc.)
-- `target_node`: Proxmox node to deploy on (benedict for dev)
-- `template_name`: `debian-12-cloud` (or whatever you named the template above)
+- `target_node`: Proxmox node to deploy on (`benedict` for dev, `betsy` for prod)
+- `template_vmid`: VMID of the cloud-init template VM on the target node (default: `9000`)
 
 VMID and IP are computed automatically: VMID = `110 + node_number`, IP = `192.168.50.<vmid>`.
 
