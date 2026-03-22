@@ -31,7 +31,30 @@
           - gnupg
           - lsb-release
           - sudo
+          - unzip
         state: present
+
+    # ── Vault CLI ────────────────────────────────────────────────────────────
+    # Required so workflow steps can call `vault kv get` at runtime.
+
+    - name: Add HashiCorp GPG key
+      shell: |
+        curl -fsSL https://apt.releases.hashicorp.com/gpg \
+          | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+    - name: Add HashiCorp apt repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main"
+        state: present
+        filename: hashicorp
+
+    - name: Install Vault CLI
+      apt:
+        name: vault
+        state: present
+        update_cache: yes
 
     # ── Standard users ───────────────────────────────────────────────────────
     # appadm  — service/app owner (runs the runner process, owns all files)
