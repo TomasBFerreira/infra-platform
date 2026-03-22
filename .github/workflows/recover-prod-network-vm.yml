@@ -1,0 +1,115 @@
+name: Recover prod network-vm
+
+on:
+  workflow_dispatch:
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    environment: production
+    steps:
+      - name: Check container status via Proxmox API
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+          PVE_PASS: ${{ secrets.PVE_PASS }}
+        run: |
+          # Authenticate to Proxmox and get ticket
+          RESPONSE=$(curl -s -k -X POST \
+            "https://192.168.50.2:8006/api2/json/access/ticket" \
+            -d "username=${PVE_USER}&password=${PVE_PASS}")
+          TICKET=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['ticket'])")
+          CSRF=$(echo "$RESPONSE"   | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['CSRFPreventionToken'])")
+
+          echo "TICKET=$TICKET" >> $GITHUB_ENV
+          echo "CSRF=$CSRF"     >> $GITHUB_ENV
+
+          # Check LXC 155 status
+          STATUS=$(curl -s -k \
+            -H "Cookie: PVEAuthCookie=$TICKET" \
+            "https://192.168.50.2:8006/api2/json/nodes/betsy/lxc/155/status/current" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(d['status'])")
+
+          echo "Container 155 status: $STATUS"
+          echo "CONTAINER_STATUS=$STATUS" >> $GITHUB_ENV
+
+      - name: Start container if stopped
+        if: env.CONTAINER_STATUS != 'running'
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+          PVE_PASS: ${{ secrets.PVE_PASS }}
+        run: |
+          echo "Container is not running ($CONTAINER_STATUS) — starting it..."
+          curl -s -k -X POST \
+            -H "Cookie: PVEAuthCookie=$TICKET" \
+            -H "CSRFPreventionToken: $CSRF" \
+            "https://192.168.50.2:8006/api2/json/nodes/betsy/lxc/155/status/start"
+
+          echo "Waiting for container to start and network to be ready..."
+          for i in $(seq 1 30); do
+            sleep 5
+            if nc -zw3 192.168.50.155 22 2>/dev/null; then
+              echo "SSH reachable after ${i}x5s"
+              break
+            fi
+            echo "  attempt $i — not yet reachable"
+          done
+
+      - name: Verify SSH reachable
+        run: |
+          nc -zw5 192.168.50.155 22 || (echo "ERROR: container still not reachable on SSH" && exit 1)
+          echo "Container 155 is reachable"
+
+      - name: Fetch SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nw_key
+          chmod 600 /tmp/nw_key
+
+      - name: Restore cloudflared and Traefik
+        run: |
+          ssh -i /tmp/nw_key -o StrictHostKeyChecking=no root@192.168.50.155 bash <<'EOF'
+          echo "=== Container identity ==="
+          hostname && hostname -I
+
+          echo ""
+          echo "=== cloudflared systemd service ==="
+          systemctl is-active cloudflared && echo "cloudflared: already running" || {
+            echo "cloudflared not active — starting..."
+            systemctl start cloudflared
+            sleep 5
+            systemctl is-active cloudflared && echo "cloudflared: started OK" || {
+              echo "ERROR: cloudflared failed to start"
+              journalctl -u cloudflared -n 30 --no-pager
+              exit 1
+            }
+          }
+
+          echo ""
+          echo "=== Docker containers ==="
+          if command -v docker &>/dev/null; then
+            docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+            echo ""
+            # Check if cloudflared docker container is running (docker-compose setup)
+            if docker ps --format '{{.Names}}' | grep -q cloudflared; then
+              echo "docker cloudflared: running"
+            elif [ -f /opt/traefik/docker-compose.yml ]; then
+              echo "docker cloudflared not running — restarting via compose..."
+              cd /opt/traefik && docker compose up -d
+              sleep 5
+              docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+            fi
+          else
+            echo "(docker not installed on this host)"
+          fi
+
+          echo ""
+          echo "=== cloudflared journal (last 20) ==="
+          journalctl -u cloudflared -n 20 --no-pager
+          EOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/nw_key
