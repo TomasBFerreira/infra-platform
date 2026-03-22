@@ -21,7 +21,9 @@ resource "proxmox_lxc" "rancher" {
     gw     = "192.168.50.1"
   }
 
-  unprivileged = true
+  # Privileged LXC: K3s containerd and flannel CNI need kernel capabilities
+  # (cgroups, network namespaces) not available in unprivileged containers.
+  unprivileged = false
 
   features {
     nesting = true
