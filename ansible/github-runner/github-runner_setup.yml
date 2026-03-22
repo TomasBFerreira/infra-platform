@@ -7,7 +7,8 @@
     runner_version: "2.321.0"
     runner_home: /opt/github-runner
     runner_user: appadm
-    github_org: TomasBFerreira
+    # github_repo is passed as an extra var from the pipeline (-e "github_repo=...")
+    # Format: owner/repo  e.g. TomasBFerreira/infra-platform
 
   tasks:
     - name: Update apt cache
@@ -138,11 +139,11 @@
       register: gh_pat_result
       no_log: true
 
-    - name: Get GitHub org runner registration token
+    - name: Get GitHub repo runner registration token
       delegate_to: localhost
       become: no
       uri:
-        url: "https://api.github.com/orgs/{{ github_org }}/actions/runners/registration-token"
+        url: "https://api.github.com/repos/{{ github_repo }}/actions/runners/registration-token"
         method: POST
         headers:
           Authorization: "Bearer {{ gh_pat_result.stdout }}"
@@ -178,7 +179,7 @@
       become_user: "{{ runner_user }}"
       shell: |
         {{ runner_home }}/config.sh \
-          --url "https://github.com/{{ github_org }}" \
+          --url "https://github.com/{{ github_repo }}" \
           --token "{{ runner_reg_token.json.token }}" \
           --name "github-runner-{{ runner_env }}" \
           --labels "self-hosted,linux,{{ runner_env }}" \
@@ -201,4 +202,4 @@
 
     - name: Runner setup summary
       debug:
-        msg: "GitHub Actions runner 'github-runner-{{ runner_env }}' registered to org {{ github_org }} with labels: self-hosted, linux, {{ runner_env }}"
+        msg: "GitHub Actions runner 'github-runner-{{ runner_env }}' registered to repo {{ github_repo }} with labels: self-hosted, linux, {{ runner_env }}"
