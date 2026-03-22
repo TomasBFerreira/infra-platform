@@ -9,7 +9,7 @@ jobs:
     steps:
       - name: Fetch SSH key
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/network_vm_worker \

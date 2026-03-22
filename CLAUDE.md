@@ -57,7 +57,7 @@ Kubernetes provides workload resilience; VM-level blue/green does not apply.
 
 ## Vault architecture
 
-- **Bootstrap vault** (CT 200, always stable): stores SSH keys and slot state for all envs. Credentials: `VAULT_DEV_ADDR` / `VAULT_DEV_TOKEN` GitHub secrets.
+- **Bootstrap vault** (CT 200, always stable): stores SSH keys and slot state for all envs. Credentials: `VAULT_BOOTSTRAP_ADDR` / `VAULT_DEV_TOKEN` GitHub secrets.
 - **Env vaults** (blue/green deployed): store application secrets (Tailscale, WireGuard, AdGuard, etc). Credentials: `VAULT_ADDR`/`VAULT_TOKEN` (dev), `VAULT_QA_ADDR`/`VAULT_QA_TOKEN` (qa), `VAULT_PROD_ADDR`/`VAULT_PROD_TOKEN` (prod).
 - **Root tokens per env**: `VAULT_DEV_ROOT_TOKEN`, `VAULT_QA_ROOT_TOKEN`, `VAULT_PROD_ROOT_TOKEN` — used by the vault-ct pipeline on re-runs.
 
@@ -88,7 +88,7 @@ State files: `terraform/<service>/terraform.<slot>.<env>.tfstate` (local backend
 
 All Terraform runs go through Docker via `scripts/run-terraform.sh`. It mounts the repo as `/workspace` and passes env vars explicitly. Add new `TF_VAR_*` vars to both `run_terraform` and `run_terraform_with_chdir` functions in that script.
 
-The Terraform Vault provider always uses the **bootstrap vault** (`VAULT_DEV_ADDR`/`VAULT_DEV_TOKEN`) to fetch SSH keys — these are infra-level secrets shared across envs.
+The Terraform Vault provider always uses the **bootstrap vault** (`VAULT_BOOTSTRAP_ADDR`/`VAULT_DEV_TOKEN`) to fetch SSH keys — these are infra-level secrets shared across envs.
 
 ## Ansible conventions
 
@@ -105,7 +105,7 @@ The Terraform Vault provider always uses the **bootstrap vault** (`VAULT_DEV_ADD
 
 | Secret                | Purpose                                      |
 |-----------------------|----------------------------------------------|
-| VAULT_DEV_ADDR        | Bootstrap vault address (CT 200)             |
+| VAULT_BOOTSTRAP_ADDR        | Bootstrap vault address (CT 200)             |
 | VAULT_DEV_TOKEN       | Bootstrap vault CI token                     |
 | VAULT_ADDR            | Dev vault address                            |
 | VAULT_TOKEN           | Dev vault CI token                           |

@@ -7,7 +7,7 @@ Three tiers of Vault:
 ```
 Bootstrap vault (CT 200, 192.168.50.200)
     Permanent. Never redeployed. Stores SSH keys, slot state, shared infra secrets.
-    Credentials: VAULT_DEV_ADDR / VAULT_DEV_TOKEN GitHub secrets.
+    Credentials: VAULT_BOOTSTRAP_ADDR / VAULT_DEV_TOKEN GitHub secrets.
 
 Dev env vault (192.168.50.245 or .246, whichever is active)
     Blue/green deployed. Stores dev environment secrets.
@@ -105,7 +105,7 @@ This means the vault auto-unseals after a reboot but the unseal keys are on the 
 
 | Secret | Vault | Purpose |
 |--------|-------|---------|
-| `VAULT_DEV_ADDR` | Bootstrap | Bootstrap vault address |
+| `VAULT_BOOTSTRAP_ADDR` | Bootstrap | Bootstrap vault address |
 | `VAULT_DEV_TOKEN` | Bootstrap | Bootstrap vault CI token |
 | `VAULT_ADDR` | Dev | Dev env vault address |
 | `VAULT_TOKEN` | Dev | Dev env vault CI token |

@@ -37,7 +37,7 @@ jobs:
       - name: Resolve active and staging slots
         id: slots
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           ENV="${{ github.event.inputs.environment || 'dev' }}"
@@ -141,7 +141,7 @@ jobs:
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
@@ -157,7 +157,7 @@ jobs:
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
@@ -184,7 +184,7 @@ jobs:
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
@@ -251,7 +251,7 @@ jobs:
 
       - name: Fetch SSH key from Vault
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
@@ -311,7 +311,7 @@ jobs:
 
       - name: Run Ansible playbook
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           # Clear stale known_hosts entry — VM was rebuilt so host key changed
@@ -340,7 +340,7 @@ jobs:
     steps:
       - name: Write new active slot to Vault
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           ENV="${{ needs.resolve-slots.outputs.environment }}"
@@ -365,7 +365,7 @@ jobs:
 
       - name: Tailscale logout on old active VM
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
@@ -382,7 +382,7 @@ jobs:
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
           TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
@@ -398,7 +398,7 @@ jobs:
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
           TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
@@ -437,7 +437,7 @@ jobs:
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
@@ -453,7 +453,7 @@ jobs:
           TF_VAR_pve_pass: ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}

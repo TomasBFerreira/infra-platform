@@ -36,7 +36,7 @@ jobs:
       - name: Resolve active and staging slots
         id: slots
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           ENV="${{ github.event.inputs.environment || 'dev' }}"
@@ -155,7 +155,7 @@ jobs:
           TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
@@ -171,7 +171,7 @@ jobs:
           TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
@@ -196,7 +196,7 @@ jobs:
           TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
@@ -225,7 +225,7 @@ jobs:
 
       - name: Fetch SSH key from bootstrap vault
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/sso_worker \
@@ -293,7 +293,7 @@ jobs:
     steps:
       - name: Record new active slot in bootstrap vault
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           ENV="${{ needs.resolve-slots.outputs.environment }}"
@@ -323,7 +323,7 @@ jobs:
           TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
@@ -339,7 +339,7 @@ jobs:
           TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
@@ -377,7 +377,7 @@ jobs:
           TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
@@ -393,7 +393,7 @@ jobs:
           TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}

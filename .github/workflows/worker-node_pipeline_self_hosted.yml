@@ -108,7 +108,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.VMID }}
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
@@ -124,7 +124,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.VMID }}
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
@@ -149,7 +149,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.VMID }}
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
@@ -179,7 +179,7 @@ jobs:
 
       - name: Fetch SSH key from bootstrap vault
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
@@ -210,7 +210,7 @@ jobs:
     steps:
       - name: Record node state in bootstrap vault
         env:
-          VAULT_ADDR:  ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           NODE_NUM="${{ needs.resolve-node.outputs.node_number }}"
@@ -237,7 +237,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.VMID }}
           TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
           TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
@@ -253,7 +253,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ secrets.PVE_PASS }}
           TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address:  ${{ secrets.VAULT_DEV_ADDR }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.VMID }}
           TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
           TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}

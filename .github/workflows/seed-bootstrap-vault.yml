@@ -69,7 +69,7 @@ jobs:
     steps:
       - name: Write secret to bootstrap vault
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_DEV_ADDR }}
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           SECRET="${{ github.event.inputs.secret_path }}"
