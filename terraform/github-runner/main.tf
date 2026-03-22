@@ -22,11 +22,14 @@ resource "proxmox_lxc" "github_runner" {
     gw     = "192.168.50.1"
   }
 
-  unprivileged = true
+  # Privileged LXC: Docker requires CAP_NET_ADMIN to set network namespace
+  # sysctls (net.ipv4.ip_unprivileged_port_start) introduced in Docker 26+.
+  # lxc.sysctl.net.* is not supported on PVE 7.x so we use a privileged
+  # container instead. Acceptable for a CI runner (trusted code only).
+  unprivileged = false
 
   features {
     nesting = true
-    keyctl  = true  # required for Docker in unprivileged LXC
   }
 
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]

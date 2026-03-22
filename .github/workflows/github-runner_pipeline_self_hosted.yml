@@ -147,25 +147,6 @@ jobs:
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate
 
-      - name: Patch LXC sysctl for Docker-in-LXC compatibility
-        env:
-          PVE_API:  ${{ needs.resolve-runner.outputs.pve_api_url }}
-          PVE_USER: ${{ secrets.PVE_USER }}
-        run: |
-          # Docker 26+ tries to set net.ipv4.ip_unprivileged_port_start in
-          # container network namespaces. Unprivileged LXC blocks this unless
-          # permitted via lxc.sysctl on the Proxmox host.
-          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
-          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} "
-            CONF=/etc/pve/lxc/${VMID}.conf
-            grep -q 'ip_unprivileged_port_start' \$CONF || \
-              echo 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start = 0' >> \$CONF
-            pct reboot ${VMID}
-          "
-          echo "Waiting for LXC to reboot..."
-          sleep 20
-
   ansible-runner:
     needs: [resolve-runner, terraform-runner]
     runs-on: self-hosted
