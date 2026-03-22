@@ -161,9 +161,12 @@ jobs:
         run: |
           set -o pipefail
           vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+            | tr -d '\r' \
+            | sed 's/\\n/\n/g' \
             | awk 'NF > 0' > /tmp/ansible_github_runner_id_ed25519
           chmod 600 /tmp/ansible_github_runner_id_ed25519
-          ssh-keygen -y -f /tmp/ansible_github_runner_id_ed25519 > /dev/null
+          grep -q "BEGIN OPENSSH PRIVATE KEY" /tmp/ansible_github_runner_id_ed25519 \
+            || { echo "ERROR: key file missing PEM header — check secret/ssh_keys/github_runner_worker in bootstrap vault"; exit 1; }
 
       - name: Wait for SSH to be ready
         run: |
