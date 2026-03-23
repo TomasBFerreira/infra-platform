@@ -67,12 +67,14 @@
       - tailscale_authkey | length > 0
     fail_msg: "Tailscale auth key could not be retrieved from Vault at secret/data/tailscale:authkey"
 
-- name: Authenticate and configure Tailscale as subnet router
+- name: Authenticate and configure Tailscale as subnet router and exit node
   command: >
     timeout 90
     tailscale up
     --authkey={{ tailscale_authkey }}
     --advertise-routes={{ tailscale_subnet_routes }}
+    --advertise-exit-node
+    --advertise-tags={{ tailscale_advertise_tags }}
     --hostname={{ tailscale_hostname }}
   when: not (tailscale_connected | default(false))
   no_log: true

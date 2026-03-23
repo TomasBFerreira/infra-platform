@@ -23,30 +23,9 @@
       AllowedIPs = {{ wg_allowed_ips | default('0.0.0.0/0') }}
   when: wg_private_key | default('') | length > 0
 
-- name: Enable and start WireGuard
-  block:
-    - name: Start wg-quick@wg0
-      systemd:
-        name: wg-quick@wg0
-        enabled: yes
-        state: started
-  rescue:
-    - name: Dump WireGuard journal on failure
-      command: journalctl -xeu wg-quick@wg0 --no-pager -n 50
-      register: wg_journal
-      changed_when: false
-      failed_when: false
-    - name: Show WireGuard journal
-      debug:
-        msg: "{{ wg_journal.stdout }}"
-    - name: Fail after showing logs
-      fail:
-        msg: "wg-quick@wg0 failed to start — see journal above"
-  when: wg_private_key | default('') | length > 0
-
-- name: Verify WireGuard interface is up
-  command: wg show wg0
-  register: wg_check
-  changed_when: false
-  failed_when: wg_check.rc != 0
-  when: wg_private_key | default('') | length > 0
+- name: Disable WireGuard (not needed on network-vm — runs in torrent LXC only)
+  systemd:
+    name: wg-quick@wg0
+    enabled: no
+    state: stopped
+  failed_when: false
