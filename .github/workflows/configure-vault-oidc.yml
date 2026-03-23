@@ -20,7 +20,22 @@ jobs:
   configure:
     runs-on: self-hosted
     steps:
+      - name: Check SSO is deployed — skip if not
+        id: check-sso
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ inputs.environment }}"
+          if ! vault kv get secret/sso/${ENV}/active-slot > /dev/null 2>&1; then
+            echo "SSO not yet deployed for ${ENV} — skipping OIDC configuration"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Fetch SSH keys and resolve IPs
+        if: steps.check-sso.outputs.skip != 'true'
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
@@ -49,6 +64,7 @@ jobs:
           echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
 
       - name: Generate root token on vault CT
+        if: steps.check-sso.outputs.skip != 'true'
         run: |
           ROOT_TOKEN=$(ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no root@"$VAULT_IP" bash <<'ENDSSH'
           export VAULT_ADDR=http://127.0.0.1:8200
@@ -76,6 +92,7 @@ jobs:
           echo "VAULT_TOKEN=$ROOT_TOKEN" >> $GITHUB_ENV
 
       - name: Configure Vault OIDC auth method
+        if: steps.check-sso.outputs.skip != 'true'
         run: |
           CLIENT_ID=$(vault kv get -field=client_id secret/authentik/vault-oidc)
           CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/vault-oidc)
@@ -127,6 +144,7 @@ jobs:
           echo "Admin OIDC role written"
 
       - name: Update Authentik redirect_uris
+        if: steps.check-sso.outputs.skip != 'true'
         run: |
           SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
           echo "SSO IP: $SSO_IP"
