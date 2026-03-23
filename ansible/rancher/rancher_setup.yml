@@ -99,11 +99,28 @@
             msg: "K3s install failed — see journal output above"
 
     - name: Wait for K3s to be ready
-      shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
-      register: k3s_ready
-      retries: 20
-      delay: 10
-      until: k3s_ready.rc == 0
+      block:
+        - name: Poll for K3s node Ready
+          shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
+          register: k3s_ready
+          retries: 30
+          delay: 10
+          until: k3s_ready.rc == 0
+      rescue:
+        - name: Capture K3s status on ready-timeout
+          shell: |
+            echo "=== systemctl status ===" && systemctl status k3s.service --no-pager -l || true
+            echo "=== journal (last 80 lines) ===" && journalctl -u k3s.service -n 80 --no-pager || true
+            echo "=== node status ===" && k3s kubectl get nodes -o wide 2>&1 || true
+            echo "=== pod status ===" && k3s kubectl get pods -A 2>&1 || true
+          register: k3s_status_dump
+          failed_when: false
+        - name: Show K3s status dump
+          debug:
+            var: k3s_status_dump.stdout_lines
+        - name: Re-raise failure
+          fail:
+            msg: "K3s never became Ready — see status dump above"
 
     - name: Create .kube directory for appadm
       file:
