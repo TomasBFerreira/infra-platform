@@ -64,16 +64,37 @@
     # ── K3s ──────────────────────────────────────────────────────────────────
 
     - name: Install K3s
-      shell: |
-        curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" sh -s - \
-          server \
-          --tls-san "{{ rancher_hostname }}" \
-          --tls-san "{{ ansible_host }}" \
-          --write-kubeconfig-mode 644 \
-          --disable=traefik \
-          --flannel-backend=host-gw
-      args:
-        creates: /usr/local/bin/k3s
+      block:
+        - name: Run K3s installer
+          shell: |
+            curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" sh -s - \
+              server \
+              --tls-san "{{ rancher_hostname }}" \
+              --tls-san "{{ ansible_host }}" \
+              --write-kubeconfig-mode 644 \
+              --disable=traefik \
+              --flannel-backend=host-gw \
+              --snapshotter=native
+          args:
+            creates: /usr/local/bin/k3s
+      rescue:
+        - name: Capture K3s journal on failure
+          shell: journalctl -u k3s.service -n 80 --no-pager 2>/dev/null || echo "journal unavailable"
+          register: k3s_journal
+          failed_when: false
+        - name: Show K3s journal
+          debug:
+            var: k3s_journal.stdout_lines
+        - name: Capture containerd logs on failure
+          shell: journalctl -u containerd -n 40 --no-pager 2>/dev/null || echo "no containerd journal"
+          register: containerd_journal
+          failed_when: false
+        - name: Show containerd logs
+          debug:
+            var: containerd_journal.stdout_lines
+        - name: Re-raise failure
+          fail:
+            msg: "K3s install failed — see journal output above"
 
     - name: Wait for K3s to be ready
       shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
