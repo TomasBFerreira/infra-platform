@@ -145,6 +145,27 @@ jobs:
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate
 
+      - name: Patch LXC — disable AppArmor so K3s can set kernel sysctls
+        env:
+          PVE_API:  ${{ needs.resolve-rancher.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          # Add lxc.apparmor.profile: unconfined if not already present, then reboot CT
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} "
+            CONFIG=/etc/pve/lxc/${VMID}.conf
+            if ! grep -q 'lxc.apparmor.profile' \"\$CONFIG\"; then
+              echo 'lxc.apparmor.profile: unconfined' >> \"\$CONFIG\"
+              echo 'Patched AppArmor profile to unconfined'
+            else
+              echo 'AppArmor profile already set'
+            fi
+            pct reboot ${VMID} || true
+          " || true
+          echo "Waiting for CT to come back up..."
+          sleep 15
+
   ansible-rancher:
     needs: [resolve-rancher, terraform-rancher]
     runs-on: self-hosted
