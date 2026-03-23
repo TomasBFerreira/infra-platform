@@ -1,2 +1,2 @@
 tailscale_subnet_routes: "192.168.50.0/24"
-tailscale_advertise_tags: "tag:container,tag:prod,tag:subnet-router"
+# tailscale_advertise_tags is passed as an extra var from the pipeline per environment

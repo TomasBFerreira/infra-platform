@@ -299,6 +299,9 @@ jobs:
           echo "::add-mask::$WG_PEER_PUBLIC_KEY"
           echo "::add-mask::$ADGUARD_PASS"
           echo "::add-mask::$CF_TUNNEL_TOKEN"
+          # Env tag: dev/qa/prod maps to tag:dev / tag:qa / tag:prod
+          TS_TAGS="tag:container,tag:${ENV},tag:subnet-router"
+          echo "TS_TAGS=$TS_TAGS" >> $GITHUB_ENV
           echo "TS_AUTHKEY=$TS_AUTHKEY" >> $GITHUB_ENV
           echo "WG_PRIVATE_KEY=$WG_PRIVATE_KEY" >> $GITHUB_ENV
           echo "WG_PEER_PUBLIC_KEY=$WG_PEER_PUBLIC_KEY" >> $GITHUB_ENV
@@ -324,6 +327,7 @@ jobs:
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -i /tmp/network_vm_key'" \
             -e "tailscale_hostname=${ENV}-${STAGING_HOST}" \
             -e "tailscale_authkey=$TS_AUTHKEY" \
+            -e "tailscale_advertise_tags=$TS_TAGS" \
             -e "wg_private_key=$WG_PRIVATE_KEY" \
             -e "wg_peer_public_key=$WG_PEER_PUBLIC_KEY" \
             -e "wg_endpoint=$WG_ENDPOINT" \
