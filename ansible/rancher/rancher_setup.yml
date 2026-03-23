@@ -74,7 +74,9 @@
               --write-kubeconfig-mode 644 \
               --disable=traefik \
               --flannel-backend=host-gw \
-              --snapshotter=native
+              --snapshotter=native \
+              --kubelet-arg=protect-kernel-defaults=false \
+              --kube-proxy-arg=conntrack-max-per-core=0
           args:
             creates: /usr/local/bin/k3s
       rescue:
