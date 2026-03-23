@@ -4,7 +4,7 @@
   become: yes
 
   vars:
-    k3s_version: "v1.32.3+k3s1"
+    k3s_version: "v1.31.6+k3s1"
     helm_version: "v3.17.1"
     cert_manager_version: "v1.17.1"
     rancher_version: "2.10.3"
@@ -72,7 +72,6 @@
               --tls-san "{{ rancher_hostname }}" \
               --tls-san "{{ ansible_host }}" \
               --write-kubeconfig-mode 644 \
-              --disable=traefik \
               --flannel-backend=host-gw \
               --snapshotter=native \
               --kubelet-arg=protect-kernel-defaults=false \
@@ -211,9 +210,7 @@
           --version "{{ rancher_version }}" \
           --set hostname="{{ rancher_hostname }}" \
           --set bootstrapPassword=admin \
-          --set ingress.tls.source=letsEncrypt \
-          --set letsEncrypt.email=admin@databaes.net \
-          --set letsEncrypt.ingress.class=traefik \
+          --set ingress.tls.source=rancher \
           --wait \
           --timeout 10m
       environment:
