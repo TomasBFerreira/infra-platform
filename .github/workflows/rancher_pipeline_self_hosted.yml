@@ -145,26 +145,28 @@ jobs:
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate
 
-      - name: Patch LXC — disable AppArmor so K3s can set kernel sysctls
+      - name: Patch LXC — allow K3s to set kernel sysctls from inside LXC
         env:
           PVE_API:  ${{ needs.resolve-rancher.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          # Add lxc.apparmor.profile: unconfined if not already present, then reboot CT
+          # lxc.apparmor.profile: unconfined — lift AppArmor restrictions
+          # lxc.mount.auto: proc:rw sys:rw — make /proc/sys and /sys writable
+          #   so K3s kubelet can write kernel.panic, vm.overcommit_memory etc.
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} "
             CONFIG=/etc/pve/lxc/${VMID}.conf
-            if ! grep -q 'lxc.apparmor.profile' \"\$CONFIG\"; then
-              echo 'lxc.apparmor.profile: unconfined' >> \"\$CONFIG\"
-              echo 'Patched AppArmor profile to unconfined'
-            else
-              echo 'AppArmor profile already set'
-            fi
+            # Remove any previous patches to keep idempotent
+            sed -i '/^lxc.apparmor.profile/d; /^lxc.mount.auto/d' \"\$CONFIG\"
+            echo 'lxc.apparmor.profile: unconfined' >> \"\$CONFIG\"
+            echo 'lxc.mount.auto: proc:rw sys:rw' >> \"\$CONFIG\"
+            echo 'Patched LXC config for K3s:'
+            grep 'lxc\.' \"\$CONFIG\" || true
             pct reboot ${VMID} || true
           " || true
           echo "Waiting for CT to come back up..."
-          sleep 15
+          sleep 20
 
   ansible-rancher:
     needs: [resolve-rancher, terraform-rancher]
