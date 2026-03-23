@@ -74,6 +74,7 @@
     --authkey={{ tailscale_authkey }}
     --advertise-routes={{ tailscale_subnet_routes }}
     --advertise-exit-node
+    --advertise-tags={{ tailscale_advertise_tags }}
     --hostname={{ tailscale_hostname }}
   when: not (tailscale_connected | default(false))
   no_log: true
