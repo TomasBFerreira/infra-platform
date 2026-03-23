@@ -32,8 +32,16 @@
           - unzip
           - open-iscsi
           - nfs-common
+          - iptables
+          - nftables
         state: present
         lock_timeout: 300
+
+    - name: Ensure /dev/kmsg exists (required by containerd in LXC)
+      shell: |
+        [ -e /dev/kmsg ] || ln -s /dev/console /dev/kmsg
+      args:
+        creates: /dev/kmsg
 
     # ── Standard users ───────────────────────────────────────────────────────
 
@@ -61,7 +69,9 @@
           server \
           --tls-san "{{ rancher_hostname }}" \
           --tls-san "{{ ansible_host }}" \
-          --write-kubeconfig-mode 644
+          --write-kubeconfig-mode 644 \
+          --disable=traefik \
+          --flannel-backend=host-gw
       args:
         creates: /usr/local/bin/k3s
 
