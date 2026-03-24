@@ -6,7 +6,7 @@
   vars:
     k3s_version: "v1.32.3+k3s1"
     helm_version: "v3.17.1"
-    rancher_version: "2.10.3"
+    rancher_version: "2.11.3"
     rancher_hostname: "rancher-{{ runner_env }}.databaes.net"
     # runner_env is passed as an extra var from the pipeline.
 
