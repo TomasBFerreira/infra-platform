@@ -209,7 +209,9 @@
     # Idempotent — skipped if OIDC credentials were not passed (SSO not yet deployed).
 
     - name: Wait for Rancher API to be ready
-      shell: curl -sf http://localhost/v3-public/authProviders > /dev/null
+      # K3s Traefik routes by Host header — must use the correct hostname and HTTPS
+      # (HTTP port 80 gets a 301 redirect; Traefik returns 404 without a matching host).
+      shell: curl -sfk -H "Host: {{ rancher_hostname }}" https://localhost/v3-public/authProviders > /dev/null
       register: rancher_api_ready
       retries: 30
       delay: 10
@@ -220,20 +222,24 @@
 
     - name: Configure Rancher OIDC via Authentik
       shell: |
+        set -e
+        # K3s Traefik routes by Host header; use HTTPS with -k (self-signed cert).
+        CURL="curl -sfk -H 'Host: {{ rancher_hostname }}'"
+
         # Login to Rancher API using bootstrap password
-        RANCHER_TOKEN=$(curl -sf -X POST "http://localhost/v3-public/localProviders/local?action=login" \
+        RANCHER_TOKEN=$($CURL -X POST "https://localhost/v3-public/localProviders/local?action=login" \
           -H "Content-Type: application/json" \
           -d '{"username": "admin", "password": "{{ rancher_bootstrap_password }}", "ttl": 60000}' \
           | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
         # Set the server URL (Rancher requires this before OIDC can work)
-        curl -sf -X PUT "http://localhost/v3/settings/server-url" \
+        $CURL -X PUT "https://localhost/v3/settings/server-url" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
           -d "{\"value\": \"https://{{ rancher_hostname }}\"}" > /dev/null
 
         # Configure OIDC auth provider
-        RESULT=$(curl -sf -X PUT "http://localhost/v3/authConfigs/oidc" \
+        RESULT=$($CURL -X PUT "https://localhost/v3/authConfigs/oidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
           -d '{
