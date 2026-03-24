@@ -164,7 +164,7 @@
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
-    - name: Install Rancher
+    - name: Install Rancher (no-wait)
       become_user: appadm
       shell: |
         helm upgrade --install rancher rancher-stable/rancher \
@@ -172,14 +172,38 @@
           --version "{{ rancher_version }}" \
           --set hostname="{{ rancher_hostname }}" \
           --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
-          --set ingress.tls.source=secret \
-          --wait \
-          --timeout 20m
+          --set ingress.tls.source=secret
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
+    - name: Wait 60s for pods to schedule
+      shell: sleep 60
+
+    - name: Show pod status (diagnostic)
+      shell: k3s kubectl get pods -A -o wide
+      ignore_errors: true
+
+    - name: Describe cattle-system pods (diagnostic)
+      shell: k3s kubectl describe pods -n cattle-system
+      ignore_errors: true
+
     - name: Wait for Rancher rollout
-      shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=600s
+      block:
+        - name: Wait for rancher deployment
+          shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=600s
+      rescue:
+        - name: Capture final pod state on rollout failure
+          shell: |
+            echo "=== pods ==="
+            k3s kubectl get pods -A -o wide
+            echo "=== cattle-system events ==="
+            k3s kubectl get events -n cattle-system --sort-by='.lastTimestamp' | tail -20
+            echo "=== rancher pod logs ==="
+            k3s kubectl logs -n cattle-system -l app=rancher --tail=50 2>/dev/null || true
+          ignore_errors: true
+        - name: Fail
+          fail:
+            msg: "Rancher deployment did not become ready within 10 minutes"
 
     # ── Rancher OIDC (Authentik) ──────────────────────────────────────────────
     # Idempotent — skipped if OIDC credentials were not passed (SSO not yet deployed).

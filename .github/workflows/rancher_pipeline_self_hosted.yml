@@ -305,7 +305,7 @@ jobs:
             echo "--- k3s journal (last 100 lines) ---"
             ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
               "pct exec ${VMID} -- journalctl -u k3s -n 100 --no-pager 2>/dev/null || echo '(k3s logs unavailable)'" 2>/dev/null || echo "(pct exec failed)"
-          } > "$LOG_FILE" 2>&1 || true
+          } | tee "$LOG_FILE" || true
           echo "Failure log saved to $LOG_FILE"
 
       - name: Checkout code
