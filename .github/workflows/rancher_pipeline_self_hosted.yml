@@ -171,6 +171,36 @@ jobs:
           timeout 120 bash -c "until nc -z ${IP} 22; do sleep 5; done"
           echo "SSH is up"
 
+      - name: Ensure Rancher bootstrap password and fetch OIDC config
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          # Generate bootstrap password if not already set
+          if ! vault kv get -field=password secret/rancher/${ENV}/bootstrap > /dev/null 2>&1; then
+            PASS="$(openssl rand -base64 16 | tr -d '=')"
+            vault kv put secret/rancher/${ENV}/bootstrap password="$PASS"
+            echo "Generated new Rancher bootstrap password"
+          fi
+          RANCHER_BOOTSTRAP_PASSWORD="$(vault kv get -field=password secret/rancher/${ENV}/bootstrap)"
+          echo "::add-mask::$RANCHER_BOOTSTRAP_PASSWORD"
+          echo "RANCHER_BOOTSTRAP_PASSWORD=$RANCHER_BOOTSTRAP_PASSWORD" >> "$GITHUB_ENV"
+
+          # Fetch Rancher OIDC credentials from Authentik (written by SSO pipeline).
+          # Skip silently if SSO has not been deployed yet.
+          if vault kv get secret/authentik/${ENV}/rancher-oidc > /dev/null 2>&1; then
+            RANCHER_OIDC_CLIENT_ID="$(vault kv get -field=client_id secret/authentik/${ENV}/rancher-oidc)"
+            RANCHER_OIDC_CLIENT_SECRET="$(vault kv get -field=client_secret secret/authentik/${ENV}/rancher-oidc)"
+            RANCHER_OIDC_DISCOVERY_URL="$(vault kv get -field=discovery_url secret/authentik/${ENV}/rancher-oidc)"
+            echo "::add-mask::$RANCHER_OIDC_CLIENT_SECRET"
+            echo "RANCHER_OIDC_CLIENT_ID=$RANCHER_OIDC_CLIENT_ID"           >> "$GITHUB_ENV"
+            echo "RANCHER_OIDC_CLIENT_SECRET=$RANCHER_OIDC_CLIENT_SECRET"   >> "$GITHUB_ENV"
+            echo "RANCHER_OIDC_DISCOVERY_URL=$RANCHER_OIDC_DISCOVERY_URL"   >> "$GITHUB_ENV"
+            echo "SSO OIDC credentials found — OIDC will be configured"
+          else
+            echo "SSO OIDC credentials not found for ${ENV} — OIDC config will be skipped"
+          fi
+
       - name: Run Ansible playbook
         run: |
           ssh-keygen -R "${IP}" || true
@@ -182,6 +212,10 @@ jobs:
             -e "ansible_user=root" \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "runner_env=${ENV}" \
+            -e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}" \
+            ${RANCHER_OIDC_CLIENT_ID:+-e "rancher_oidc_client_id=${RANCHER_OIDC_CLIENT_ID}"} \
+            ${RANCHER_OIDC_CLIENT_SECRET:+-e "rancher_oidc_client_secret=${RANCHER_OIDC_CLIENT_SECRET}"} \
+            ${RANCHER_OIDC_DISCOVERY_URL:+-e "rancher_oidc_discovery_url=${RANCHER_OIDC_DISCOVERY_URL}"} \
             ansible/rancher/rancher_setup.yml
 
   save-rancher-state:

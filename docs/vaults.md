@@ -47,6 +47,10 @@ Runner state (singletons, no slot rotation):
 | `secret/cloudflare-tunnel` | `token` | Manual setup (prod tunnel) |
 | `secret/authentik/dev/vault-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
 | `secret/authentik/prod/vault-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
+| `secret/authentik/dev/rancher-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
+| `secret/authentik/prod/rancher-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
+| `secret/rancher/dev/bootstrap` | `password` | Rancher pipeline (auto-generated on first run) |
+| `secret/rancher/prod/bootstrap` | `password` | Rancher pipeline (auto-generated on first run) |
 | `secret/vault-ct/dev/active-slot` | `slot, vmid, ip` | vault-ct pipeline |
 | `secret/vault-ct/prod/active-slot` | `slot, vmid, ip` | vault-ct pipeline |
 | `secret/network-vm/dev/active-slot` | `slot, vmid, ip` | network-vm pipeline |
