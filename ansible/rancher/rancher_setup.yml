@@ -228,11 +228,31 @@
         # expansion strips shell quoting, causing the -H argument to break.
         rancher_curl() { curl -sfk -H "Host: {{ rancher_hostname }}" "$@"; }
 
-        # Login to Rancher API using bootstrap password
-        RANCHER_TOKEN=$(rancher_curl -X POST "https://localhost/v3-public/localProviders/local?action=login" \
+        # Login without -f so we always capture the full response body.
+        # Rancher 2.7+ sets mustChangePassword=true on the first bootstrap login, which
+        # restricts the token to the setpassword endpoint only — all other API calls
+        # return 401 (rc=22 with curl -f), causing the script to fail silently.
+        LOGIN_RESP=$(curl -sk -H "Host: {{ rancher_hostname }}" \
+          -X POST "https://localhost/v3-public/localProviders/local?action=login" \
           -H "Content-Type: application/json" \
-          -d '{"username": "admin", "password": "{{ rancher_bootstrap_password }}", "ttl": 60000}' \
-          | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          -d '{"username": "admin", "password": "{{ rancher_bootstrap_password }}", "ttl": 60000}')
+        echo "Login response: $(echo "$LOGIN_RESP" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("type="+str(r.get("type")), "mustChangePassword="+str(r.get("mustChangePassword")))' 2>/dev/null || echo 'parse error — raw: '"$LOGIN_RESP")"
+
+        RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+        # If mustChangePassword=true, the token is restricted. Unlock it by confirming
+        # the password via setpassword before making any other API calls.
+        MUST_CHANGE=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('mustChangePassword', False))" 2>/dev/null || echo "False")
+        if [ "$MUST_CHANGE" = "True" ]; then
+          echo "mustChangePassword=True detected — unlocking account via setpassword..."
+          USER_ID=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['userId'])")
+          curl -sk -H "Host: {{ rancher_hostname }}" \
+            -X POST "https://localhost/v3/users/${USER_ID}?action=setpassword" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"newPassword\": \"{{ rancher_bootstrap_password }}\"}" > /dev/null
+          echo "Account unlocked for user $USER_ID."
+        fi
 
         # Set the server URL (Rancher requires this before OIDC can work)
         rancher_curl -X PUT "https://localhost/v3/settings/server-url" \
