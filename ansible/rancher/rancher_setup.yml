@@ -69,8 +69,8 @@
         - name: Wait for K3s API server
           shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
           register: k3s_ready
-          retries: 20
-          delay: 10
+          retries: 40
+          delay: 15
           until: k3s_ready.rc == 0
       rescue:
         - name: Capture K3s service logs for diagnostics
