@@ -157,9 +157,18 @@ jobs:
             cat "\$CONF"
             echo "Rebooting CT ${VMID}..."
             pct reboot ${VMID}
+            sleep 25
+            # Proxmox stores unprivileged LXC files with UID offset 100000 (uid 0 inside
+            # maps to uid 100000 on host). After converting to privileged mode there is no
+            # UID remapping, so root-owned files appear as uid 100000 and SSH rejects them.
+            # Fix: chown any root homedir files that are still owned by the old mapped uid.
+            echo "Fixing root homedir ownership after privilege change..."
+            pct exec ${VMID} -- bash -c \
+              "find /root -maxdepth 3 \( -uid 100000 -o -gid 100000 \) -exec chown 0:0 {} + 2>/dev/null; true"
+            echo "Ownership fix done."
           EOF
-          echo "Waiting 30s for CT to come back up..."
-          sleep 30
+          echo "Waiting 10s for containers to settle..."
+          sleep 10
 
   ansible-rancher:
     needs: [resolve-rancher, terraform-rancher]
