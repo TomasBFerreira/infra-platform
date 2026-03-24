@@ -287,25 +287,30 @@
           || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
         echo "server-url set OK"
 
-        # Configure OIDC auth provider. Use || to print the response body before
-        # exiting — with set -e alone the echo never runs on failure.
-        # Rancher 2.8+ requires currentPassword in the body when enabling an auth
-        # provider via PUT — without it the server returns 500 "invalid data for
-        # auth store update" regardless of the rest of the payload.
+        # GET the current OIDC config to understand the schema Rancher 2.11 expects,
+        # then merge our values in and PUT the full object back. Sending an incomplete
+        # subset of fields causes "invalid data for auth store update" (HTTP 500).
+        CURRENT_OIDC=$(curl -sk -H "Host: {{ rancher_hostname }}" \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          "https://localhost/v3/authConfigs/oidc")
+        echo "Current OIDC config schema: $(echo "$CURRENT_OIDC" | python3 -c 'import sys,json; r=json.load(sys.stdin); print(sorted(r.keys()))' 2>/dev/null || echo 'parse error')"
+
+        MERGED=$(echo "$CURRENT_OIDC" | python3 -c "
+import sys, json
+cfg = json.load(sys.stdin)
+cfg['enabled']             = True
+cfg['clientId']            = '{{ rancher_oidc_client_id }}'
+cfg['clientSecret']        = '{{ rancher_oidc_client_secret }}'
+cfg['issuer']              = '{{ rancher_oidc_discovery_url }}'
+cfg['scope']               = 'openid profile email'
+cfg['accessMode']          = 'unrestricted'
+cfg['allowedPrincipalIds'] = []
+print(json.dumps(cfg))
+")
         RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/oidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "{
-            \"type\": \"oidcConfig\",
-            \"enabled\": true,
-            \"clientId\": \"{{ rancher_oidc_client_id }}\",
-            \"clientSecret\": \"{{ rancher_oidc_client_secret }}\",
-            \"issuer\": \"{{ rancher_oidc_discovery_url }}\",
-            \"scope\": \"openid profile email\",
-            \"accessMode\": \"unrestricted\",
-            \"allowedPrincipalIds\": [],
-            \"currentPassword\": \"{{ rancher_bootstrap_password }}\"
-          }") \
+          -d "$MERGED") \
           || { echo "OIDC config PUT failed: $RESULT"; exit 1; }
         echo "OIDC config result: $(echo $RESULT | python3 -c 'import sys,json; r=json.load(sys.stdin); print(r.get(\"enabled\"), r.get(\"issuer\"))' 2>/dev/null || echo 'parse error')"
       when:
