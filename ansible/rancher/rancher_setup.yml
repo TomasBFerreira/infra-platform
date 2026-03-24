@@ -226,9 +226,12 @@
         # K3s Traefik routes by Host header; use HTTPS with -k (self-signed cert).
         # Use a function so the Host header is preserved correctly — string variable
         # expansion strips shell quoting, causing the -H argument to break.
-        rancher_curl() { curl -sfk -H "Host: {{ rancher_hostname }}" "$@"; }
+        # --fail-with-body (curl 7.76+, Debian 12 ships 7.88): exits rc=22 on HTTP
+        # 4xx/5xx but STILL outputs the response body — so error details appear in
+        # Ansible stdout rather than being silently discarded by plain -f.
+        rancher_curl() { curl -sk --fail-with-body -H "Host: {{ rancher_hostname }}" "$@"; }
 
-        # Login without -f so we always capture the full response body.
+        # Login without --fail-with-body so we always capture the full response body.
         # Rancher 2.7+ sets mustChangePassword=true on the first bootstrap login, which
         # restricts the token to the setpassword endpoint only — all other API calls
         # return 401 (rc=22 with curl -f), causing the script to fail silently.
