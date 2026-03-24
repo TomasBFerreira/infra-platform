@@ -12,6 +12,15 @@ jobs:
   debug:
     runs-on: [self-hosted, dev]
     steps:
+      - name: Print Authentik bootstrap credentials
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          echo "=== AUTHENTIK LOGIN CREDENTIALS ==="
+          echo "Username: akadmin"
+          echo "Password: $(vault kv get -field=bootstrap_password secret/sso)"
+
       - name: Get Authentik logs and flow errors
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
