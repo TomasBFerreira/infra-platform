@@ -475,16 +475,6 @@
       delegate_to: localhost
       become: no
       shell: |
-        case "{{ vault_env | default('dev') }}" in
-          dev)
-            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
-            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
-            ;;
-          prod)
-            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
-            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
-            ;;
-        esac
         # Use LAN IP for discovery_url — Vault validates it on write by fetching it
         # directly, and the Vault CT cannot reach the public HTTPS URL.
         # AUTHENTIK_HOST_BROWSER=https://... makes Authentik's discovery doc return
@@ -504,4 +494,7 @@
             client_secret="{{ _vault_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
             discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_TOKEN') }}"
       no_log: true
