@@ -156,6 +156,9 @@ jobs:
             grep -q 'lxc.mount.auto'        "\$CONF" || echo 'lxc.mount.auto: proc:rw sys:rw'    >> "\$CONF"
             # K3s kubelet needs /dev/kmsg. Bind-mount it from the host.
             grep -q 'lxc.mount.entry.*kmsg' "\$CONF" || echo 'lxc.mount.entry: /dev/kmsg dev/kmsg none bind,create=file 0 0' >> "\$CONF"
+            # Disable seccomp: Proxmox default seccomp profile blocks mount(2) syscall,
+            # which the kubelet needs to mount tmpfs for pod service account tokens.
+            grep -q 'lxc.seccomp.profile'  "\$CONF" || echo 'lxc.seccomp.profile:'               >> "\$CONF"
             echo "LXC conf after patch:"
             cat "\$CONF"
             echo "Rebooting CT ${VMID}..."
