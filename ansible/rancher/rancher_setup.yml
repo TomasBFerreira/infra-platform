@@ -287,27 +287,29 @@
           || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
         echo "server-url set OK"
 
-        # GET the genericoidc config to capture its full schema (all fields, even
-        # null/empty), then merge our values in and PUT the merged object back.
-        # /v3/authConfigs/genericoidc is the correct endpoint for Rancher's Generic OIDC
-        # provider; /v3/authConfigs/oidc is an internal base type with no OIDC fields.
+        # /v3/authConfigs/genericoidc is the correct endpoint for Generic OIDC in
+        # Rancher 2.11. /v3/authConfigs/oidc is an internal base type with no OIDC
+        # fields and cannot be used to configure an OIDC provider.
+        # GET first so we preserve all schema fields (id, name, baseType, etc.)
+        # in the PUT body. jq --arg passes values without nested quoting issues.
         CURRENT_OIDC=$(rancher_curl \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           "https://localhost/v3/authConfigs/genericoidc") \
           || { echo "OIDC GET failed: $CURRENT_OIDC"; exit 1; }
-        echo "genericoidc schema keys: $(echo "$CURRENT_OIDC" | python3 -c 'import sys,json; print(sorted(json.load(sys.stdin).keys()))' 2>/dev/null || echo 'parse error')"
-        echo "genericoidc full GET: $(echo "$CURRENT_OIDC" | python3 -c 'import sys,json; r=json.load(sys.stdin); [r.pop(k,None) for k in ["clientSecret","links","actions"]]; print(json.dumps(r,indent=2))' 2>/dev/null || echo 'parse error')"
-
-        # Merge our OIDC values into the full schema object so all required fields
-        # (id, name, baseType, etc.) are preserved. rancherUrl is required by Rancher
-        # to set up the post-login redirect back to the Rancher UI.
-        MERGED=$(echo "$CURRENT_OIDC" | python3 -c "import sys,json; cfg=json.load(sys.stdin); cfg.update({'enabled':True,'clientId':'{{ rancher_oidc_client_id }}','clientSecret':'{{ rancher_oidc_client_secret }}','issuer':'{{ rancher_oidc_discovery_url }}','scope':'openid profile email','rancherUrl':'https://{{ rancher_hostname }}/verify-auth','accessMode':'unrestricted','allowedPrincipalIds':[],'groupSearchEnabled':False}); print(json.dumps(cfg))")
+        echo "genericoidc schema keys: $(echo $CURRENT_OIDC | jq -rc keys)"
+        echo "genericoidc full GET (redacted): $(echo $CURRENT_OIDC | jq -c 'del(.clientSecret,.links,.actions)')"
+        MERGED=$(echo $CURRENT_OIDC | jq \
+          --arg cid "{{ rancher_oidc_client_id }}" \
+          --arg csec "{{ rancher_oidc_client_secret }}" \
+          --arg iss "{{ rancher_oidc_discovery_url }}" \
+          --arg rurl "https://{{ rancher_hostname }}/verify-auth" \
+          '. + {enabled:true,clientId:$cid,clientSecret:$csec,issuer:$iss,scope:"openid profile email",rancherUrl:$rurl,accessMode:"unrestricted",allowedPrincipalIds:[],groupSearchEnabled:false}')
         RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/genericoidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
           -d "$MERGED") \
           || { echo "OIDC genericoidc PUT failed: $RESULT"; exit 1; }
-        echo "OIDC config result: $(echo $RESULT | python3 -c 'import sys,json; r=json.load(sys.stdin); print(r.get(\"enabled\"), r.get(\"issuer\"))' 2>/dev/null || echo 'parse error')"
+        echo "OIDC config result: $(echo $RESULT | jq -r '[.enabled,.issuer]|@json')"
       when:
         - rancher_oidc_client_id is defined
         - rancher_oidc_client_id | length > 0
