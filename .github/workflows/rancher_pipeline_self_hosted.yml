@@ -293,6 +293,16 @@ jobs:
           {
             echo "=== Rancher failure log: run ${{ github.run_id }}, env=${ENV}, vmid=${VMID} ==="
             echo "=== $(date -u) ==="
+            echo ""
+            echo "--- kubectl get pods -A ---"
+            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+              "pct exec ${VMID} -- k3s kubectl get pods -A --no-headers 2>/dev/null || echo '(kubectl unavailable)'" 2>/dev/null || true
+            echo ""
+            echo "--- cattle-system pod descriptions ---"
+            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+              "pct exec ${VMID} -- k3s kubectl describe pods -n cattle-system 2>/dev/null | tail -80 || echo '(no cattle-system pods)'" 2>/dev/null || true
+            echo ""
+            echo "--- k3s journal (last 100 lines) ---"
             ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
               "pct exec ${VMID} -- journalctl -u k3s -n 100 --no-pager 2>/dev/null || echo '(k3s logs unavailable)'" 2>/dev/null || echo "(pct exec failed)"
           } > "$LOG_FILE" 2>&1 || true

@@ -174,12 +174,12 @@
           --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
           --set ingress.tls.source=secret \
           --wait \
-          --timeout 10m
+          --timeout 20m
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
     - name: Wait for Rancher rollout
-      shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=300s
+      shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=600s
 
     # ── Rancher OIDC (Authentik) ──────────────────────────────────────────────
     # Idempotent — skipped if OIDC credentials were not passed (SSO not yet deployed).
