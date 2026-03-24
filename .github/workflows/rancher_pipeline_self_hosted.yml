@@ -154,6 +154,8 @@ jobs:
             grep -q 'lxc.cap.drop'         "\$CONF" || echo 'lxc.cap.drop:'                      >> "\$CONF"
             grep -q 'lxc.cgroup2.devices'  "\$CONF" || echo 'lxc.cgroup2.devices.allow: a'       >> "\$CONF"
             grep -q 'lxc.mount.auto'        "\$CONF" || echo 'lxc.mount.auto: proc:rw sys:rw'    >> "\$CONF"
+            # K3s kubelet needs /dev/kmsg. Bind-mount it from the host.
+            grep -q 'lxc.mount.entry.*kmsg' "\$CONF" || echo 'lxc.mount.entry: /dev/kmsg dev/kmsg none bind,create=file 0 0' >> "\$CONF"
             echo "LXC conf after patch:"
             cat "\$CONF"
             echo "Rebooting CT ${VMID}..."
