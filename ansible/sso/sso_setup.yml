@@ -389,19 +389,22 @@
           dev)
             export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
             export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
-            PUBLIC_SSO_URL="https://auth-dev.databaes.net"
             ;;
           prod)
             export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
             export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
-            PUBLIC_SSO_URL="https://auth.databaes.net"
             ;;
         esac
+        # Use LAN IP for discovery_url — Vault validates it on write by fetching it
+        # directly, and the Vault CT cannot reach the public HTTPS URL.
+        # AUTHENTIK_HOST_BROWSER=https://... makes Authentik's discovery doc return
+        # https:// authorization_endpoint URLs, so the browser is correctly redirected
+        # to the public HTTPS address even though discovery_url is a LAN address.
         vault kv put secret/authentik/vault-oidc \
           client_id="{{ _vault_client_id }}" \
           client_secret="{{ _vault_client_secret }}" \
           sso_ip="{{ ansible_host }}" \
-          discovery_url="${PUBLIC_SSO_URL}/application/o/vault/"
+          discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
 
         # Also write to bootstrap vault so vault-ct redeploys can re-seed this secret
         VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
@@ -410,5 +413,5 @@
             client_id="{{ _vault_client_id }}" \
             client_secret="{{ _vault_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
-            discovery_url="${PUBLIC_SSO_URL}/application/o/vault/"
+            discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
       no_log: true
