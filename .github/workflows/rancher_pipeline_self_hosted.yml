@@ -163,14 +163,17 @@ jobs:
             cat "\$CONF"
             echo "Rebooting CT ${VMID}..."
             pct reboot ${VMID}
-            sleep 25
+            sleep 35
             # Proxmox stores unprivileged LXC files with UID offset 100000 (uid 0 inside
             # maps to uid 100000 on host). After converting to privileged mode there is no
-            # UID remapping, so root-owned files appear as uid 100000 and SSH rejects them.
-            # Fix: chown any root homedir files that are still owned by the old mapped uid.
-            echo "Fixing root homedir ownership after privilege change..."
+            # UID remapping, so ALL rootfs files appear with the wrong UIDs.
+            # Critically: setuid binaries like /usr/bin/mount are owned by uid 100000 —
+            # when root calls them, EUID becomes 100000 (the binary owner), not 0.
+            # This causes "must be superuser to use mount" even when running as root.
+            # Fix: shift ALL files from uid/gid 100000 back to 0 across the entire rootfs.
+            echo "Fixing full rootfs UID ownership after privilege change (this may take ~30s)..."
             pct exec ${VMID} -- bash -c \
-              "find /root -maxdepth 3 \( -uid 100000 -o -gid 100000 \) -exec chown 0:0 {} + 2>/dev/null; true"
+              "find / -xdev \( -uid 100000 -o -gid 100000 \) -exec chown 0:0 {} + 2>/dev/null; true"
             echo "Ownership fix done."
           EOF
           echo "Waiting 10s for containers to settle..."
