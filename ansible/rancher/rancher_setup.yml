@@ -287,46 +287,31 @@
           || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
         echo "server-url set OK"
 
-        # /v3/authConfigs/genericoidc is the correct endpoint for Generic OIDC in
-        # Rancher 2.11. /v3/authConfigs/oidc is an internal base type with no OIDC
-        # fields and cannot be used to configure an OIDC provider.
-        # GET first so we preserve all schema fields (id, name, baseType, etc.)
-        # in the PUT body. jq --arg passes values without nested quoting issues.
+        # GET the full genericOIDCConfig resource. /v3/authConfigs/genericoidc
+        # returns only the base authConfig schema — no OIDC-specific fields and
+        # PUT back to that endpoint fails with "invalid data for auth store update".
+        # The actual resource (with clientId, issuer, etc.) lives at the typed URL:
+        # /v3/genericOIDCConfigs/genericoidc.
         CURRENT_OIDC=$(rancher_curl \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
-          "https://localhost/v3/authConfigs/genericoidc") \
+          "https://localhost/v3/genericOIDCConfigs/genericoidc") \
           || { echo "OIDC GET failed: $CURRENT_OIDC"; exit 1; }
-        echo "genericoidc actions: $(echo $CURRENT_OIDC | jq -rc .actions)"
         echo "genericoidc GET (redacted): $(echo $CURRENT_OIDC | jq -c 'del(.clientSecret,.links,.actions)')"
 
-        # Step 1: PUT with enabled:false to test field validation without connectivity.
-        # If this fails the issue is field schema. If it succeeds, Rancher validates the
-        # OIDC discovery endpoint only when enabled:true (step 2 below).
-        MERGED_DISABLED=$(echo $CURRENT_OIDC | jq \
-          --arg cid "{{ rancher_oidc_client_id }}" \
-          --arg csec "{{ rancher_oidc_client_secret }}" \
-          --arg iss "{{ rancher_oidc_discovery_url }}" \
-          --arg rurl "https://{{ rancher_hostname }}/verify-auth" \
-          '. + {enabled:false,clientId:$cid,clientSecret:$csec,issuer:$iss,scope:"openid profile email",rancherUrl:$rurl,accessMode:"unrestricted",allowedPrincipalIds:[],groupSearchEnabled:false}')
-        RESULT_DISABLED=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/genericoidc" \
-          -H "Authorization: Bearer $RANCHER_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "$MERGED_DISABLED")
-        echo "PUT disabled result HTTP: $(echo $RESULT_DISABLED | jq -rc '.status // .enabled')"
-
-        # Step 2: If step 1 set fields successfully, enable the provider.
-        MERGED_ENABLED=$(echo $CURRENT_OIDC | jq \
+        # Merge OIDC values. Use || true inside $() so set -e does not abort before
+        # we can echo the response body for diagnostics.
+        MERGED=$(echo $CURRENT_OIDC | jq \
           --arg cid "{{ rancher_oidc_client_id }}" \
           --arg csec "{{ rancher_oidc_client_secret }}" \
           --arg iss "{{ rancher_oidc_discovery_url }}" \
           --arg rurl "https://{{ rancher_hostname }}/verify-auth" \
           '. + {enabled:true,clientId:$cid,clientSecret:$csec,issuer:$iss,scope:"openid profile email",rancherUrl:$rurl,accessMode:"unrestricted",allowedPrincipalIds:[],groupSearchEnabled:false}')
-        RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/genericoidc" \
+        RESULT=$(rancher_curl -X PUT "https://localhost/v3/genericOIDCConfigs/genericoidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "$MERGED_ENABLED") \
-          || { echo "OIDC PUT enabled failed: $RESULT"; exit 1; }
-        echo "OIDC config result: $(echo $RESULT | jq -r '[.enabled,.issuer]|@json')"
+          -d "$MERGED" || true)
+        echo "OIDC PUT result: $(echo $RESULT | jq -c 'del(.clientSecret)' 2>/dev/null || echo "$RESULT")"
+        echo "OIDC enabled: $(echo $RESULT | jq -r '.enabled // "unknown"' 2>/dev/null)"
       ignore_errors: true
       when:
         - rancher_oidc_client_id is defined
