@@ -148,6 +148,8 @@ jobs:
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} bash <<EOF
             CONF=/etc/pve/lxc/${VMID}.conf
+            # telmate/proxmox v2.9 ignores unprivileged=false — force it here.
+            sed -i 's/^unprivileged: 1$/unprivileged: 0/' "\$CONF"
             grep -q 'lxc.apparmor.profile' "\$CONF" || echo 'lxc.apparmor.profile: unconfined'  >> "\$CONF"
             grep -q 'lxc.cap.drop'         "\$CONF" || echo 'lxc.cap.drop:'                      >> "\$CONF"
             grep -q 'lxc.cgroup2.devices'  "\$CONF" || echo 'lxc.cgroup2.devices.allow: a'       >> "\$CONF"
@@ -156,8 +158,8 @@ jobs:
             echo "Rebooting CT ${VMID}..."
             pct reboot ${VMID}
           EOF
-          echo "Waiting 20s for CT to come back up..."
-          sleep 20
+          echo "Waiting 30s for CT to come back up..."
+          sleep 30
 
   ansible-rancher:
     needs: [resolve-rancher, terraform-rancher]
