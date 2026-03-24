@@ -296,9 +296,26 @@
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           "https://localhost/v3/authConfigs/genericoidc") \
           || { echo "OIDC GET failed: $CURRENT_OIDC"; exit 1; }
-        echo "genericoidc schema keys: $(echo $CURRENT_OIDC | jq -rc keys)"
-        echo "genericoidc full GET (redacted): $(echo $CURRENT_OIDC | jq -c 'del(.clientSecret,.links,.actions)')"
-        MERGED=$(echo $CURRENT_OIDC | jq \
+        echo "genericoidc actions: $(echo $CURRENT_OIDC | jq -rc .actions)"
+        echo "genericoidc GET (redacted): $(echo $CURRENT_OIDC | jq -c 'del(.clientSecret,.links,.actions)')"
+
+        # Step 1: PUT with enabled:false to test field validation without connectivity.
+        # If this fails the issue is field schema. If it succeeds, Rancher validates the
+        # OIDC discovery endpoint only when enabled:true (step 2 below).
+        MERGED_DISABLED=$(echo $CURRENT_OIDC | jq \
+          --arg cid "{{ rancher_oidc_client_id }}" \
+          --arg csec "{{ rancher_oidc_client_secret }}" \
+          --arg iss "{{ rancher_oidc_discovery_url }}" \
+          --arg rurl "https://{{ rancher_hostname }}/verify-auth" \
+          '. + {enabled:false,clientId:$cid,clientSecret:$csec,issuer:$iss,scope:"openid profile email",rancherUrl:$rurl,accessMode:"unrestricted",allowedPrincipalIds:[],groupSearchEnabled:false}')
+        RESULT_DISABLED=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/genericoidc" \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$MERGED_DISABLED")
+        echo "PUT disabled result HTTP: $(echo $RESULT_DISABLED | jq -rc '.status // .enabled')"
+
+        # Step 2: If step 1 set fields successfully, enable the provider.
+        MERGED_ENABLED=$(echo $CURRENT_OIDC | jq \
           --arg cid "{{ rancher_oidc_client_id }}" \
           --arg csec "{{ rancher_oidc_client_secret }}" \
           --arg iss "{{ rancher_oidc_discovery_url }}" \
@@ -307,8 +324,8 @@
         RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/genericoidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "$MERGED") \
-          || { echo "OIDC genericoidc PUT failed: $RESULT"; exit 1; }
+          -d "$MERGED_ENABLED") \
+          || { echo "OIDC PUT enabled failed: $RESULT"; exit 1; }
         echo "OIDC config result: $(echo $RESULT | jq -r '[.enabled,.issuer]|@json')"
       when:
         - rancher_oidc_client_id is defined
