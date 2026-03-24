@@ -158,17 +158,54 @@
           --namespace cattle-system \
           --version "{{ rancher_version }}" \
           --set hostname="{{ rancher_hostname }}" \
-          --set bootstrapPassword=admin \
-          --set ingress.tls.source=letsEncrypt \
-          --set letsEncrypt.email=admin@databaes.net \
-          --set letsEncrypt.ingress.class=traefik \
+          --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
+          --set ingress.tls.source=rancher \
           --wait \
           --timeout 10m
       environment:
         KUBECONFIG: /home/appadm/.kube/config
+      # tls.source=rancher uses Rancher's own self-signed CA.
+      # Let's Encrypt requires external HTTP reachability which LXC containers don't have.
+      # Main Traefik proxies to K3s Traefik with insecureSkipVerify to handle the self-signed cert.
 
     - name: Wait for Rancher rollout
       shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=300s
+
+    # ── Rancher OIDC (Authentik) ──────────────────────────────────────────────
+    # Idempotent — skipped if OIDC credentials were not passed (SSO not yet deployed).
+
+    - name: Configure Rancher OIDC via Authentik
+      shell: |
+        # Login to Rancher API using bootstrap password
+        RANCHER_TOKEN=$(curl -sf -X POST "http://localhost/v3-public/localProviders/local?action=login" \
+          -H "Content-Type: application/json" \
+          -d '{"username": "admin", "password": "{{ rancher_bootstrap_password }}", "ttl": 60000}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+        # Set the server URL (Rancher requires this before OIDC can work)
+        curl -sf -X PUT "http://localhost/v3/settings/server-url" \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"value\": \"https://{{ rancher_hostname }}\"}" > /dev/null
+
+        # Configure OIDC auth provider
+        RESULT=$(curl -sf -X PUT "http://localhost/v3/authConfigs/oidc" \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "type": "oidcConfig",
+            "enabled": true,
+            "clientId": "{{ rancher_oidc_client_id }}",
+            "clientSecret": "{{ rancher_oidc_client_secret }}",
+            "issuer": "{{ rancher_oidc_discovery_url }}",
+            "scope": "openid profile email",
+            "accessMode": "unrestricted",
+            "allowedPrincipalIds": []
+          }')
+        echo "OIDC config result: $(echo $RESULT | python3 -c 'import sys,json; r=json.load(sys.stdin); print(r.get(\"enabled\"), r.get(\"issuer\"))' 2>/dev/null || echo 'parse error')"
+      when:
+        - rancher_oidc_client_id is defined
+        - rancher_oidc_client_id | length > 0
 
     - name: Rancher setup summary
       debug:

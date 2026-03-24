@@ -381,6 +381,103 @@
         status_code: 201
       when: existing_vault_app.json.pagination.count == 0
 
+    # ── Authentik API — configure Rancher OIDC provider ──────────────────────
+
+    - name: Check if Rancher OAuth2 provider already exists
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/?name=Rancher"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_rancher_provider
+
+    - name: Set Rancher resource facts
+      set_fact:
+        _rancher_provider_exists: "{{ existing_rancher_provider.json.pagination.count > 0 }}"
+        _existing_rancher_client_id: "{{ existing_rancher_provider.json.results[0].client_id | default('') }}"
+        _existing_rancher_client_secret: "{{ existing_rancher_provider.json.results[0].client_secret | default('') }}"
+        _existing_rancher_provider_pk: "{{ existing_rancher_provider.json.results[0].pk | default('') }}"
+        _rancher_redirect_uris:
+          - {url: "https://rancher-dev.databaes.net/verify-auth", matching_mode: "strict"}
+          - {url: "https://rancher.databaes.net/verify-auth", matching_mode: "strict"}
+
+    - name: Create Rancher OAuth2 provider in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Rancher"
+          client_type: "confidential"
+          redirect_uris: "{{ _rancher_redirect_uris }}"
+          sub_mode: "user_id"
+          include_claims_in_id_token: true
+          signing_key: "{{ _signing_key }}"
+          authorization_flow: "{{ _auth_flow }}"
+          invalidation_flow: "{{ _invalidation_flow }}"
+          property_mappings: "{{ _scope_mappings }}"
+        status_code: 201
+      register: created_rancher_provider
+      when: not _rancher_provider_exists
+
+    - name: Resolve final Rancher provider facts
+      set_fact:
+        _rancher_provider_pk: "{{ created_rancher_provider.json.pk if not _rancher_provider_exists else _existing_rancher_provider_pk }}"
+        _rancher_client_id: "{{ created_rancher_provider.json.client_id if not _rancher_provider_exists else _existing_rancher_client_id }}"
+        _rancher_client_secret: "{{ created_rancher_provider.json.client_secret if not _rancher_provider_exists else _existing_rancher_client_secret }}"
+
+    - name: Check if Rancher application already exists
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/?slug=rancher"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_rancher_app
+
+    - name: Create Rancher application in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Rancher"
+          slug: "rancher"
+          provider: "{{ _rancher_provider_pk }}"
+          open_in_new_tab: true
+        status_code: 201
+      when: existing_rancher_app.json.pagination.count == 0
+
+    - name: Store Rancher OIDC credentials in env vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
+            ;;
+          prod)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
+            ;;
+        esac
+        vault kv put secret/authentik/rancher-oidc \
+          client_id="{{ _rancher_client_id }}" \
+          client_secret="{{ _rancher_client_secret }}" \
+          sso_ip="{{ ansible_host }}" \
+          discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
+
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+          vault kv put secret/authentik/{{ vault_env | default('dev') }}/rancher-oidc \
+            client_id="{{ _rancher_client_id }}" \
+            client_secret="{{ _rancher_client_secret }}" \
+            sso_ip="{{ ansible_host }}" \
+            discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
+      no_log: true
+
     - name: Store Vault OIDC credentials in env vault
       delegate_to: localhost
       become: no

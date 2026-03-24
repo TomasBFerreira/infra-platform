@@ -21,7 +21,9 @@ resource "proxmox_lxc" "rancher" {
     gw     = "192.168.50.1"
   }
 
-  unprivileged = true
+  # K3s requires a privileged LXC — unprivileged containers cannot manage
+  # cgroups or bind iptables rules, preventing the K3s API server from starting.
+  unprivileged = false
 
   features {
     nesting = true
