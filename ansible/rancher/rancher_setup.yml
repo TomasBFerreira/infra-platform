@@ -327,6 +327,7 @@
           -d "$MERGED_ENABLED") \
           || { echo "OIDC PUT enabled failed: $RESULT"; exit 1; }
         echo "OIDC config result: $(echo $RESULT | jq -r '[.enabled,.issuer]|@json')"
+      ignore_errors: true
       when:
         - rancher_oidc_client_id is defined
         - rancher_oidc_client_id | length > 0
