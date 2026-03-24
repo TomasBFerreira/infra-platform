@@ -287,15 +287,16 @@
           || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
         echo "server-url set OK"
 
-        # Use the testAndApply action — required for unconfigured auth providers in
-        # Rancher 2.x. A plain PUT to an unconfigured provider returns 500 "invalid
-        # data for auth store update" because the base object has no OIDC fields.
-        # testAndApply validates the OIDC discovery URL and saves the config atomically.
-        RESULT=$(rancher_curl -X POST "https://localhost/v3/authConfigs/oidc?action=testAndApply" \
+        # Generic OIDC in Rancher 2.11 lives at /v3/authConfigs/genericoidc (type:
+        # genericOIDCConfig), NOT /v3/authConfigs/oidc (that is the internal base
+        # provider with no OIDC-specific fields). PUT the full config directly —
+        # testAndApply requires a live browser auth code and cannot be used headlessly.
+        # rancherUrl is required: Rancher sends the post-login redirect here.
+        RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/genericoidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "{\"oidcConfig\":{\"type\":\"oidcConfig\",\"enabled\":true,\"clientId\":\"{{ rancher_oidc_client_id }}\",\"clientSecret\":\"{{ rancher_oidc_client_secret }}\",\"issuer\":\"{{ rancher_oidc_discovery_url }}\",\"scope\":\"openid profile email\",\"accessMode\":\"unrestricted\",\"allowedPrincipalIds\":[]},\"enabled\":true,\"code\":\"\"}") \
-          || { echo "OIDC testAndApply failed: $RESULT"; exit 1; }
+          -d "{\"type\":\"genericOIDCConfig\",\"enabled\":true,\"clientId\":\"{{ rancher_oidc_client_id }}\",\"clientSecret\":\"{{ rancher_oidc_client_secret }}\",\"issuer\":\"{{ rancher_oidc_discovery_url }}\",\"scope\":\"openid profile email\",\"rancherUrl\":\"https://{{ rancher_hostname }}/verify-auth\",\"accessMode\":\"unrestricted\",\"allowedPrincipalIds\":[]}") \
+          || { echo "OIDC genericoidc PUT failed: $RESULT"; exit 1; }
         echo "OIDC config result: $(echo $RESULT | python3 -c 'import sys,json; r=json.load(sys.stdin); print(r.get(\"enabled\"), r.get(\"issuer\"))' 2>/dev/null || echo 'parse error')"
       when:
         - rancher_oidc_client_id is defined
