@@ -136,6 +136,29 @@ jobs:
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate
 
+      - name: Patch LXC config for K3s (cgroup2 + apparmor)
+        env:
+          PVE_API:  ${{ needs.resolve-rancher.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          # K3s requires unrestricted cgroup2 access and no capability drops.
+          # These settings cannot be set via the Proxmox Terraform provider —
+          # they must be appended to /etc/pve/lxc/<vmid>.conf on the PVE host.
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} bash <<EOF
+            CONF=/etc/pve/lxc/${VMID}.conf
+            grep -q 'lxc.apparmor.profile' "\$CONF" || echo 'lxc.apparmor.profile: unconfined'  >> "\$CONF"
+            grep -q 'lxc.cap.drop'         "\$CONF" || echo 'lxc.cap.drop:'                      >> "\$CONF"
+            grep -q 'lxc.cgroup2.devices'  "\$CONF" || echo 'lxc.cgroup2.devices.allow: a'       >> "\$CONF"
+            echo "LXC conf after patch:"
+            cat "\$CONF"
+            echo "Rebooting CT ${VMID}..."
+            pct reboot ${VMID}
+          EOF
+          echo "Waiting 20s for CT to come back up..."
+          sleep 20
+
   ansible-rancher:
     needs: [resolve-rancher, terraform-rancher]
     runs-on: self-hosted
