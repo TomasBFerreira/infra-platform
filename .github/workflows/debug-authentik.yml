@@ -13,7 +13,7 @@ jobs:
           vault kv get -field=private_key secret/ssh_keys/sso_worker \
             | awk 'NF > 0' > /tmp/sso_dbg_key
           chmod 600 /tmp/sso_dbg_key
-          SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
+          SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
           echo "=== SERVER LOGS (last 80 lines) ==="
           ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
             "docker logs authentik-server --tail 80 2>&1"
