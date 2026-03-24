@@ -257,13 +257,17 @@
           echo "Account unlocked for user $USER_ID."
         fi
 
-        # Set the server URL (Rancher requires this before OIDC can work)
-        rancher_curl -X PUT "https://localhost/v3/settings/server-url" \
+        # Set the server URL. Capture response into a var (not /dev/null) so
+        # --fail-with-body can surface the error body if Rancher rejects it.
+        SERVER_URL_RESP=$(rancher_curl -X PUT "https://localhost/v3/settings/server-url" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "{\"value\": \"https://{{ rancher_hostname }}\"}" > /dev/null
+          -d "{\"value\": \"https://{{ rancher_hostname }}\"}") \
+          || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
+        echo "server-url set OK"
 
-        # Configure OIDC auth provider
+        # Configure OIDC auth provider. Use || to print the response body before
+        # exiting — with set -e alone the echo never runs on failure.
         RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/oidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
@@ -276,7 +280,8 @@
             "scope": "openid profile email",
             "accessMode": "unrestricted",
             "allowedPrincipalIds": []
-          }')
+          }') \
+          || { echo "OIDC config PUT failed: $RESULT"; exit 1; }
         echo "OIDC config result: $(echo $RESULT | python3 -c 'import sys,json; r=json.load(sys.stdin); print(r.get(\"enabled\"), r.get(\"issuer\"))' 2>/dev/null || echo 'parse error')"
       when:
         - rancher_oidc_client_id is defined
