@@ -453,16 +453,6 @@
       delegate_to: localhost
       become: no
       shell: |
-        case "{{ vault_env | default('dev') }}" in
-          dev)
-            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
-            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
-            ;;
-          prod)
-            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
-            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
-            ;;
-        esac
         vault kv put secret/authentik/rancher-oidc \
           client_id="{{ _rancher_client_id }}" \
           client_secret="{{ _rancher_client_secret }}" \
@@ -476,6 +466,9 @@
             client_secret="{{ _rancher_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
             discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_TOKEN') }}"
       no_log: true
 
     - name: Store Vault OIDC credentials in env vault
