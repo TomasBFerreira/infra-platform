@@ -287,22 +287,15 @@
           || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
         echo "server-url set OK"
 
-        # GET the current OIDC config to understand the schema Rancher 2.11 expects,
-        # then merge our values in and PUT the full object back. Sending an incomplete
-        # subset of fields causes "invalid data for auth store update" (HTTP 500).
-        CURRENT_OIDC=$(curl -sk -H "Host: {{ rancher_hostname }}" \
-          -H "Authorization: Bearer $RANCHER_TOKEN" \
-          "https://localhost/v3/authConfigs/oidc")
-        echo "Current OIDC config schema: $(echo "$CURRENT_OIDC" | python3 -c 'import sys,json; r=json.load(sys.stdin); print(sorted(r.keys()))' 2>/dev/null || echo 'parse error')"
-
-        # Multiline python3 -c breaks YAML block scalar parsing (unindented lines
-        # are treated as outside the block). Use a one-liner with semicolons instead.
-        MERGED=$(echo "$CURRENT_OIDC" | python3 -c "import sys,json; cfg=json.load(sys.stdin); cfg.update({'enabled':True,'clientId':'{{ rancher_oidc_client_id }}','clientSecret':'{{ rancher_oidc_client_secret }}','issuer':'{{ rancher_oidc_discovery_url }}','scope':'openid profile email','accessMode':'unrestricted','allowedPrincipalIds':[]}); print(json.dumps(cfg))")
-        RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/oidc" \
+        # Use the testAndApply action — required for unconfigured auth providers in
+        # Rancher 2.x. A plain PUT to an unconfigured provider returns 500 "invalid
+        # data for auth store update" because the base object has no OIDC fields.
+        # testAndApply validates the OIDC discovery URL and saves the config atomically.
+        RESULT=$(rancher_curl -X POST "https://localhost/v3/authConfigs/oidc?action=testAndApply" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "$MERGED") \
-          || { echo "OIDC config PUT failed: $RESULT"; exit 1; }
+          -d "{\"oidcConfig\":{\"type\":\"oidcConfig\",\"enabled\":true,\"clientId\":\"{{ rancher_oidc_client_id }}\",\"clientSecret\":\"{{ rancher_oidc_client_secret }}\",\"issuer\":\"{{ rancher_oidc_discovery_url }}\",\"scope\":\"openid profile email\",\"accessMode\":\"unrestricted\",\"allowedPrincipalIds\":[]},\"enabled\":true,\"code\":\"\"}") \
+          || { echo "OIDC testAndApply failed: $RESULT"; exit 1; }
         echo "OIDC config result: $(echo $RESULT | python3 -c 'import sys,json; r=json.load(sys.stdin); print(r.get(\"enabled\"), r.get(\"issuer\"))' 2>/dev/null || echo 'parse error')"
       when:
         - rancher_oidc_client_id is defined
