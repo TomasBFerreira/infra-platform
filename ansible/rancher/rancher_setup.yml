@@ -211,7 +211,7 @@
     - name: Wait for Rancher API to be ready
       # K3s Traefik routes by Host header — must use the correct hostname and HTTPS
       # (HTTP port 80 gets a 301 redirect; Traefik returns 404 without a matching host).
-      shell: curl -sfk -H "Host: {{ rancher_hostname }}" https://localhost/v3-public/authProviders > /dev/null
+      shell: 'curl -sfk -H "Host: {{ rancher_hostname }}" https://localhost/v3-public/authProviders > /dev/null'
       register: rancher_api_ready
       retries: 30
       delay: 10
