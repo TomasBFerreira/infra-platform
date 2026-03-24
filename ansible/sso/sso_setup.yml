@@ -452,20 +452,21 @@
     - name: Store Rancher OIDC credentials in env vault
       delegate_to: localhost
       become: no
-      shell: |
-        vault kv put secret/authentik/rancher-oidc \
-          client_id="{{ _rancher_client_id }}" \
-          client_secret="{{ _rancher_client_secret }}" \
-          sso_ip="{{ ansible_host }}" \
-          discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
-
-        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
-        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
-          vault kv put secret/authentik/{{ vault_env | default('dev') }}/rancher-oidc \
+      ansible.builtin.shell:
+        cmd: |
+          vault kv put secret/authentik/rancher-oidc \
             client_id="{{ _rancher_client_id }}" \
             client_secret="{{ _rancher_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
             discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
+
+          VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+          VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+            vault kv put secret/authentik/{{ vault_env | default('dev') }}/rancher-oidc \
+              client_id="{{ _rancher_client_id }}" \
+              client_secret="{{ _rancher_client_secret }}" \
+              sso_ip="{{ ansible_host }}" \
+              discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_ADDR') }}"
         VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_TOKEN') }}"
@@ -474,26 +475,21 @@
     - name: Store Vault OIDC credentials in env vault
       delegate_to: localhost
       become: no
-      shell: |
-        # Use LAN IP for discovery_url — Vault validates it on write by fetching it
-        # directly, and the Vault CT cannot reach the public HTTPS URL.
-        # AUTHENTIK_HOST_BROWSER=https://... makes Authentik's discovery doc return
-        # https:// authorization_endpoint URLs, so the browser is correctly redirected
-        # to the public HTTPS address even though discovery_url is a LAN address.
-        vault kv put secret/authentik/vault-oidc \
-          client_id="{{ _vault_client_id }}" \
-          client_secret="{{ _vault_client_secret }}" \
-          sso_ip="{{ ansible_host }}" \
-          discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
-
-        # Also write to bootstrap vault so vault-ct redeploys can re-seed this secret
-        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
-        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
-          vault kv put secret/authentik/{{ vault_env | default('dev') }}/vault-oidc \
+      ansible.builtin.shell:
+        cmd: |
+          vault kv put secret/authentik/vault-oidc \
             client_id="{{ _vault_client_id }}" \
             client_secret="{{ _vault_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
             discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
+
+          VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+          VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+            vault kv put secret/authentik/{{ vault_env | default('dev') }}/vault-oidc \
+              client_id="{{ _vault_client_id }}" \
+              client_secret="{{ _vault_client_secret }}" \
+              sso_ip="{{ ansible_host }}" \
+              discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_ADDR') }}"
         VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_TOKEN') }}"
