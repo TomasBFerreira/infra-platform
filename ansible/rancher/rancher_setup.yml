@@ -63,6 +63,12 @@
           --write-kubeconfig-mode 644
       args:
         creates: /usr/local/bin/k3s
+      # The installer exits rc=1 when the k3s service doesn't start within the
+      # installer's own startup timeout. In Proxmox LXC the API server takes
+      # longer to come up than the installer expects. Ignore the exit code here
+      # and rely on the "Wait for K3s to be ready" task (40x15s) to determine
+      # whether K3s actually started successfully.
+      ignore_errors: true
 
     - name: Wait for K3s to be ready
       block:
