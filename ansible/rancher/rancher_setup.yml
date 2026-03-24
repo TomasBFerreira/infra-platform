@@ -208,6 +208,16 @@
     # ── Rancher OIDC (Authentik) ──────────────────────────────────────────────
     # Idempotent — skipped if OIDC credentials were not passed (SSO not yet deployed).
 
+    - name: Wait for Rancher API to be ready
+      shell: curl -sf http://localhost/v3-public/authProviders > /dev/null
+      register: rancher_api_ready
+      retries: 30
+      delay: 10
+      until: rancher_api_ready.rc == 0
+      when:
+        - rancher_oidc_client_id is defined
+        - rancher_oidc_client_id | length > 0
+
     - name: Configure Rancher OIDC via Authentik
       shell: |
         # Login to Rancher API using bootstrap password
