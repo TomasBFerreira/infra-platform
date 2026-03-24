@@ -289,19 +289,23 @@
 
         # Configure OIDC auth provider. Use || to print the response body before
         # exiting — with set -e alone the echo never runs on failure.
+        # Rancher 2.8+ requires currentPassword in the body when enabling an auth
+        # provider via PUT — without it the server returns 500 "invalid data for
+        # auth store update" regardless of the rest of the payload.
         RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/oidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
-          -d '{
-            "type": "oidcConfig",
-            "enabled": true,
-            "clientId": "{{ rancher_oidc_client_id }}",
-            "clientSecret": "{{ rancher_oidc_client_secret }}",
-            "issuer": "{{ rancher_oidc_discovery_url }}",
-            "scope": "openid profile email",
-            "accessMode": "unrestricted",
-            "allowedPrincipalIds": []
-          }') \
+          -d "{
+            \"type\": \"oidcConfig\",
+            \"enabled\": true,
+            \"clientId\": \"{{ rancher_oidc_client_id }}\",
+            \"clientSecret\": \"{{ rancher_oidc_client_secret }}\",
+            \"issuer\": \"{{ rancher_oidc_discovery_url }}\",
+            \"scope\": \"openid profile email\",
+            \"accessMode\": \"unrestricted\",
+            \"allowedPrincipalIds\": [],
+            \"currentPassword\": \"{{ rancher_bootstrap_password }}\"
+          }") \
           || { echo "OIDC config PUT failed: $RESULT"; exit 1; }
         echo "OIDC config result: $(echo $RESULT | python3 -c 'import sys,json; r=json.load(sys.stdin); print(r.get(\"enabled\"), r.get(\"issuer\"))' 2>/dev/null || echo 'parse error')"
       when:
