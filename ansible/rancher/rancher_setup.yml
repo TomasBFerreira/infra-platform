@@ -65,11 +65,22 @@
         creates: /usr/local/bin/k3s
 
     - name: Wait for K3s to be ready
-      shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
-      register: k3s_ready
-      retries: 20
-      delay: 10
-      until: k3s_ready.rc == 0
+      block:
+        - name: Wait for K3s API server
+          shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
+          register: k3s_ready
+          retries: 20
+          delay: 10
+          until: k3s_ready.rc == 0
+      rescue:
+        - name: Capture K3s service logs for diagnostics
+          shell: journalctl -u k3s -n 60 --no-pager 2>&1 || echo "(no logs)"
+          register: k3s_logs
+          ignore_errors: true
+          changed_when: false
+        - name: Fail with K3s logs
+          fail:
+            msg: "K3s API server failed to start.\n{{ k3s_logs.stdout | default('(no logs captured)') }}"
 
     - name: Create .kube directory for appadm
       file:

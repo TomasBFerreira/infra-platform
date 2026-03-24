@@ -153,6 +153,7 @@ jobs:
             grep -q 'lxc.apparmor.profile' "\$CONF" || echo 'lxc.apparmor.profile: unconfined'  >> "\$CONF"
             grep -q 'lxc.cap.drop'         "\$CONF" || echo 'lxc.cap.drop:'                      >> "\$CONF"
             grep -q 'lxc.cgroup2.devices'  "\$CONF" || echo 'lxc.cgroup2.devices.allow: a'       >> "\$CONF"
+            grep -q 'lxc.mount.auto'        "\$CONF" || echo 'lxc.mount.auto: proc:rw sys:rw'    >> "\$CONF"
             echo "LXC conf after patch:"
             cat "\$CONF"
             echo "Rebooting CT ${VMID}..."
