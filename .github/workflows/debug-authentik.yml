@@ -1,6 +1,13 @@
 name: Debug Authentik
 on:
   workflow_dispatch:
+    inputs:
+      hotfix_host_browser:
+        description: 'Patch AUTHENTIK_HOST_BROWSER to https:// on running CT (yes/no)'
+        required: false
+        default: 'no'
+        type: choice
+        options: [yes, no]
 jobs:
   debug:
     runs-on: [self-hosted, dev]
@@ -14,6 +21,22 @@ jobs:
             | awk 'NF > 0' > /tmp/sso_dbg_key
           chmod 600 /tmp/sso_dbg_key
           SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
+
+          if [ "${{ inputs.hotfix_host_browser }}" = "yes" ]; then
+            echo "=== APPLYING HOTFIX: AUTHENTIK_HOST_BROWSER → https ==="
+            ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+              "sed -i 's|AUTHENTIK_HOST_BROWSER=http://|AUTHENTIK_HOST_BROWSER=https://|g' /opt/authentik/.env && grep AUTHENTIK_HOST_BROWSER /opt/authentik/.env"
+            echo "=== Restarting Authentik containers ==="
+            ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+              "cd /opt/authentik && docker compose --env-file .env up -d --force-recreate server worker 2>&1"
+            echo "=== Waiting 20s for containers to be ready ==="
+            sleep 20
+          fi
+
+          echo "=== AUTHENTIK_HOST_BROWSER value on CT ==="
+          ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "grep AUTHENTIK_HOST_BROWSER /opt/authentik/.env"
+
           echo "=== SERVER ERRORS/WARNINGS (last 200 lines, filtered) ==="
           ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
             "docker logs authentik-server --tail 200 2>&1 | grep -E 'error|Error|warning|Warning|exception|Exception|executor|CSRF|403|400|500|forbidden|invalid' || echo '(none)'"

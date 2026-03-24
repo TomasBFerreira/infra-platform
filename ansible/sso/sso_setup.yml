@@ -88,7 +88,8 @@
           # Outpost host — used by embedded outpost to reach the Authentik server
           AUTHENTIK_HOST=http://{{ ansible_host }}:9000
           # Used by Traefik forward auth — the externally reachable URL of this Authentik instance
-          AUTHENTIK_HOST_BROWSER={% if vault_env == 'prod' %}http://auth.databaes.net{% else %}http://auth-dev.databaes.net{% endif %}
+          # Must use https:// — Cloudflare terminates TLS, browser enforces mixed-content if this is http://
+          AUTHENTIK_HOST_BROWSER={% if vault_env == 'prod' %}https://auth.databaes.net{% else %}https://auth-dev.databaes.net{% endif %}
 
     - name: Deploy Authentik docker-compose
       copy:
@@ -388,12 +389,12 @@
           dev)
             export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
             export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
-            PUBLIC_SSO_URL="http://auth-dev.databaes.net"
+            PUBLIC_SSO_URL="https://auth-dev.databaes.net"
             ;;
           prod)
             export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
             export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
-            PUBLIC_SSO_URL="http://auth.databaes.net"
+            PUBLIC_SSO_URL="https://auth.databaes.net"
             ;;
         esac
         vault kv put secret/authentik/vault-oidc \
