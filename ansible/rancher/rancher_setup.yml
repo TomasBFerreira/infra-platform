@@ -257,8 +257,29 @@
           echo "Account unlocked for user $USER_ID."
         fi
 
-        # Set the server URL. Capture response into a var (not /dev/null) so
-        # --fail-with-body can surface the error body if Rancher rejects it.
+        # Wait for Rancher admin RBAC to be ready.
+        # Rancher sets up the admin cluster role binding asynchronously after the
+        # pod becomes Ready — rollout status passes before this happens, so the
+        # token is valid but GET /v3/settings returns 403 until the controllers finish.
+        echo "Waiting for Rancher admin RBAC (polling GET /v3/settings/server-url)..."
+        for i in $(seq 1 30); do
+          HTTP_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H "Host: {{ rancher_hostname }}" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://localhost/v3/settings/server-url")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "RBAC ready after attempt $i (HTTP 200)"
+            break
+          fi
+          echo "Attempt $i: settings API returned HTTP $HTTP_STATUS — waiting 10s..."
+          sleep 10
+          if [ "$i" = "30" ]; then
+            echo "Timeout: Rancher admin RBAC not ready after 300s"
+            exit 1
+          fi
+        done
+
+        # Set the server URL. Capture response so --fail-with-body surfaces errors.
         SERVER_URL_RESP=$(rancher_curl -X PUT "https://localhost/v3/settings/server-url" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
