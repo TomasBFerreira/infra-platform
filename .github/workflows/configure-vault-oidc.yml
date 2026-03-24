@@ -95,8 +95,8 @@ jobs:
         if: steps.check-sso.outputs.skip != 'true'
         run: |
           case "${{ inputs.environment }}" in
-            dev)  PUBLIC_SSO_URL="http://auth-dev.databaes.net" ;;
-            prod) PUBLIC_SSO_URL="http://auth.databaes.net" ;;
+            dev)  PUBLIC_SSO_URL="https://auth-dev.databaes.net" ;;
+            prod) PUBLIC_SSO_URL="https://auth.databaes.net" ;;
           esac
           vault kv patch secret/authentik/vault-oidc \
             discovery_url="${PUBLIC_SSO_URL}/application/o/vault/"
