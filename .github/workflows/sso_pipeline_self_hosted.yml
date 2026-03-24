@@ -255,10 +255,12 @@ jobs:
           # Export env vault address/token into GITHUB_ENV so subsequent steps
           # (including Ansible's delegate_to: localhost tasks that write OIDC
           # credentials back to the env vault) can reach it.
-          echo "VAULT_ADDR=$ENV_VAULT_ADDR"                       >> "$GITHUB_ENV"
-          echo "VAULT_TOKEN=$ENV_VAULT_TOKEN"                     >> "$GITHUB_ENV"
-          echo "VAULT_PROD_ADDR=${{ secrets.VAULT_PROD_ADDR }}"   >> "$GITHUB_ENV"
-          echo "VAULT_PROD_TOKEN=${{ secrets.VAULT_PROD_TOKEN }}" >> "$GITHUB_ENV"
+          echo "VAULT_ADDR=$ENV_VAULT_ADDR"                               >> "$GITHUB_ENV"
+          echo "VAULT_TOKEN=$ENV_VAULT_TOKEN"                           >> "$GITHUB_ENV"
+          echo "VAULT_PROD_ADDR=${{ secrets.VAULT_PROD_ADDR }}"         >> "$GITHUB_ENV"
+          echo "VAULT_PROD_TOKEN=${{ secrets.VAULT_PROD_TOKEN }}"       >> "$GITHUB_ENV"
+          echo "VAULT_BOOTSTRAP_ADDR=${{ secrets.VAULT_BOOTSTRAP_ADDR }}" >> "$GITHUB_ENV"
+          echo "VAULT_DEV_TOKEN=${{ secrets.VAULT_DEV_TOKEN }}"         >> "$GITHUB_ENV"
           echo "SSO_DB_PASSWORD=$SSO_DB_PASSWORD"                 >> "$GITHUB_ENV"
           echo "SSO_SECRET_KEY=$SSO_SECRET_KEY"                   >> "$GITHUB_ENV"
           echo "SSO_BOOTSTRAP_PASSWORD=$SSO_BOOTSTRAP_PASSWORD"   >> "$GITHUB_ENV"
