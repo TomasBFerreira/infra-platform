@@ -149,7 +149,8 @@
         helm upgrade --install cert-manager jetstack/cert-manager \
           --namespace cert-manager \
           --version "{{ cert_manager_version }}" \
-          --wait
+          --wait \
+          --timeout 10m
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
