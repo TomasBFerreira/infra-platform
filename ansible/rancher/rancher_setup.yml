@@ -6,7 +6,6 @@
   vars:
     k3s_version: "v1.32.3+k3s1"
     helm_version: "v3.17.1"
-    cert_manager_version: "v1.17.1"
     rancher_version: "2.10.3"
     rancher_hostname: "rancher-{{ runner_env }}.databaes.net"
     # runner_env is passed as an extra var from the pipeline.
@@ -32,6 +31,7 @@
           - open-iscsi
           - nfs-common
           - iptables          # required by K3s for network policy / kube-proxy
+          - openssl            # for self-signed TLS cert generation
         state: present
 
     # ── Standard users ───────────────────────────────────────────────────────
@@ -126,36 +126,33 @@
       environment:
         DESIRED_VERSION: "{{ helm_version }}"
 
-    # ── cert-manager ─────────────────────────────────────────────────────────
-    # Required by Rancher for TLS certificate management.
+    # ── TLS (self-signed, no cert-manager) ────────────────────────────────────
+    # cert-manager webhook pods fail to become ready in Proxmox LXC due to
+    # cgroup/kernel constraints. Generate a self-signed certificate directly and
+    # install Rancher with ingress.tls.source=secret.
+    # Main Traefik proxies to K3s Traefik with insecureSkipVerify.
 
-    - name: Add cert-manager Helm repo
-      become_user: appadm
+    - name: Create cattle-system namespace
+      shell: k3s kubectl create namespace cattle-system --dry-run=client -o yaml | k3s kubectl apply -f -
+
+    - name: Generate self-signed TLS certificate for Rancher
       shell: |
-        helm repo add jetstack https://charts.jetstack.io
-        helm repo update
-      environment:
-        KUBECONFIG: /home/appadm/.kube/config
+        mkdir -p /tmp/rancher-tls
+        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+          -keyout /tmp/rancher-tls/tls.key \
+          -out /tmp/rancher-tls/tls.crt \
+          -subj "/CN={{ rancher_hostname }}/O=Rancher" \
+          -addext "subjectAltName=DNS:{{ rancher_hostname }},IP:{{ ansible_host }}"
+      args:
+        creates: /tmp/rancher-tls/tls.crt
 
-    - name: Install cert-manager CRDs
-      shell: k3s kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_version }}/cert-manager.crds.yaml
-
-    - name: Create cert-manager namespace
-      shell: k3s kubectl create namespace cert-manager --dry-run=client -o yaml | k3s kubectl apply -f -
-
-    - name: Install cert-manager
-      become_user: appadm
+    - name: Create TLS secret for Rancher ingress
       shell: |
-        helm upgrade --install cert-manager jetstack/cert-manager \
-          --namespace cert-manager \
-          --version "{{ cert_manager_version }}" \
-          --wait \
-          --timeout 10m
-      environment:
-        KUBECONFIG: /home/appadm/.kube/config
-
-    - name: Wait for cert-manager to be ready
-      shell: k3s kubectl -n cert-manager rollout status deployment/cert-manager --timeout=120s
+        k3s kubectl create secret tls tls-rancher-ingress \
+          --cert=/tmp/rancher-tls/tls.crt \
+          --key=/tmp/rancher-tls/tls.key \
+          -n cattle-system \
+          --dry-run=client -o yaml | k3s kubectl apply -f -
 
     # ── Rancher ───────────────────────────────────────────────────────────────
 
@@ -167,9 +164,6 @@
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
-    - name: Create cattle-system namespace
-      shell: k3s kubectl create namespace cattle-system --dry-run=client -o yaml | k3s kubectl apply -f -
-
     - name: Install Rancher
       become_user: appadm
       shell: |
@@ -178,14 +172,11 @@
           --version "{{ rancher_version }}" \
           --set hostname="{{ rancher_hostname }}" \
           --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
-          --set ingress.tls.source=rancher \
+          --set ingress.tls.source=secret \
           --wait \
           --timeout 10m
       environment:
         KUBECONFIG: /home/appadm/.kube/config
-      # tls.source=rancher uses Rancher's own self-signed CA.
-      # Let's Encrypt requires external HTTP reachability which LXC containers don't have.
-      # Main Traefik proxies to K3s Traefik with insecureSkipVerify to handle the self-signed cert.
 
     - name: Wait for Rancher rollout
       shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=300s
