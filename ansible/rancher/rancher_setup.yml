@@ -295,18 +295,9 @@
           "https://localhost/v3/authConfigs/oidc")
         echo "Current OIDC config schema: $(echo "$CURRENT_OIDC" | python3 -c 'import sys,json; r=json.load(sys.stdin); print(sorted(r.keys()))' 2>/dev/null || echo 'parse error')"
 
-        MERGED=$(echo "$CURRENT_OIDC" | python3 -c "
-import sys, json
-cfg = json.load(sys.stdin)
-cfg['enabled']             = True
-cfg['clientId']            = '{{ rancher_oidc_client_id }}'
-cfg['clientSecret']        = '{{ rancher_oidc_client_secret }}'
-cfg['issuer']              = '{{ rancher_oidc_discovery_url }}'
-cfg['scope']               = 'openid profile email'
-cfg['accessMode']          = 'unrestricted'
-cfg['allowedPrincipalIds'] = []
-print(json.dumps(cfg))
-")
+        # Multiline python3 -c breaks YAML block scalar parsing (unindented lines
+        # are treated as outside the block). Use a one-liner with semicolons instead.
+        MERGED=$(echo "$CURRENT_OIDC" | python3 -c "import sys,json; cfg=json.load(sys.stdin); cfg.update({'enabled':True,'clientId':'{{ rancher_oidc_client_id }}','clientSecret':'{{ rancher_oidc_client_secret }}','issuer':'{{ rancher_oidc_discovery_url }}','scope':'openid profile email','accessMode':'unrestricted','allowedPrincipalIds':[]}); print(json.dumps(cfg))")
         RESULT=$(rancher_curl -X PUT "https://localhost/v3/authConfigs/oidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \
