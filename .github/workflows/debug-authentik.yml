@@ -1,0 +1,26 @@
+name: Debug Authentik
+on:
+  workflow_dispatch:
+jobs:
+  debug:
+    runs-on: [self-hosted, dev]
+    steps:
+      - name: Get Authentik logs and flow errors
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_dbg_key
+          chmod 600 /tmp/sso_dbg_key
+          SSO_IP=$(vault kv get -field=sso_ip secret/authentik/vault-oidc)
+          echo "=== SERVER LOGS (last 80 lines) ==="
+          ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker logs authentik-server --tail 80 2>&1"
+          echo "=== WORKER LOGS (last 40 lines) ==="
+          ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker logs authentik-worker --tail 40 2>&1"
+          echo "=== FLOW EXECUTOR TEST ==="
+          ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "curl -si http://localhost:9000/api/v3/flows/instances/ -H 'Authorization: Bearer \$(docker exec authentik-server ak shell --command \"from authentik.core.models import Token; print(Token.objects.filter(identifier=\\\"authentik-bootstrap-token\\\").first().key)\" 2>/dev/null)' 2>&1 | head -20" || echo "flow test failed"
+          rm -f /tmp/sso_dbg_key
