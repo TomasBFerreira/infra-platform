@@ -20,7 +20,7 @@ jobs:
     runs-on: [self-hosted, dev]
     env:
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
     steps:
       - name: Normalise Vault address
         run: |
