@@ -252,6 +252,18 @@ jobs:
           SSO_BOOTSTRAP_PASSWORD=$(vault kv get -field=bootstrap_password secret/sso)
           SSO_BOOTSTRAP_TOKEN=$(vault kv get -field=bootstrap_token secret/sso)
 
+          # Check for an existing DB backup — restore on new LXC to persist users
+          SSO_HAS_DB_BACKUP="false"
+          DB_BACKUP=$(VAULT_ADDR="$ENV_VAULT_ADDR" VAULT_TOKEN="$ENV_VAULT_TOKEN" \
+            vault kv get -field=dump secret/sso/${ENV}/db-backup 2>/dev/null || echo "")
+          if [[ -n "$DB_BACKUP" ]]; then
+            echo "$DB_BACKUP" | base64 -d > /tmp/sso_db_backup.sql.gz
+            SSO_HAS_DB_BACKUP="true"
+            echo "DB backup found in vault — will restore on new LXC"
+          else
+            echo "No DB backup found in vault — fresh install"
+          fi
+
           # Export env vault address/token into GITHUB_ENV so subsequent steps
           # (including Ansible's delegate_to: localhost tasks that write OIDC
           # credentials back to the env vault) can reach it.
@@ -265,6 +277,7 @@ jobs:
           echo "SSO_SECRET_KEY=$SSO_SECRET_KEY"                   >> "$GITHUB_ENV"
           echo "SSO_BOOTSTRAP_PASSWORD=$SSO_BOOTSTRAP_PASSWORD"   >> "$GITHUB_ENV"
           echo "SSO_BOOTSTRAP_TOKEN=$SSO_BOOTSTRAP_TOKEN"         >> "$GITHUB_ENV"
+          echo "SSO_HAS_DB_BACKUP=$SSO_HAS_DB_BACKUP"           >> "$GITHUB_ENV"
 
       - name: Wait for SSH to be ready
         run: |
@@ -287,6 +300,7 @@ jobs:
             -e "sso_secret_key=$SSO_SECRET_KEY" \
             -e "sso_bootstrap_password=$SSO_BOOTSTRAP_PASSWORD" \
             -e "sso_bootstrap_token=$SSO_BOOTSTRAP_TOKEN" \
+            -e "sso_has_db_backup=${SSO_HAS_DB_BACKUP}" \
             ansible/sso/sso_setup.yml
 
   flip-active:
@@ -304,9 +318,56 @@ jobs:
             vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
             ip="${{ needs.resolve-slots.outputs.staging_ip }}"
 
-  teardown-old-active:
+  backup-db:
     needs: [resolve-slots, flip-active]
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
+    runs-on: self-hosted
+    env:
+      ENV:       ${{ needs.resolve-slots.outputs.environment }}
+      ACTIVE_IP: ${{ needs.resolve-slots.outputs.active_ip }}
+    steps:
+      - name: Dump PostgreSQL from old active LXC and store in vault
+        run: |
+          case "$ENV" in
+            dev)
+              export VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
+              export VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
+              ;;
+            prod)
+              export VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
+              export VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
+              ;;
+          esac
+
+          # Fetch SSH key from bootstrap vault
+          VAULT_ADDR="${{ secrets.VAULT_BOOTSTRAP_ADDR }}" VAULT_TOKEN="${{ secrets.VAULT_DEV_TOKEN }}" \
+            vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_backup_key
+          chmod 600 /tmp/sso_backup_key
+
+          echo "Dumping Authentik PostgreSQL from old active LXC ${ACTIVE_IP}..."
+          DUMP_B64=$(ssh -o StrictHostKeyChecking=no -i /tmp/sso_backup_key root@${ACTIVE_IP} \
+            "docker exec authentik-postgresql pg_dump -U authentik authentik 2>/dev/null | gzip | base64 -w0" \
+            2>/dev/null || echo "")
+
+          if [[ -z "$DUMP_B64" ]]; then
+            echo "WARNING: DB dump is empty — skipping vault store"
+          else
+            echo "Dump size: $(echo -n "$DUMP_B64" | wc -c) base64 chars — storing to vault..."
+            vault kv put secret/sso/${ENV}/db-backup dump="$DUMP_B64"
+            echo "DB backup stored successfully."
+          fi
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/sso_backup_key
+
+  teardown-old-active:
+    needs: [resolve-slots, flip-active, backup-db]
+    if: >-
+      needs.resolve-slots.outputs.first_run == 'false' &&
+      needs.flip-active.result == 'success' &&
+      (needs.backup-db.result == 'success' || needs.backup-db.result == 'failure')
     runs-on: self-hosted
     env:
       ENV:         ${{ needs.resolve-slots.outputs.environment }}

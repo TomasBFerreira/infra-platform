@@ -189,7 +189,37 @@
             media:
             custom-templates:
 
-    - name: Start Authentik
+    - name: Start PostgreSQL and Redis
+      command: docker compose --env-file .env up -d postgresql redis
+      args:
+        chdir: /opt/authentik
+
+    - name: Wait for PostgreSQL to be ready
+      shell: docker exec authentik-postgresql pg_isready -U authentik -d authentik
+      register: pg_ready
+      retries: 20
+      delay: 5
+      until: pg_ready.rc == 0
+
+    - name: Copy DB backup to remote host
+      copy:
+        src: /tmp/sso_db_backup.sql.gz
+        dest: /tmp/sso_db_backup.sql.gz
+        mode: '0600'
+      when: sso_has_db_backup | default(false) | bool
+
+    - name: Restore Authentik DB from backup
+      shell: |
+        docker cp /tmp/sso_db_backup.sql.gz authentik-postgresql:/tmp/sso_db_backup.sql.gz
+        docker exec authentik-postgresql psql -U authentik -d postgres \
+          -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'authentik' AND pid <> pg_backend_pid();"
+        docker exec authentik-postgresql psql -U authentik -d postgres -c "DROP DATABASE IF EXISTS authentik;"
+        docker exec authentik-postgresql psql -U authentik -d postgres -c "CREATE DATABASE authentik;"
+        docker exec authentik-postgresql sh -c "zcat /tmp/sso_db_backup.sql.gz | psql -U authentik authentik"
+        echo "DB restore complete."
+      when: sso_has_db_backup | default(false) | bool
+
+    - name: Start Authentik (full stack)
       command: docker compose --env-file .env up -d
       args:
         chdir: /opt/authentik
