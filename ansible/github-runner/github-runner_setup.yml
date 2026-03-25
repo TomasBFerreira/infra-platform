@@ -131,18 +131,26 @@
     # Required for container-based workflow steps and the run-terraform.sh
     # docker-compose wrapper used by all existing pipelines.
 
+    - name: Check if Docker is already installed
+      command: docker --version
+      register: docker_installed
+      ignore_errors: yes
+      changed_when: false
+
     - name: Add Docker GPG key
       shell: |
         curl -fsSL https://download.docker.com/linux/debian/gpg \
           | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
       args:
         creates: /usr/share/keyrings/docker-archive-keyring.gpg
+      when: docker_installed.rc != 0
 
     - name: Add Docker apt repository
       apt_repository:
         repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
         state: present
         filename: docker
+      when: docker_installed.rc != 0
 
     - name: Install Docker
       apt:
@@ -153,6 +161,7 @@
           - docker-compose-plugin
         state: present
         update_cache: yes
+      when: docker_installed.rc != 0
 
     - name: Add appadm to docker group
       user:
