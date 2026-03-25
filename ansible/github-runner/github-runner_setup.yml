@@ -15,6 +15,17 @@
     runner_home: "/opt/github-runners/{{ repo_slug }}"
 
   tasks:
+    - name: Remove conflicting Docker apt source entries
+      # If Docker was installed via the official script (/etc/apt/keyrings/docker.asc),
+      # any stale line using our old keyring path causes apt update to fail.
+      shell: |
+        if [ -f /etc/apt/sources.list.d/docker.list ]; then
+          grep -v "docker-archive-keyring.gpg" /etc/apt/sources.list.d/docker.list \
+            > /tmp/docker.list.clean
+          mv /tmp/docker.list.clean /etc/apt/sources.list.d/docker.list
+        fi
+      changed_when: false
+
     - name: Update apt cache
       apt:
         update_cache: yes
