@@ -28,12 +28,37 @@
     # Single-node install: server + embedded agent on the same VM.
     # Installs to /usr/local/bin/k3s, systemd unit: k3s.service.
     # Kubeconfig written to /etc/rancher/k3s/k3s.yaml (root-only by default).
+    #
+    # Debian 12 uses nftables; k3s ships with iptables-nft which can conflict
+    # with the running nftables rules and briefly disrupt the SSH connection
+    # when the k3s CNI (flannel) starts.  We pre-install iptables-legacy and
+    # point the alternatives at it so k3s and flannel use the legacy iptables
+    # backend, which does not interfere with nftables.  After the install we
+    # reset the Ansible connection and wait for SSH to recover before continuing.
+
+    - name: Switch to iptables-legacy before k3s install
+      shell: |
+        apt-get install -y -q iptables arptables ebtables
+        update-alternatives --set iptables /usr/sbin/iptables-legacy
+        update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+        update-alternatives --set arptables /usr/sbin/arptables-legacy
+        update-alternatives --set ebtables /usr/sbin/ebtables-legacy
+      changed_when: false
 
     - name: Install k3s
       shell: |
         curl -sfL https://get.k3s.io | sh -
       args:
         creates: /usr/local/bin/k3s
+      ignore_unreachable: yes
+
+    - name: Reset SSH connection after k3s CNI starts
+      meta: reset_connection
+
+    - name: Wait for SSH to recover after k3s networking changes
+      wait_for_connection:
+        delay: 15
+        timeout: 120
 
     - name: Wait for k3s node to be Ready
       command: k3s kubectl get nodes
