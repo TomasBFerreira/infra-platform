@@ -51,10 +51,15 @@ Existing assignments:
 - sso: prod=175/176 (.175/.176), dev=275/276 (.247/.248)
 
 **Worker nodes — numbered singletons (deviation from blue/green):**
-Worker nodes use a flat sequential scheme: VMID = 110+N, IP = 192.168.50.(110+N).
-Kubernetes provides workload resilience; VM-level blue/green does not apply.
-- worker-node-01: VMID 111, IP .111 (betsy — existing manual VM, pending migration to pipeline)
-- worker-node-02: VMID 112, IP .112 (benedict — first pipeline-managed dev node)
+Worker nodes use a per-env sequential scheme. Kubernetes provides workload resilience;
+VM-level blue/green does not apply.
+- Prod (betsy):  VMID = 110+N, IP = 192.168.50.(110+N)  → 111, 112, 113…
+- Dev (benedict): VMID = 210+N, IP = 192.168.50.(210+N) → 211, 212, 213…
+- QA (vladimir):  VMID = 310+N, IP = 192.168.50.(310+N) → 311, 312, 313…
+
+Current nodes:
+- worker-node-01 (dev):  VMID 211, IP .211 (benedict — pipeline-managed)
+- worker-node-01 (prod): VMID 111, IP .111 (betsy — existing manual VM, pending pipeline migration)
 
 **GitHub Actions runners — env singletons (deviation from blue/green):**
 One runner LXC per environment, permanently assigned. Replaced in-place (destroy + reprovision) by the `github-runner` pipeline. Runners start at `order=5` — after vault, network, and sso. New apps targeting an env use `runs-on: [self-hosted, <env>]`.

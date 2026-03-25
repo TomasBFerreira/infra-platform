@@ -97,3 +97,133 @@
     - name: Print node status
       debug:
         msg: "{{ node_status.stdout }}"
+
+    # ── Rancher registration (optional) ──────────────────────────────────────
+    # Imports this k3s cluster into the env's Rancher instance as a downstream
+    # managed cluster.  Skipped if rancher_bootstrap_password is not provided
+    # (i.e. Rancher has not been deployed yet for this env).
+    #
+    # DNS strategy: the cattle-cluster-agent pods must reach Rancher by hostname
+    # (the TLS cert SAN uses the hostname).  We add the Rancher IP→hostname
+    # mapping to both /etc/hosts (for node-level processes) and to the CoreDNS
+    # NodeHosts ConfigMap (for in-cluster pods), then restart CoreDNS.
+
+    - name: Register cluster with Rancher
+      when: rancher_bootstrap_password is defined and rancher_bootstrap_password | length > 0
+      block:
+        - name: Add Rancher hostname to /etc/hosts
+          lineinfile:
+            path: /etc/hosts
+            line: "{{ rancher_ip }} {{ rancher_hostname }}"
+            state: present
+
+        - name: Patch CoreDNS NodeHosts ConfigMap for Rancher hostname resolution
+          shell: |
+            k3s kubectl get configmap coredns -n kube-system -o json > /tmp/coredns-cm.json
+            python3 - <<'PYEOF'
+            import json, shutil
+
+            entry = "{{ rancher_ip }} {{ rancher_hostname }}"
+            with open('/tmp/coredns-cm.json') as f:
+                cm = json.load(f)
+
+            node_hosts = cm.get('data', {}).get('NodeHosts', '')
+            if '{{ rancher_hostname }}' not in node_hosts:
+                cm.setdefault('data', {})['NodeHosts'] = node_hosts.rstrip('\n') + '\n' + entry + '\n'
+                with open('/tmp/coredns-cm-patched.json', 'w') as f:
+                    json.dump(cm, f)
+                print(f'Added to NodeHosts: {entry}')
+            else:
+                shutil.copy('/tmp/coredns-cm.json', '/tmp/coredns-cm-patched.json')
+                print('Rancher entry already in NodeHosts')
+            PYEOF
+            k3s kubectl apply -f /tmp/coredns-cm-patched.json
+            rm -f /tmp/coredns-cm.json /tmp/coredns-cm-patched.json
+          changed_when: false
+
+        - name: Restart CoreDNS to apply NodeHosts change
+          shell: k3s kubectl rollout restart deployment/coredns -n kube-system
+          changed_when: false
+
+        - name: Wait for CoreDNS to be ready
+          shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=60s
+          changed_when: false
+
+        - name: Login to Rancher and register cluster
+          shell: |
+            set -e
+
+            rancher_curl() { curl -sk --fail-with-body -H "Host: {{ rancher_hostname }}" "$@"; }
+
+            # Login — capture full response for error diagnostics
+            LOGIN_RESP=$(curl -sk -H "Host: {{ rancher_hostname }}" \
+              -X POST "https://{{ rancher_ip }}/v3-public/localProviders/local?action=login" \
+              -H "Content-Type: application/json" \
+              -d "{\"username\":\"admin\",\"password\":\"{{ rancher_bootstrap_password }}\",\"ttl\":60000}")
+            RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+            # Handle mustChangePassword (same pattern as rancher_setup.yml)
+            MUST_CHANGE=$(echo "$LOGIN_RESP" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('mustChangePassword',False))" 2>/dev/null || echo "False")
+            if [ "$MUST_CHANGE" = "True" ]; then
+              USER_ID=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['userId'])")
+              curl -sk -H "Host: {{ rancher_hostname }}" \
+                -X POST "https://{{ rancher_ip }}/v3/users/${USER_ID}?action=setpassword" \
+                -H "Authorization: Bearer $RANCHER_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"newPassword\":\"{{ rancher_bootstrap_password }}\"}" > /dev/null
+            fi
+
+            # Find existing cluster or create a new one
+            EXISTING=$(curl -sk -H "Host: {{ rancher_hostname }}" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              "https://{{ rancher_ip }}/v3/clusters?name={{ vm_hostname }}" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('data',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+
+            if [ -n "$EXISTING" ]; then
+              echo "Cluster '{{ vm_hostname }}' already registered in Rancher (ID: $EXISTING)"
+              CLUSTER_ID="$EXISTING"
+            else
+              CLUSTER_ID=$(rancher_curl -X POST "https://{{ rancher_ip }}/v3/clusters" \
+                -H "Authorization: Bearer $RANCHER_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"cluster\",\"name\":\"{{ vm_hostname }}\"}" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+              echo "Created cluster '{{ vm_hostname }}' in Rancher (ID: $CLUSTER_ID)"
+            fi
+
+            # Wait for cluster registration token (Rancher creates it asynchronously)
+            MANIFEST_URL=""
+            for i in $(seq 1 12); do
+              MANIFEST_URL=$(curl -sk -H "Host: {{ rancher_hostname }}" \
+                -H "Authorization: Bearer $RANCHER_TOKEN" \
+                "https://{{ rancher_ip }}/v3/clusterregistrationtokens?clusterId=${CLUSTER_ID}" \
+                | python3 -c "
+            import sys, json
+            d = json.load(sys.stdin)
+            items = d.get('data', [])
+            print(items[0]['manifestUrl'] if items else '')
+            " 2>/dev/null || echo "")
+              [ -n "$MANIFEST_URL" ] && break
+              echo "Waiting for cluster registration token (attempt $i/12)..."
+              sleep 5
+            done
+
+            if [ -z "$MANIFEST_URL" ]; then
+              echo "ERROR: no cluster registration token after 60s"
+              exit 1
+            fi
+
+            # Download manifest and apply — use Rancher IP directly so k3s can
+            # reach it even if external DNS isn't resolving the hostname yet.
+            MANIFEST_URL_BY_IP=$(echo "$MANIFEST_URL" | sed "s|https://{{ rancher_hostname }}|https://{{ rancher_ip }}|g")
+            echo "Applying registration manifest: $MANIFEST_URL_BY_IP"
+            curl -sk "$MANIFEST_URL_BY_IP" \
+              -H "Host: {{ rancher_hostname }}" \
+              | k3s kubectl apply -f -
+            echo "Rancher cluster agent manifest applied"
+          no_log: false
+
+        - name: Show Rancher registration result
+          debug:
+            msg: "Worker node '{{ vm_hostname }}' registered with Rancher at {{ rancher_ip }} ({{ rancher_hostname }})"
