@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   resolve-runner:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       environment:  ${{ steps.runner.outputs.environment }}
       pve_api_url:  ${{ steps.runner.outputs.pve_api_url }}
@@ -67,7 +67,7 @@ jobs:
 
   terraform-runner:
     needs: resolve-runner
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       ENV:      ${{ needs.resolve-runner.outputs.environment }}
       VMID:     ${{ needs.resolve-runner.outputs.vmid }}
@@ -90,7 +90,7 @@ jobs:
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
         run: |
-          cd $GITHUB_WORKSPACE
+          cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false
 
       - name: Pre-flight — destroy any existing runner CT
@@ -108,7 +108,7 @@ jobs:
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
         run: |
-          cd $GITHUB_WORKSPACE
+          cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner destroy \
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate || true
@@ -116,7 +116,7 @@ jobs:
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true"
-          rm -f $GITHUB_WORKSPACE/terraform/github-runner/terraform.${ENV}.tfstate
+          rm -f /app/infra-platform/terraform/github-runner/terraform.${ENV}.tfstate
 
       - name: Terraform Apply
         env:
@@ -131,14 +131,14 @@ jobs:
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
         run: |
-          cd $GITHUB_WORKSPACE
+          cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner apply \
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate
 
   ansible-runner:
     needs: [resolve-runner, terraform-runner]
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -197,7 +197,7 @@ jobs:
 
   save-runner-state:
     needs: [resolve-runner, ansible-runner]
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Write runner state to bootstrap vault
         env:
@@ -215,7 +215,7 @@ jobs:
   cleanup-on-failure:
     needs: [resolve-runner, terraform-runner, ansible-runner]
     if: failure()
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       ENV:  ${{ needs.resolve-runner.outputs.environment }}
       VMID: ${{ needs.resolve-runner.outputs.vmid }}
@@ -226,7 +226,7 @@ jobs:
           PVE_API:  ${{ needs.resolve-runner.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
-          LOG_DIR="$GITHUB_WORKSPACE/logs/github-runner-failures"
+          LOG_DIR="/app/infra-platform/logs/github-runner-failures"
           mkdir -p "$LOG_DIR"
           LOG_FILE="$LOG_DIR/github-runner-${ENV}-$(date -u +%Y%m%dT%H%M%SZ)-run${{ github.run_id }}.log"
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
@@ -256,7 +256,7 @@ jobs:
           TF_VAR_vm_hostname:   ${{ needs.resolve-runner.outputs.hostname }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
         run: |
-          cd $GITHUB_WORKSPACE
+          cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false
 
       - name: Terraform Destroy failed CT
@@ -274,7 +274,7 @@ jobs:
           PVE_API:  ${{ needs.resolve-runner.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
-          cd $GITHUB_WORKSPACE
+          cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner destroy \
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate || true
@@ -282,4 +282,4 @@ jobs:
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${VMID} 2>/dev/null || true; pct destroy ${VMID} 2>/dev/null || true"
-          rm -f $GITHUB_WORKSPACE/terraform/github-runner/terraform.${ENV}.tfstate
+          rm -f /app/infra-platform/terraform/github-runner/terraform.${ENV}.tfstate
