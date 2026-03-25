@@ -1,0 +1,16 @@
+name: Copy bootstrap vault token to media-stack
+on:
+  workflow_dispatch:
+jobs:
+  copy:
+    runs-on: [self-hosted, dev]
+    steps:
+      - name: Set VAULT_BOOTSTRAP_ROOT_TOKEN in media-stack
+        run: |
+          gh secret set VAULT_BOOTSTRAP_ROOT_TOKEN \
+            --repo TomasBFerreira/media-stack \
+            --body "$VAULT_TOKEN"
+          echo "Secret updated"
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
