@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   resolve-runner:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       environment:  ${{ steps.runner.outputs.environment }}
       pve_api_url:  ${{ steps.runner.outputs.pve_api_url }}
@@ -67,7 +67,7 @@ jobs:
 
   terraform-runner:
     needs: resolve-runner
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     env:
       ENV:      ${{ needs.resolve-runner.outputs.environment }}
       VMID:     ${{ needs.resolve-runner.outputs.vmid }}
@@ -138,7 +138,7 @@ jobs:
 
   ansible-runner:
     needs: [resolve-runner, terraform-runner]
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -197,7 +197,7 @@ jobs:
 
   save-runner-state:
     needs: [resolve-runner, ansible-runner]
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Write runner state to bootstrap vault
         env:
@@ -215,7 +215,7 @@ jobs:
   cleanup-on-failure:
     needs: [resolve-runner, terraform-runner, ansible-runner]
     if: failure()
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     env:
       ENV:  ${{ needs.resolve-runner.outputs.environment }}
       VMID: ${{ needs.resolve-runner.outputs.vmid }}
