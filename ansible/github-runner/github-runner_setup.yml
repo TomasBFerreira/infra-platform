@@ -5,7 +5,7 @@
 
   vars:
     runner_version: "2.321.0"
-    runner_user: appadm
+    runner_user: root
     # github_repo and runner_env are passed as extra vars from the pipeline.
     # Format: github_repo=owner/repo  runner_env=dev|prod
     #
@@ -303,6 +303,19 @@
       shell: "{{ runner_home }}/svc.sh start"
       args:
         chdir: "{{ runner_home }}"
+
+    # ── Persistent working directory ─────────────────────────────────────────
+    # Pipelines hardcode "cd /app/infra-platform" instead of using
+    # $GITHUB_WORKSPACE. This persistent clone provides that path and also
+    # stores Terraform state files between pipeline runs.
+
+    - name: Clone infra-platform repo to /app/infra-platform
+      git:
+        repo: "https://github.com/TomasBFerreira/infra-platform.git"
+        dest: /app/infra-platform
+        update: no
+      args:
+        creates: /app/infra-platform/.git
 
     - name: Runner setup summary
       debug:
