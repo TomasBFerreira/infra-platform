@@ -70,6 +70,54 @@
         state: present
         update_cache: yes
 
+    # ── SSH key for Proxmox access ────────────────────────────────────────────
+    # Pipeline pre-flight steps SSH to Proxmox (192.168.50.x) as root to run
+    # pct commands. The runner root account needs a key authorized on Proxmox.
+
+    - name: Fetch Proxmox access SSH private key from vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+          | python3 -c "
+        import sys, textwrap
+        raw = sys.stdin.read().strip().replace('\r', '')
+        B = '-----BEGIN OPENSSH PRIVATE KEY-----'
+        E = '-----END OPENSSH PRIVATE KEY-----'
+        body = raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t','')
+        print(B); print(textwrap.fill(body, width=70)); print(E)
+        "
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+      register: proxmox_ssh_privkey
+      no_log: true
+
+    - name: Install Proxmox access SSH private key for root
+      copy:
+        content: "{{ proxmox_ssh_privkey.stdout }}\n"
+        dest: /root/.ssh/id_ed25519
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Fetch Proxmox access SSH public key from vault
+      delegate_to: localhost
+      become: no
+      shell: vault kv get -field=public_key secret/ssh_keys/github_runner_proxmox_access
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+      register: proxmox_ssh_pubkey
+
+    - name: Install Proxmox access SSH public key for root
+      copy:
+        content: "{{ proxmox_ssh_pubkey.stdout }}\n"
+        dest: /root/.ssh/id_ed25519.pub
+        owner: root
+        group: root
+        mode: '0644'
+
     # ── SSH access for register-runner.yml ───────────────────────────────────
     # The register-runner.yml workflow SSHs into this LXC as root using the
     # github_runner_worker key to deploy additional runner registrations.
