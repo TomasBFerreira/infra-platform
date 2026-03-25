@@ -119,26 +119,19 @@
 
         - name: Patch CoreDNS NodeHosts ConfigMap for Rancher hostname resolution
           shell: |
-            k3s kubectl get configmap coredns -n kube-system -o json > /tmp/coredns-cm.json
-            python3 - <<'PYEOF'
-            import json, shutil
-
-            entry = "{{ rancher_ip }} {{ rancher_hostname }}"
-            with open('/tmp/coredns-cm.json') as f:
-                cm = json.load(f)
-
-            node_hosts = cm.get('data', {}).get('NodeHosts', '')
-            if '{{ rancher_hostname }}' not in node_hosts:
-                cm.setdefault('data', {})['NodeHosts'] = node_hosts.rstrip('\n') + '\n' + entry + '\n'
-                with open('/tmp/coredns-cm-patched.json', 'w') as f:
-                    json.dump(cm, f)
-                print(f'Added to NodeHosts: {entry}')
-            else:
-                shutil.copy('/tmp/coredns-cm.json', '/tmp/coredns-cm-patched.json')
-                print('Rancher entry already in NodeHosts')
-            PYEOF
-            k3s kubectl apply -f /tmp/coredns-cm-patched.json
-            rm -f /tmp/coredns-cm.json /tmp/coredns-cm-patched.json
+            ENTRY="{{ rancher_ip }} {{ rancher_hostname }}"
+            if k3s kubectl get configmap coredns -n kube-system \
+                -o jsonpath='{.data.NodeHosts}' 2>/dev/null | grep -qF "{{ rancher_hostname }}"; then
+              echo "Rancher hostname already in CoreDNS NodeHosts"
+            else
+              CURRENT=$(k3s kubectl get configmap coredns -n kube-system \
+                -o jsonpath='{.data.NodeHosts}' 2>/dev/null || echo "")
+              MERGED_ESC=$(printf '%s\n%s' "$CURRENT" "$ENTRY" \
+                | python3 -c "import sys; s=sys.stdin.read(); print(s.replace('\\\\','\\\\\\\\').replace('\"','\\\\\"').replace(chr(10),'\\\\n'), end='')")
+              k3s kubectl patch configmap coredns -n kube-system \
+                --type=merge -p "{\"data\":{\"NodeHosts\":\"${MERGED_ESC}\"}}"
+              echo "Added $ENTRY to CoreDNS NodeHosts"
+            fi
           changed_when: false
 
         - name: Restart CoreDNS to apply NodeHosts change
