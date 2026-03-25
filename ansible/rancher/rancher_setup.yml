@@ -287,6 +287,17 @@
           || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
         echo "server-url set OK"
 
+        # Disable the first-login bootstrap wizard so it doesn't intercept
+        # OIDC logins. When value="" Rancher falls back to default="true",
+        # which forces admin password-change after any login (including OIDC),
+        # causing a localProviders/local 401 after a successful OIDC exchange.
+        rancher_curl -X PUT "https://localhost/v3/settings/first-login" \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"value": "false"}' > /dev/null \
+          || echo "WARNING: failed to set first-login=false"
+        echo "first-login set to false"
+
         # GET the full genericOIDCConfig resource. /v3/authConfigs/genericoidc
         # returns only the base authConfig schema — no OIDC-specific fields and
         # PUT back to that endpoint fails with "invalid data for auth store update".
