@@ -118,14 +118,17 @@
             state: present
 
         - name: Patch CoreDNS NodeHosts ConfigMap for Rancher hostname resolution
+          environment:
+            RANCHER_IP: "{{ rancher_ip }}"
+            RANCHER_HOST: "{{ rancher_hostname }}"
           shell: |
-            ENTRY="{{ rancher_ip }} {{ rancher_hostname }}"
+            ENTRY="$RANCHER_IP $RANCHER_HOST"
             if k3s kubectl get configmap coredns -n kube-system \
-                -o jsonpath='{.data.NodeHosts}' 2>/dev/null | grep -qF "{{ rancher_hostname }}"; then
+                -o jsonpath="{.data.NodeHosts}" 2>/dev/null | grep -qF "$RANCHER_HOST"; then
               echo "Rancher hostname already in CoreDNS NodeHosts"
             else
               CURRENT=$(k3s kubectl get configmap coredns -n kube-system \
-                -o jsonpath='{.data.NodeHosts}' 2>/dev/null || echo "")
+                -o jsonpath="{.data.NodeHosts}" 2>/dev/null || echo "")
               MERGED_ESC=$(printf '%s\n%s' "$CURRENT" "$ENTRY" \
                 | python3 -c "import sys; s=sys.stdin.read(); print(s.replace('\\\\','\\\\\\\\').replace('\"','\\\\\"').replace(chr(10),'\\\\n'), end='')")
               k3s kubectl patch configmap coredns -n kube-system \
@@ -143,12 +146,12 @@
           changed_when: false
 
         - name: Login to Rancher and register cluster
+          environment:
+            RANCHER_IP: "{{ rancher_ip }}"
+            RANCHER_HOST: "{{ rancher_hostname }}"
+            RANCHER_PASS: "{{ rancher_bootstrap_password }}"
+            VM_HOST: "{{ vm_hostname }}"
           shell: |
-            RANCHER_IP="{{ rancher_ip }}"
-            RANCHER_HOST="{{ rancher_hostname }}"
-            RANCHER_PASS="{{ rancher_bootstrap_password }}"
-            VM_HOST="{{ vm_hostname }}"
-            {% raw %}
             set -e
 
             # Login — capture full response for error diagnostics
@@ -177,7 +180,7 @@
               | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('data',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
 
             if [ -n "$EXISTING" ]; then
-              echo "Cluster '$VM_HOST' already registered in Rancher (ID: $EXISTING)"
+              echo "Cluster already registered in Rancher (ID: $EXISTING)"
               CLUSTER_ID="$EXISTING"
             else
               CLUSTER_ID=$(curl -sk --fail-with-body -H "Host: $RANCHER_HOST" \
@@ -186,7 +189,7 @@
                 -H "Content-Type: application/json" \
                 -d "{\"type\":\"cluster\",\"name\":\"$VM_HOST\"}" \
                 | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-              echo "Created cluster '$VM_HOST' in Rancher (ID: $CLUSTER_ID)"
+              echo "Created cluster in Rancher (ID: $CLUSTER_ID)"
             fi
 
             # Wait for cluster registration token (Rancher creates it asynchronously)
@@ -214,7 +217,6 @@
               -H "Host: $RANCHER_HOST" \
               | k3s kubectl apply -f -
             echo "Rancher cluster agent manifest applied"
-            {% endraw %}
           no_log: false
 
         - name: Show Rancher registration result
