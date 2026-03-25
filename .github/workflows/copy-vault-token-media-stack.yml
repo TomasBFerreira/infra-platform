@@ -7,7 +7,7 @@ jobs:
     steps:
       - name: Set VAULT_BOOTSTRAP_ROOT_TOKEN in media-stack
         run: |
-          pip install --quiet pynacl
+          apt-get install -y -q python3-nacl
           python3 - <<PYEOF
           import os, base64, json
           from nacl import encoding, public
