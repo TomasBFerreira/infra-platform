@@ -287,7 +287,7 @@
           || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
         echo "server-url set OK"
 
-        # Disable the first-login bootstrap wizard so it doesn't intercept
+        # Disable the first-login bootstrap wizard so it does not intercept
         # OIDC logins. When value="" Rancher falls back to default="true",
         # which forces admin password-change after any login (including OIDC),
         # causing a localProviders/local 401 after a successful OIDC exchange.
