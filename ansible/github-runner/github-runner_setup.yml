@@ -59,6 +59,48 @@
         state: present
         update_cache: yes
 
+    # ── SSH access for register-runner.yml ───────────────────────────────────
+    # The register-runner.yml workflow SSHs into this LXC as root using the
+    # github_runner_worker key to deploy additional runner registrations.
+    # The public key must be in root's authorized_keys for that to work.
+
+    - name: Fetch github_runner_worker public key from vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        PRIVATE_KEY=$(vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+          | python3 -c "
+        import sys, textwrap
+        raw = sys.stdin.read().strip().replace('\r', '')
+        B = '-----BEGIN OPENSSH PRIVATE KEY-----'
+        E = '-----END OPENSSH PRIVATE KEY-----'
+        body = raw[raw.find(B)+len(B):raw.find(E)].replace(' ', '').replace('\n', '').replace('\t', '')
+        print(B); print(textwrap.fill(body, width=70)); print(E)
+        ")
+        echo "$PRIVATE_KEY" > /tmp/runner_worker_key
+        chmod 600 /tmp/runner_worker_key
+        ssh-keygen -y -f /tmp/runner_worker_key
+        rm -f /tmp/runner_worker_key
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+      register: runner_worker_pubkey
+      no_log: true
+
+    - name: Ensure root .ssh directory exists
+      file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Add github_runner_worker public key to root authorized_keys
+      authorized_key:
+        user: root
+        key: "{{ runner_worker_pubkey.stdout }}"
+        state: present
+
     # ── Standard users ───────────────────────────────────────────────────────
     # appadm  — service/app owner (runs the runner process, owns all files)
     # tomas   — admin user for interactive access (sudo)
