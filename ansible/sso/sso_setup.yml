@@ -150,6 +150,7 @@
                 AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD}
                 AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN}
                 AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED}
+                AUTHENTIK_HOST_BROWSER: ${AUTHENTIK_HOST_BROWSER}
               volumes:
                 - media:/media
                 - custom-templates:/templates
@@ -173,6 +174,7 @@
                 AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
                 AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
                 AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED}
+                AUTHENTIK_HOST: ${AUTHENTIK_HOST}
               volumes:
                 - /var/run/docker.sock:/var/run/docker.sock
                 - media:/media
@@ -189,7 +191,37 @@
             media:
             custom-templates:
 
-    - name: Start Authentik
+    - name: Start PostgreSQL and Redis
+      command: docker compose --env-file .env up -d postgresql redis
+      args:
+        chdir: /opt/authentik
+
+    - name: Wait for PostgreSQL to be ready
+      shell: docker exec authentik-postgresql pg_isready -U authentik -d authentik
+      register: pg_ready
+      retries: 20
+      delay: 5
+      until: pg_ready.rc == 0
+
+    - name: Copy DB backup to remote host
+      copy:
+        src: /tmp/sso_db_backup.sql.gz
+        dest: /tmp/sso_db_backup.sql.gz
+        mode: '0600'
+      when: sso_has_db_backup | default(false) | bool
+
+    - name: Restore Authentik DB from backup
+      shell: |
+        docker cp /tmp/sso_db_backup.sql.gz authentik-postgresql:/tmp/sso_db_backup.sql.gz
+        docker exec authentik-postgresql psql -U authentik -d postgres \
+          -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'authentik' AND pid <> pg_backend_pid();"
+        docker exec authentik-postgresql psql -U authentik -d postgres -c "DROP DATABASE IF EXISTS authentik;"
+        docker exec authentik-postgresql psql -U authentik -d postgres -c "CREATE DATABASE authentik;"
+        docker exec authentik-postgresql sh -c "zcat /tmp/sso_db_backup.sql.gz | psql -U authentik authentik"
+        echo "DB restore complete."
+      when: sso_has_db_backup | default(false) | bool
+
+    - name: Start Authentik (full stack)
       command: docker compose --env-file .env up -d
       args:
         chdir: /opt/authentik
@@ -380,6 +412,106 @@
           open_in_new_tab: true
         status_code: 201
       when: existing_vault_app.json.pagination.count == 0
+
+    # ── Authentik API — configure Rancher OIDC provider ──────────────────────
+
+    - name: Check if Rancher OAuth2 provider already exists
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/?name=Rancher"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_rancher_provider
+
+    - name: Set Rancher resource facts
+      set_fact:
+        _rancher_provider_exists: "{{ existing_rancher_provider.json.pagination.count > 0 }}"
+        _existing_rancher_client_id: "{{ existing_rancher_provider.json.results[0].client_id | default('') }}"
+        _existing_rancher_client_secret: "{{ existing_rancher_provider.json.results[0].client_secret | default('') }}"
+        _existing_rancher_provider_pk: "{{ existing_rancher_provider.json.results[0].pk | default('') }}"
+        _rancher_redirect_uris:
+          - {url: "https://rancher-dev.databaes.net/verify-auth", matching_mode: "strict"}
+          - {url: "https://rancher.databaes.net/verify-auth", matching_mode: "strict"}
+
+    - name: Create Rancher OAuth2 provider in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Rancher"
+          client_type: "confidential"
+          redirect_uris: "{{ _rancher_redirect_uris }}"
+          sub_mode: "user_id"
+          include_claims_in_id_token: true
+          signing_key: "{{ _signing_key }}"
+          authorization_flow: "{{ _auth_flow }}"
+          invalidation_flow: "{{ _invalidation_flow }}"
+          property_mappings: "{{ _scope_mappings }}"
+        status_code: 201
+      register: created_rancher_provider
+      when: not _rancher_provider_exists
+
+    - name: Resolve final Rancher provider facts
+      set_fact:
+        _rancher_provider_pk: "{{ created_rancher_provider.json.pk if not _rancher_provider_exists else _existing_rancher_provider_pk }}"
+        _rancher_client_id: "{{ created_rancher_provider.json.client_id if not _rancher_provider_exists else _existing_rancher_client_id }}"
+        _rancher_client_secret: "{{ created_rancher_provider.json.client_secret if not _rancher_provider_exists else _existing_rancher_client_secret }}"
+
+    - name: Check if Rancher application already exists
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/?slug=rancher"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_rancher_app
+
+    - name: Create Rancher application in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Rancher"
+          slug: "rancher"
+          provider: "{{ _rancher_provider_pk }}"
+          open_in_new_tab: true
+        status_code: 201
+      when: existing_rancher_app.json.pagination.count == 0
+
+    - name: Store Rancher OIDC credentials in env vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
+            PUBLIC_SSO_URL="https://auth-dev.databaes.net"
+            ;;
+          prod)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
+            PUBLIC_SSO_URL="https://auth.databaes.net"
+            ;;
+        esac
+        vault kv put secret/authentik/rancher-oidc \
+          client_id="{{ _rancher_client_id }}" \
+          client_secret="{{ _rancher_client_secret }}" \
+          sso_ip="{{ ansible_host }}" \
+          discovery_url="${PUBLIC_SSO_URL}/application/o/rancher/"
+
+        # Also write to bootstrap vault so rancher pipeline re-runs can re-seed this secret
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+          vault kv put secret/authentik/{{ vault_env | default('dev') }}/rancher-oidc \
+            client_id="{{ _rancher_client_id }}" \
+            client_secret="{{ _rancher_client_secret }}" \
+            sso_ip="{{ ansible_host }}" \
+            discovery_url="${PUBLIC_SSO_URL}/application/o/rancher/"
+      no_log: true
 
     - name: Store Vault OIDC credentials in env vault
       delegate_to: localhost
