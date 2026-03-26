@@ -44,7 +44,18 @@ jobs:
           RANCHER_PASSWORD=$(vault kv get -field=password secret/rancher/${ENV}/bootstrap)
           OIDC_CLIENT_ID=$(vault kv get -field=client_id secret/authentik/${ENV}/rancher-oidc)
           OIDC_CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/${ENV}/rancher-oidc)
-          OIDC_DISCOVERY_URL=$(vault kv get -field=discovery_url secret/authentik/${ENV}/rancher-oidc)
+
+          # Always use the public HTTPS discovery URL — Rancher CT has internet access
+          # and the public URL returns https:// authorization_endpoint URLs so OIDC
+          # login redirects to the correct public address.
+          case "$ENV" in
+            dev)  PUBLIC_SSO_URL="https://auth-dev.databaes.net" ;;
+            prod) PUBLIC_SSO_URL="https://auth.databaes.net"     ;;
+          esac
+          OIDC_DISCOVERY_URL="${PUBLIC_SSO_URL}/application/o/rancher/"
+          vault kv patch secret/authentik/${ENV}/rancher-oidc \
+            discovery_url="$OIDC_DISCOVERY_URL"
+          echo "Patched rancher-oidc discovery_url → $OIDC_DISCOVERY_URL"
 
           echo "::add-mask::$RANCHER_PASSWORD"
           echo "::add-mask::$OIDC_CLIENT_SECRET"
