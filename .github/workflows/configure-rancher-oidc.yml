@@ -1,0 +1,177 @@
+name: Configure Rancher OIDC
+
+# Configures Authentik OIDC on an already-running Rancher instance.
+# Run this after first-time Rancher setup (password set) when OIDC is
+# missing — e.g. after a forced redeploy wiped Rancher state.
+#
+# Usage:
+#   gh workflow run configure-rancher-oidc.yml --field environment=dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  configure:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    steps:
+      - name: Fetch credentials from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ inputs.environment }}"
+
+          # Rancher is a singleton per env — static VMID/IP scheme
+          case "$ENV" in
+            dev)
+              RANCHER_IP="192.168.50.202"
+              RANCHER_HOSTNAME="rancher-dev.databaes.net"
+              VAULT_ENV_ADDR="${{ secrets.VAULT_ADDR }}"
+              VAULT_ENV_TOKEN="${{ secrets.VAULT_TOKEN }}"
+              ;;
+            prod)
+              RANCHER_IP="192.168.50.102"
+              RANCHER_HOSTNAME="rancher.databaes.net"
+              VAULT_ENV_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
+              VAULT_ENV_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
+              ;;
+          esac
+
+          # SSH key for Rancher LXC
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | awk 'NF > 0' > /tmp/rancher_key
+          chmod 600 /tmp/rancher_key
+
+          # Bootstrap password and OIDC credentials from env vault
+          RANCHER_PASSWORD=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_TOKEN="$VAULT_ENV_TOKEN" \
+            vault kv get -field=password secret/rancher/${ENV}/bootstrap)
+          OIDC_CLIENT_ID=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_TOKEN="$VAULT_ENV_TOKEN" \
+            vault kv get -field=client_id secret/authentik/${ENV}/rancher-oidc)
+          OIDC_CLIENT_SECRET=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_TOKEN="$VAULT_ENV_TOKEN" \
+            vault kv get -field=client_secret secret/authentik/${ENV}/rancher-oidc)
+          OIDC_DISCOVERY_URL=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_TOKEN="$VAULT_ENV_TOKEN" \
+            vault kv get -field=discovery_url secret/authentik/${ENV}/rancher-oidc)
+
+          echo "::add-mask::$RANCHER_PASSWORD"
+          echo "::add-mask::$OIDC_CLIENT_SECRET"
+
+          echo "RANCHER_IP=$RANCHER_IP"                   >> $GITHUB_ENV
+          echo "RANCHER_HOSTNAME=$RANCHER_HOSTNAME"       >> $GITHUB_ENV
+          echo "RANCHER_PASSWORD=$RANCHER_PASSWORD"       >> $GITHUB_ENV
+          echo "OIDC_CLIENT_ID=$OIDC_CLIENT_ID"           >> $GITHUB_ENV
+          echo "OIDC_CLIENT_SECRET=$OIDC_CLIENT_SECRET"   >> $GITHUB_ENV
+          echo "OIDC_DISCOVERY_URL=$OIDC_DISCOVERY_URL"   >> $GITHUB_ENV
+
+      - name: Configure Rancher OIDC via API
+        run: |
+          # All API calls use Host header — K3s Traefik routes by hostname.
+          rancher_curl() {
+            curl -sk --fail-with-body -H "Host: ${RANCHER_HOSTNAME}" "$@"
+          }
+
+          # Login (no -f so we capture body for mustChangePassword check)
+          echo "=== Logging in to Rancher ==="
+          LOGIN_RESP=$(curl -sk \
+            -H "Host: ${RANCHER_HOSTNAME}" \
+            -X POST "https://${RANCHER_IP}/v3-public/localProviders/local?action=login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"admin\", \"password\": \"${RANCHER_PASSWORD}\", \"ttl\": 60000}")
+          echo "Login: $(echo "$LOGIN_RESP" | python3 -c \
+            'import sys,json; r=json.load(sys.stdin); print("type="+str(r.get("type")), "mustChangePassword="+str(r.get("mustChangePassword")))' \
+            2>/dev/null || echo "parse error")"
+
+          RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
+          if [ -z "$RANCHER_TOKEN" ]; then
+            echo "ERROR: Could not extract token. Full response: $LOGIN_RESP"
+            exit 1
+          fi
+
+          # Unlock account if mustChangePassword=true
+          MUST_CHANGE=$(echo "$LOGIN_RESP" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin).get('mustChangePassword', False))" \
+            2>/dev/null || echo "False")
+          if [ "$MUST_CHANGE" = "True" ]; then
+            echo "=== Unlocking account (mustChangePassword=true) ==="
+            USER_ID=$(echo "$LOGIN_RESP" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin)['userId'])")
+            curl -sk -H "Host: ${RANCHER_HOSTNAME}" \
+              -X POST "https://${RANCHER_IP}/v3/users/${USER_ID}?action=setpassword" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"newPassword\": \"${RANCHER_PASSWORD}\"}" > /dev/null
+            echo "Account unlocked for user $USER_ID"
+          fi
+
+          # Wait for admin RBAC
+          echo "=== Waiting for admin RBAC ==="
+          for i in $(seq 1 30); do
+            HTTP_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' \
+              -H "Host: ${RANCHER_HOSTNAME}" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              "https://${RANCHER_IP}/v3/settings/server-url")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "RBAC ready (attempt $i)"
+              break
+            fi
+            echo "Attempt $i: HTTP $HTTP_STATUS — waiting 10s..."
+            sleep 10
+          done
+
+          # Set server URL
+          rancher_curl -X PUT "https://${RANCHER_IP}/v3/settings/server-url" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"value\": \"https://${RANCHER_HOSTNAME}\"}" > /dev/null
+          echo "server-url set to https://${RANCHER_HOSTNAME}"
+
+          # Disable first-login wizard
+          rancher_curl -X PUT "https://${RANCHER_IP}/v3/settings/first-login" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"value": "false"}' > /dev/null
+          echo "first-login disabled"
+
+          # Configure OIDC
+          echo "=== Configuring OIDC ==="
+          CURRENT_OIDC=$(rancher_curl \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://${RANCHER_IP}/v3/genericOIDCConfigs/genericoidc") \
+            || { echo "OIDC GET failed: $CURRENT_OIDC"; exit 1; }
+
+          MERGED=$(echo "$CURRENT_OIDC" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          d.update({
+            'enabled': True,
+            'clientId': '$OIDC_CLIENT_ID',
+            'clientSecret': '$OIDC_CLIENT_SECRET',
+            'issuer': '$OIDC_DISCOVERY_URL',
+            'scope': 'openid profile email',
+            'rancherUrl': 'https://${RANCHER_HOSTNAME}/verify-auth',
+            'accessMode': 'unrestricted',
+            'allowedPrincipalIds': [],
+            'groupSearchEnabled': False,
+          })
+          print(json.dumps(d))
+          ")
+
+          RESULT=$(rancher_curl -X PUT "https://${RANCHER_IP}/v3/genericOIDCConfigs/genericoidc" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$MERGED" || true)
+          echo "OIDC enabled: $(echo "$RESULT" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin).get('enabled', 'unknown'))" 2>/dev/null)"
+          echo "OIDC issuer: $(echo "$RESULT" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin).get('issuer', 'unknown'))" 2>/dev/null)"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/rancher_key
