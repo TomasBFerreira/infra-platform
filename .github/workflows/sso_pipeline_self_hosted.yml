@@ -252,16 +252,17 @@ jobs:
           SSO_BOOTSTRAP_PASSWORD=$(vault kv get -field=bootstrap_password secret/sso)
           SSO_BOOTSTRAP_TOKEN=$(vault kv get -field=bootstrap_token secret/sso)
 
-          # Check for an existing DB backup — restore on new LXC to persist users
+          # Check for an existing DB backup — restore on new LXC to persist users.
+          # Stored on runner disk (not Vault) — Vault KV has a ~512KB string value
+          # limit which the Authentik DB easily exceeds.
           SSO_HAS_DB_BACKUP="false"
-          DB_BACKUP=$(VAULT_ADDR="$ENV_VAULT_ADDR" VAULT_TOKEN="$ENV_VAULT_TOKEN" \
-            vault kv get -field=dump secret/sso/${ENV}/db-backup 2>/dev/null || echo "")
-          if [[ -n "$DB_BACKUP" ]]; then
-            echo "$DB_BACKUP" | base64 -d > /tmp/sso_db_backup.sql.gz
+          BACKUP_FILE="/opt/sso-backup/sso_${ENV}_db.sql.gz"
+          if [[ -f "$BACKUP_FILE" ]]; then
+            cp "$BACKUP_FILE" /tmp/sso_db_backup.sql.gz
             SSO_HAS_DB_BACKUP="true"
-            echo "DB backup found in vault — will restore on new LXC"
+            echo "DB backup found on runner disk — will restore on new LXC"
           else
-            echo "No DB backup found in vault — fresh install"
+            echo "No DB backup found on runner disk — fresh install"
           fi
 
           # Export env vault address/token into GITHUB_ENV so subsequent steps
@@ -326,19 +327,8 @@ jobs:
       ENV:       ${{ needs.resolve-slots.outputs.environment }}
       ACTIVE_IP: ${{ needs.resolve-slots.outputs.active_ip }}
     steps:
-      - name: Dump PostgreSQL from old active LXC and store in vault
+      - name: Dump PostgreSQL from old active LXC and store on runner disk
         run: |
-          case "$ENV" in
-            dev)
-              export VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
-              export VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
-              ;;
-            prod)
-              export VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
-              export VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
-              ;;
-          esac
-
           # Fetch SSH key from bootstrap vault
           VAULT_ADDR="${{ secrets.VAULT_BOOTSTRAP_ADDR }}" VAULT_TOKEN="${{ secrets.VAULT_DEV_TOKEN }}" \
             vault kv get -field=private_key secret/ssh_keys/sso_worker \
@@ -346,19 +336,19 @@ jobs:
           chmod 600 /tmp/sso_backup_key
 
           echo "Dumping Authentik PostgreSQL from old active LXC ${ACTIVE_IP}..."
-          DUMP_B64=$(ssh -o StrictHostKeyChecking=no -i /tmp/sso_backup_key root@${ACTIVE_IP} \
-            "docker exec authentik-postgresql pg_dump -U authentik authentik 2>/dev/null | gzip | base64 -w0" \
-            2>/dev/null || echo "")
+          BACKUP_FILE="/opt/sso-backup/sso_${ENV}_db.sql.gz"
+          mkdir -p /opt/sso-backup
 
-          if [[ -z "$DUMP_B64" ]]; then
-            echo "WARNING: DB dump is empty — skipping vault store"
+          # Stream gzipped dump directly to runner disk — avoids Vault KV size limits
+          ssh -o StrictHostKeyChecking=no -i /tmp/sso_backup_key root@${ACTIVE_IP} \
+            "docker exec authentik-postgresql pg_dump -U authentik authentik 2>/dev/null | gzip" \
+            > "$BACKUP_FILE" 2>/dev/null || true
+
+          if [[ -s "$BACKUP_FILE" ]]; then
+            echo "DB backup saved to ${BACKUP_FILE} ($(du -sh "$BACKUP_FILE" | cut -f1))"
           else
-            echo "Dump size: $(echo -n "$DUMP_B64" | wc -c) base64 chars — storing to vault..."
-            # Write to file to avoid "Argument list too long" when dump exceeds ARG_MAX
-            echo -n "$DUMP_B64" > /tmp/sso_db_dump.b64
-            vault kv put secret/sso/${ENV}/db-backup dump=@/tmp/sso_db_dump.b64
-            rm -f /tmp/sso_db_dump.b64
-            echo "DB backup stored successfully."
+            echo "WARNING: DB dump is empty — removing empty file"
+            rm -f "$BACKUP_FILE"
           fi
 
       - name: Cleanup SSH key
