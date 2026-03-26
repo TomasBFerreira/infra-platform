@@ -358,13 +358,17 @@
     # $GITHUB_WORKSPACE. This persistent clone provides that path and also
     # stores Terraform state files between pipeline runs.
 
+    - name: Check if infra-platform repo already cloned
+      stat:
+        path: /app/infra-platform/.git
+      register: infra_repo
+
     - name: Clone infra-platform repo to /app/infra-platform
       git:
         repo: "https://github.com/TomasBFerreira/infra-platform.git"
         dest: /app/infra-platform
         update: no
-      args:
-        creates: /app/infra-platform/.git
+      when: not infra_repo.stat.exists
 
     - name: Runner setup summary
       debug:
