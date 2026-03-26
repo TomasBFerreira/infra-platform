@@ -150,6 +150,7 @@
                 AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD}
                 AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN}
                 AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED}
+                AUTHENTIK_HOST_BROWSER: ${AUTHENTIK_HOST_BROWSER}
               volumes:
                 - media:/media
                 - custom-templates:/templates
@@ -173,6 +174,7 @@
                 AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
                 AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
                 AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED}
+                AUTHENTIK_HOST: ${AUTHENTIK_HOST}
               volumes:
                 - /var/run/docker.sock:/var/run/docker.sock
                 - media:/media
@@ -482,45 +484,59 @@
     - name: Store Rancher OIDC credentials in env vault
       delegate_to: localhost
       become: no
-      ansible.builtin.shell:
-        cmd: |
-          vault kv put secret/authentik/rancher-oidc \
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
+            ;;
+          prod)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
+            ;;
+        esac
+        vault kv put secret/authentik/rancher-oidc \
+          client_id="{{ _rancher_client_id }}" \
+          client_secret="{{ _rancher_client_secret }}" \
+          sso_ip="{{ ansible_host }}" \
+          discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
+
+        # Also write to bootstrap vault so rancher pipeline re-runs can re-seed this secret
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+          vault kv put secret/authentik/{{ vault_env | default('dev') }}/rancher-oidc \
             client_id="{{ _rancher_client_id }}" \
             client_secret="{{ _rancher_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
             discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
-
-          VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
-          VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
-            vault kv put secret/authentik/{{ vault_env | default('dev') }}/rancher-oidc \
-              client_id="{{ _rancher_client_id }}" \
-              client_secret="{{ _rancher_client_secret }}" \
-              sso_ip="{{ ansible_host }}" \
-              discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
-      environment:
-        VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_TOKEN') }}"
       no_log: true
 
     - name: Store Vault OIDC credentials in env vault
       delegate_to: localhost
       become: no
-      ansible.builtin.shell:
-        cmd: |
-          vault kv put secret/authentik/vault-oidc \
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
+            ;;
+          prod)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
+            ;;
+        esac
+        vault kv put secret/authentik/vault-oidc \
+          client_id="{{ _vault_client_id }}" \
+          client_secret="{{ _vault_client_secret }}" \
+          sso_ip="{{ ansible_host }}" \
+          discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
+
+        # Also write to bootstrap vault so vault-ct redeploys can re-seed this secret
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+          vault kv put secret/authentik/{{ vault_env | default('dev') }}/vault-oidc \
             client_id="{{ _vault_client_id }}" \
             client_secret="{{ _vault_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
             discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
-
-          VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
-          VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
-            vault kv put secret/authentik/{{ vault_env | default('dev') }}/vault-oidc \
-              client_id="{{ _vault_client_id }}" \
-              client_secret="{{ _vault_client_secret }}" \
-              sso_ip="{{ ansible_host }}" \
-              discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
-      environment:
-        VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') if (vault_env | default('dev')) != 'prod' else lookup('env', 'VAULT_PROD_TOKEN') }}"
       no_log: true

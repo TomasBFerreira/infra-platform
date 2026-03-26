@@ -17,7 +17,7 @@ jobs:
           VAULT_ADDR:  ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          echo "=== AUTHENTIK LOGIN ==="
+          echo "=== AUTHENTIK LOGIN CREDENTIALS ==="
           echo "Username: akadmin"
           echo "Password: $(vault kv get -field=bootstrap_password secret/sso)"
 
