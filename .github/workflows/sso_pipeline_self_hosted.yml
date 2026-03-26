@@ -354,7 +354,10 @@ jobs:
             echo "WARNING: DB dump is empty — skipping vault store"
           else
             echo "Dump size: $(echo -n "$DUMP_B64" | wc -c) base64 chars — storing to vault..."
-            vault kv put secret/sso/${ENV}/db-backup dump="$DUMP_B64"
+            # Write to file to avoid "Argument list too long" when dump exceeds ARG_MAX
+            echo -n "$DUMP_B64" > /tmp/sso_db_dump.b64
+            vault kv put secret/sso/${ENV}/db-backup dump=@/tmp/sso_db_dump.b64
+            rm -f /tmp/sso_db_dump.b64
             echo "DB backup stored successfully."
           fi
 
