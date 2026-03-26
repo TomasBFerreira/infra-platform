@@ -42,9 +42,21 @@ jobs:
             sleep 20
           fi
 
-          echo "=== AUTHENTIK_HOST_BROWSER value on CT ==="
+          echo "=== AUTHENTIK_HOST_BROWSER in .env ==="
           ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
             "grep AUTHENTIK_HOST_BROWSER /opt/authentik/.env"
+
+          echo "=== AUTHENTIK_HOST_BROWSER in docker-compose.yml ==="
+          ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "grep -A1 AUTHENTIK_HOST /opt/authentik/docker-compose.yml || echo '(not found)'"
+
+          echo "=== AUTHENTIK_HOST_BROWSER in running container env ==="
+          ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker exec authentik-server env | grep AUTHENTIK_HOST || echo '(not set in container)'"
+
+          echo "=== discovery doc authorization_endpoint ==="
+          ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "curl -s http://localhost:9000/application/o/vault/.well-known/openid-configuration | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get(\"authorization_endpoint\",\"not found\"))'"
 
           echo "=== SERVER ERRORS/WARNINGS (last 200 lines, filtered) ==="
           ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
