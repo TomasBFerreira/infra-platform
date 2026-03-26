@@ -319,6 +319,14 @@ jobs:
             vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
             ip="${{ needs.resolve-slots.outputs.staging_ip }}"
 
+  configure-vault-oidc:
+    needs: [resolve-slots, flip-active]
+    if: needs.flip-active.result == 'success'
+    uses: ./.github/workflows/configure-vault-oidc.yml
+    with:
+      environment: ${{ needs.resolve-slots.outputs.environment }}
+    secrets: inherit
+
   backup-db:
     needs: [resolve-slots, flip-active]
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
@@ -356,11 +364,12 @@ jobs:
         run: rm -f /tmp/sso_backup_key
 
   teardown-old-active:
-    needs: [resolve-slots, flip-active, backup-db]
+    needs: [resolve-slots, flip-active, backup-db, configure-vault-oidc]
     if: >-
       needs.resolve-slots.outputs.first_run == 'false' &&
       needs.flip-active.result == 'success' &&
-      (needs.backup-db.result == 'success' || needs.backup-db.result == 'failure')
+      (needs.backup-db.result == 'success' || needs.backup-db.result == 'failure') &&
+      (needs.configure-vault-oidc.result == 'success' || needs.configure-vault-oidc.result == 'failure')
     runs-on: self-hosted
     env:
       ENV:         ${{ needs.resolve-slots.outputs.environment }}
