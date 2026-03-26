@@ -6,8 +6,7 @@
   vars:
     k3s_version: "v1.32.3+k3s1"
     helm_version: "v3.17.1"
-    cert_manager_version: "v1.17.1"
-    rancher_version: "2.10.3"
+    rancher_version: "2.11.3"
     rancher_hostname: "rancher-{{ runner_env }}.databaes.net"
     # runner_env is passed as an extra var from the pipeline.
 
@@ -31,6 +30,8 @@
           - unzip
           - open-iscsi
           - nfs-common
+          - iptables          # required by K3s for network policy / kube-proxy
+          - openssl            # for self-signed TLS cert generation
         state: present
 
     # ── Standard users ───────────────────────────────────────────────────────
@@ -62,13 +63,30 @@
           --write-kubeconfig-mode 644
       args:
         creates: /usr/local/bin/k3s
+      # The installer exits rc=1 when the k3s service doesn't start within the
+      # installer's own startup timeout. In Proxmox LXC the API server takes
+      # longer to come up than the installer expects. Ignore the exit code here
+      # and rely on the "Wait for K3s to be ready" task (40x15s) to determine
+      # whether K3s actually started successfully.
+      ignore_errors: true
 
     - name: Wait for K3s to be ready
-      shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
-      register: k3s_ready
-      retries: 20
-      delay: 10
-      until: k3s_ready.rc == 0
+      block:
+        - name: Wait for K3s API server
+          shell: k3s kubectl get nodes --no-headers | grep -q " Ready"
+          register: k3s_ready
+          retries: 40
+          delay: 15
+          until: k3s_ready.rc == 0
+      rescue:
+        - name: Capture K3s service logs for diagnostics
+          shell: journalctl -u k3s -n 60 --no-pager 2>&1 || echo "(no logs)"
+          register: k3s_logs
+          ignore_errors: true
+          changed_when: false
+        - name: Fail with K3s logs
+          fail:
+            msg: "K3s API server failed to start.\n{{ k3s_logs.stdout | default('(no logs captured)') }}"
 
     - name: Create .kube directory for appadm
       file:
@@ -108,35 +126,33 @@
       environment:
         DESIRED_VERSION: "{{ helm_version }}"
 
-    # ── cert-manager ─────────────────────────────────────────────────────────
-    # Required by Rancher for TLS certificate management.
+    # ── TLS (self-signed, no cert-manager) ────────────────────────────────────
+    # cert-manager webhook pods fail to become ready in Proxmox LXC due to
+    # cgroup/kernel constraints. Generate a self-signed certificate directly and
+    # install Rancher with ingress.tls.source=secret.
+    # Main Traefik proxies to K3s Traefik with insecureSkipVerify.
 
-    - name: Add cert-manager Helm repo
-      become_user: appadm
+    - name: Create cattle-system namespace
+      shell: k3s kubectl create namespace cattle-system --dry-run=client -o yaml | k3s kubectl apply -f -
+
+    - name: Generate self-signed TLS certificate for Rancher
       shell: |
-        helm repo add jetstack https://charts.jetstack.io
-        helm repo update
-      environment:
-        KUBECONFIG: /home/appadm/.kube/config
+        mkdir -p /tmp/rancher-tls
+        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+          -keyout /tmp/rancher-tls/tls.key \
+          -out /tmp/rancher-tls/tls.crt \
+          -subj "/CN={{ rancher_hostname }}/O=Rancher" \
+          -addext "subjectAltName=DNS:{{ rancher_hostname }},IP:{{ ansible_host }}"
+      args:
+        creates: /tmp/rancher-tls/tls.crt
 
-    - name: Install cert-manager CRDs
-      shell: k3s kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_version }}/cert-manager.crds.yaml
-
-    - name: Create cert-manager namespace
-      shell: k3s kubectl create namespace cert-manager --dry-run=client -o yaml | k3s kubectl apply -f -
-
-    - name: Install cert-manager
-      become_user: appadm
+    - name: Create TLS secret for Rancher ingress
       shell: |
-        helm upgrade --install cert-manager jetstack/cert-manager \
-          --namespace cert-manager \
-          --version "{{ cert_manager_version }}" \
-          --wait
-      environment:
-        KUBECONFIG: /home/appadm/.kube/config
-
-    - name: Wait for cert-manager to be ready
-      shell: k3s kubectl -n cert-manager rollout status deployment/cert-manager --timeout=120s
+        k3s kubectl create secret tls tls-rancher-ingress \
+          --cert=/tmp/rancher-tls/tls.crt \
+          --key=/tmp/rancher-tls/tls.key \
+          -n cattle-system \
+          --dry-run=client -o yaml | k3s kubectl apply -f -
 
     # ── Rancher ───────────────────────────────────────────────────────────────
 
@@ -148,27 +164,169 @@
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
-    - name: Create cattle-system namespace
-      shell: k3s kubectl create namespace cattle-system --dry-run=client -o yaml | k3s kubectl apply -f -
-
-    - name: Install Rancher
+    - name: Install Rancher (no-wait)
       become_user: appadm
       shell: |
         helm upgrade --install rancher rancher-stable/rancher \
           --namespace cattle-system \
           --version "{{ rancher_version }}" \
           --set hostname="{{ rancher_hostname }}" \
-          --set bootstrapPassword=admin \
-          --set ingress.tls.source=letsEncrypt \
-          --set letsEncrypt.email=admin@databaes.net \
-          --set letsEncrypt.ingress.class=traefik \
-          --wait \
-          --timeout 10m
+          --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
+          --set ingress.tls.source=secret
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
+    - name: Wait 60s for pods to schedule
+      shell: sleep 60
+
+    - name: Show pod status (diagnostic)
+      shell: k3s kubectl get pods -A -o wide
+      ignore_errors: true
+
+    - name: Describe cattle-system pods (diagnostic)
+      shell: k3s kubectl describe pods -n cattle-system
+      ignore_errors: true
+
     - name: Wait for Rancher rollout
-      shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=300s
+      block:
+        - name: Wait for rancher deployment
+          shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=600s
+      rescue:
+        - name: Capture final pod state on rollout failure
+          shell: |
+            echo "=== pods ==="
+            k3s kubectl get pods -A -o wide
+            echo "=== cattle-system events ==="
+            k3s kubectl get events -n cattle-system --sort-by='.lastTimestamp' | tail -20
+            echo "=== rancher pod logs ==="
+            k3s kubectl logs -n cattle-system -l app=rancher --tail=50 2>/dev/null || true
+          ignore_errors: true
+        - name: Fail
+          fail:
+            msg: "Rancher deployment did not become ready within 10 minutes"
+
+    # ── Rancher OIDC (Authentik) ──────────────────────────────────────────────
+    # Idempotent — skipped if OIDC credentials were not passed (SSO not yet deployed).
+
+    - name: Wait for Rancher API to be ready
+      # K3s Traefik routes by Host header — must use the correct hostname and HTTPS
+      # (HTTP port 80 gets a 301 redirect; Traefik returns 404 without a matching host).
+      shell: 'curl -sfk -H "Host: {{ rancher_hostname }}" https://localhost/v3-public/authProviders > /dev/null'
+      register: rancher_api_ready
+      retries: 30
+      delay: 10
+      until: rancher_api_ready.rc == 0
+      when:
+        - rancher_oidc_client_id is defined
+        - rancher_oidc_client_id | length > 0
+
+    - name: Configure Rancher OIDC via Authentik
+      shell: |
+        set -e
+        # K3s Traefik routes by Host header; use HTTPS with -k (self-signed cert).
+        # Use a function so the Host header is preserved correctly — string variable
+        # expansion strips shell quoting, causing the -H argument to break.
+        # --fail-with-body (curl 7.76+, Debian 12 ships 7.88): exits rc=22 on HTTP
+        # 4xx/5xx but STILL outputs the response body — so error details appear in
+        # Ansible stdout rather than being silently discarded by plain -f.
+        rancher_curl() { curl -sk --fail-with-body -H "Host: {{ rancher_hostname }}" "$@"; }
+
+        # Login without --fail-with-body so we always capture the full response body.
+        # Rancher 2.7+ sets mustChangePassword=true on the first bootstrap login, which
+        # restricts the token to the setpassword endpoint only — all other API calls
+        # return 401 (rc=22 with curl -f), causing the script to fail silently.
+        LOGIN_RESP=$(curl -sk -H "Host: {{ rancher_hostname }}" \
+          -X POST "https://localhost/v3-public/localProviders/local?action=login" \
+          -H "Content-Type: application/json" \
+          -d '{"username": "admin", "password": "{{ rancher_bootstrap_password }}", "ttl": 60000}')
+        echo "Login response: $(echo "$LOGIN_RESP" | python3 -c 'import sys,json; r=json.load(sys.stdin); print("type="+str(r.get("type")), "mustChangePassword="+str(r.get("mustChangePassword")))' 2>/dev/null || echo 'parse error — raw: '"$LOGIN_RESP")"
+
+        RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+        # If mustChangePassword=true, the token is restricted. Unlock it by confirming
+        # the password via setpassword before making any other API calls.
+        MUST_CHANGE=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('mustChangePassword', False))" 2>/dev/null || echo "False")
+        if [ "$MUST_CHANGE" = "True" ]; then
+          echo "mustChangePassword=True detected — unlocking account via setpassword..."
+          USER_ID=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['userId'])")
+          curl -sk -H "Host: {{ rancher_hostname }}" \
+            -X POST "https://localhost/v3/users/${USER_ID}?action=setpassword" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"newPassword\": \"{{ rancher_bootstrap_password }}\"}" > /dev/null
+          echo "Account unlocked for user $USER_ID."
+        fi
+
+        # Wait for Rancher admin RBAC to be ready.
+        # Rancher sets up the admin cluster role binding asynchronously after the
+        # pod becomes Ready — rollout status passes before this happens, so the
+        # token is valid but GET /v3/settings returns 403 until the controllers finish.
+        echo "Waiting for Rancher admin RBAC (polling GET /v3/settings/server-url)..."
+        for i in $(seq 1 30); do
+          HTTP_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H "Host: {{ rancher_hostname }}" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://localhost/v3/settings/server-url")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "RBAC ready after attempt $i (HTTP 200)"
+            break
+          fi
+          echo "Attempt $i: settings API returned HTTP $HTTP_STATUS — waiting 10s..."
+          sleep 10
+          if [ "$i" = "30" ]; then
+            echo "Timeout: Rancher admin RBAC not ready after 300s"
+            exit 1
+          fi
+        done
+
+        # Set the server URL. Capture response so --fail-with-body surfaces errors.
+        SERVER_URL_RESP=$(rancher_curl -X PUT "https://localhost/v3/settings/server-url" \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"value\": \"https://{{ rancher_hostname }}\"}") \
+          || { echo "server-url PUT failed: $SERVER_URL_RESP"; exit 1; }
+        echo "server-url set OK"
+
+        # Disable the first-login bootstrap wizard so it does not intercept
+        # OIDC logins. When value="" Rancher falls back to default="true",
+        # which forces admin password-change after any login (including OIDC),
+        # causing a localProviders/local 401 after a successful OIDC exchange.
+        rancher_curl -X PUT "https://localhost/v3/settings/first-login" \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"value": "false"}' > /dev/null \
+          || echo "WARNING: failed to set first-login=false"
+        echo "first-login set to false"
+
+        # GET the full genericOIDCConfig resource. /v3/authConfigs/genericoidc
+        # returns only the base authConfig schema — no OIDC-specific fields and
+        # PUT back to that endpoint fails with "invalid data for auth store update".
+        # The actual resource (with clientId, issuer, etc.) lives at the typed URL:
+        # /v3/genericOIDCConfigs/genericoidc.
+        CURRENT_OIDC=$(rancher_curl \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          "https://localhost/v3/genericOIDCConfigs/genericoidc") \
+          || { echo "OIDC GET failed: $CURRENT_OIDC"; exit 1; }
+        echo "genericoidc GET (redacted): $(echo $CURRENT_OIDC | jq -c 'del(.clientSecret,.links,.actions)')"
+
+        # Merge OIDC values. Use || true inside $() so set -e does not abort before
+        # we can echo the response body for diagnostics.
+        MERGED=$(echo $CURRENT_OIDC | jq \
+          --arg cid "{{ rancher_oidc_client_id }}" \
+          --arg csec "{{ rancher_oidc_client_secret }}" \
+          --arg iss "{{ rancher_oidc_discovery_url }}" \
+          --arg rurl "https://{{ rancher_hostname }}/verify-auth" \
+          '. + {enabled:true,clientId:$cid,clientSecret:$csec,issuer:$iss,scope:"openid profile email",rancherUrl:$rurl,accessMode:"unrestricted",allowedPrincipalIds:[],groupSearchEnabled:false}')
+        RESULT=$(rancher_curl -X PUT "https://localhost/v3/genericOIDCConfigs/genericoidc" \
+          -H "Authorization: Bearer $RANCHER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$MERGED" || true)
+        echo "OIDC PUT result: $(echo $RESULT | jq -c 'del(.clientSecret)' 2>/dev/null || echo "$RESULT")"
+        echo "OIDC enabled: $(echo $RESULT | jq -r '.enabled // "unknown"' 2>/dev/null)"
+      ignore_errors: true
+      when:
+        - rancher_oidc_client_id is defined
+        - rancher_oidc_client_id | length > 0
 
     - name: Rancher setup summary
       debug:

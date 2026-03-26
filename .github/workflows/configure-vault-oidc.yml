@@ -91,16 +91,18 @@ jobs:
           echo "::add-mask::$ROOT_TOKEN"
           echo "VAULT_TOKEN=$ROOT_TOKEN" >> $GITHUB_ENV
 
-      - name: Patch discovery_url to public domain
+      - name: Patch discovery_url to LAN IP
         if: steps.check-sso.outputs.skip != 'true'
         run: |
-          case "${{ inputs.environment }}" in
-            dev)  PUBLIC_SSO_URL="https://auth-dev.databaes.net" ;;
-            prod) PUBLIC_SSO_URL="https://auth.databaes.net" ;;
-          esac
+          # Vault validates the discovery_url on write by fetching it directly.
+          # The Vault CT cannot reach the public HTTPS URL (LAN → internet path).
+          # Use the LAN SSO IP instead — Vault fetches the discovery doc server-to-server.
+          # AUTHENTIK_HOST_BROWSER=https://... ensures the discovery doc returns
+          # https:// authorization_endpoint URLs, so the browser is still redirected
+          # to the public HTTPS address correctly.
           vault kv patch secret/authentik/vault-oidc \
-            discovery_url="${PUBLIC_SSO_URL}/application/o/vault/"
-          echo "Patched discovery_url → ${PUBLIC_SSO_URL}/application/o/vault/"
+            discovery_url="http://${SSO_IP}:9000/application/o/vault/"
+          echo "Patched discovery_url → http://${SSO_IP}:9000/application/o/vault/"
 
       - name: Configure Vault OIDC auth method
         if: steps.check-sso.outputs.skip != 'true'

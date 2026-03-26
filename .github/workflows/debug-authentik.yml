@@ -3,11 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       hotfix_host_browser:
-        description: 'Patch AUTHENTIK_HOST_BROWSER to https:// on running CT (yes/no)'
+        description: 'Patch AUTHENTIK_HOST_BROWSER to https:// on running CT'
         required: false
-        default: 'no'
+        default: 'false'
         type: choice
-        options: [yes, no]
+        options: ['true', 'false']
 jobs:
   debug:
     runs-on: [self-hosted, dev]
@@ -31,7 +31,7 @@ jobs:
           chmod 600 /tmp/sso_dbg_key
           SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
 
-          if [ "${{ inputs.hotfix_host_browser }}" = "yes" ]; then
+          if [ "${{ inputs.hotfix_host_browser }}" = "true" ]; then
             echo "=== APPLYING HOTFIX: AUTHENTIK_HOST_BROWSER → https ==="
             ssh -i /tmp/sso_dbg_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
               "sed -i 's|AUTHENTIK_HOST_BROWSER=http://|AUTHENTIK_HOST_BROWSER=https://|g' /opt/authentik/.env && grep AUTHENTIK_HOST_BROWSER /opt/authentik/.env"

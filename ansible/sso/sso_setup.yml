@@ -489,19 +489,17 @@
           dev)
             export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
             export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
-            PUBLIC_SSO_URL="https://auth-dev.databaes.net"
             ;;
           prod)
             export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
             export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
-            PUBLIC_SSO_URL="https://auth.databaes.net"
             ;;
         esac
         vault kv put secret/authentik/rancher-oidc \
           client_id="{{ _rancher_client_id }}" \
           client_secret="{{ _rancher_client_secret }}" \
           sso_ip="{{ ansible_host }}" \
-          discovery_url="${PUBLIC_SSO_URL}/application/o/rancher/"
+          discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
 
         # Also write to bootstrap vault so rancher pipeline re-runs can re-seed this secret
         VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
@@ -510,7 +508,7 @@
             client_id="{{ _rancher_client_id }}" \
             client_secret="{{ _rancher_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
-            discovery_url="${PUBLIC_SSO_URL}/application/o/rancher/"
+            discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
       no_log: true
 
     - name: Store Vault OIDC credentials in env vault
@@ -521,19 +519,17 @@
           dev)
             export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
             export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
-            PUBLIC_SSO_URL="https://auth-dev.databaes.net"
             ;;
           prod)
             export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
             export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
-            PUBLIC_SSO_URL="https://auth.databaes.net"
             ;;
         esac
         vault kv put secret/authentik/vault-oidc \
           client_id="{{ _vault_client_id }}" \
           client_secret="{{ _vault_client_secret }}" \
           sso_ip="{{ ansible_host }}" \
-          discovery_url="${PUBLIC_SSO_URL}/application/o/vault/"
+          discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
 
         # Also write to bootstrap vault so vault-ct redeploys can re-seed this secret
         VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
@@ -542,5 +538,5 @@
             client_id="{{ _vault_client_id }}" \
             client_secret="{{ _vault_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
-            discovery_url="${PUBLIC_SSO_URL}/application/o/vault/"
+            discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
       no_log: true

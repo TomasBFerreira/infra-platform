@@ -136,6 +136,49 @@ jobs:
             -no-color -input=false -auto-approve \
             -state=terraform.${ENV}.tfstate
 
+      - name: Patch LXC config for K3s (cgroup2 + apparmor)
+        env:
+          PVE_API:  ${{ needs.resolve-rancher.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          # K3s requires unrestricted cgroup2 access and no capability drops.
+          # These settings cannot be set via the Proxmox Terraform provider —
+          # they must be appended to /etc/pve/lxc/<vmid>.conf on the PVE host.
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} bash <<EOF
+            CONF=/etc/pve/lxc/${VMID}.conf
+            # telmate/proxmox v2.9 ignores unprivileged=false — force it here.
+            sed -i 's/^unprivileged: 1$/unprivileged: 0/' "\$CONF"
+            grep -q 'lxc.apparmor.profile' "\$CONF" || echo 'lxc.apparmor.profile: unconfined'  >> "\$CONF"
+            grep -q 'lxc.cap.drop'         "\$CONF" || echo 'lxc.cap.drop:'                      >> "\$CONF"
+            grep -q 'lxc.cgroup2.devices'  "\$CONF" || echo 'lxc.cgroup2.devices.allow: a'       >> "\$CONF"
+            grep -q 'lxc.mount.auto'        "\$CONF" || echo 'lxc.mount.auto: proc:rw sys:rw'    >> "\$CONF"
+            # K3s kubelet needs /dev/kmsg. Bind-mount it from the host.
+            grep -q 'lxc.mount.entry.*kmsg' "\$CONF" || echo 'lxc.mount.entry: /dev/kmsg dev/kmsg none bind,create=file 0 0' >> "\$CONF"
+            # Disable seccomp: Proxmox default seccomp profile blocks mount(2) syscall,
+            # which the kubelet needs to mount tmpfs for pod service account tokens.
+            grep -q 'lxc.seccomp.profile'  "\$CONF" || echo 'lxc.seccomp.profile:'               >> "\$CONF"
+            echo "LXC conf after patch:"
+            cat "\$CONF"
+            echo "Rebooting CT ${VMID}..."
+            pct reboot ${VMID}
+            sleep 35
+            # Proxmox stores unprivileged LXC files with UID offset 100000 (uid 0 inside
+            # maps to uid 100000 on host). After converting to privileged mode there is no
+            # UID remapping, so ALL rootfs files appear with the wrong UIDs.
+            # Critically: setuid binaries like /usr/bin/mount are owned by uid 100000 —
+            # when root calls them, EUID becomes 100000 (the binary owner), not 0.
+            # This causes "must be superuser to use mount" even when running as root.
+            # Fix: shift ALL files from uid/gid 100000 back to 0 across the entire rootfs.
+            echo "Fixing full rootfs UID ownership after privilege change (this may take ~30s)..."
+            pct exec ${VMID} -- bash -c \
+              "find / -xdev \( -uid 100000 -o -gid 100000 \) -exec chown 0:0 {} + 2>/dev/null; true"
+            echo "Ownership fix done."
+          EOF
+          echo "Waiting 10s for containers to settle..."
+          sleep 10
+
   ansible-rancher:
     needs: [resolve-rancher, terraform-rancher]
     runs-on: self-hosted
@@ -171,6 +214,36 @@ jobs:
           timeout 120 bash -c "until nc -z ${IP} 22; do sleep 5; done"
           echo "SSH is up"
 
+      - name: Ensure Rancher bootstrap password and fetch OIDC config
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          # Generate bootstrap password if not already set
+          if ! vault kv get -field=password secret/rancher/${ENV}/bootstrap > /dev/null 2>&1; then
+            PASS="$(openssl rand -base64 16 | tr -d '=')"
+            vault kv put secret/rancher/${ENV}/bootstrap password="$PASS"
+            echo "Generated new Rancher bootstrap password"
+          fi
+          RANCHER_BOOTSTRAP_PASSWORD="$(vault kv get -field=password secret/rancher/${ENV}/bootstrap)"
+          echo "::add-mask::$RANCHER_BOOTSTRAP_PASSWORD"
+          echo "RANCHER_BOOTSTRAP_PASSWORD=$RANCHER_BOOTSTRAP_PASSWORD" >> "$GITHUB_ENV"
+
+          # Fetch Rancher OIDC credentials from Authentik (written by SSO pipeline).
+          # Skip silently if SSO has not been deployed yet.
+          if vault kv get secret/authentik/${ENV}/rancher-oidc > /dev/null 2>&1; then
+            RANCHER_OIDC_CLIENT_ID="$(vault kv get -field=client_id secret/authentik/${ENV}/rancher-oidc)"
+            RANCHER_OIDC_CLIENT_SECRET="$(vault kv get -field=client_secret secret/authentik/${ENV}/rancher-oidc)"
+            RANCHER_OIDC_DISCOVERY_URL="$(vault kv get -field=discovery_url secret/authentik/${ENV}/rancher-oidc)"
+            echo "::add-mask::$RANCHER_OIDC_CLIENT_SECRET"
+            echo "RANCHER_OIDC_CLIENT_ID=$RANCHER_OIDC_CLIENT_ID"           >> "$GITHUB_ENV"
+            echo "RANCHER_OIDC_CLIENT_SECRET=$RANCHER_OIDC_CLIENT_SECRET"   >> "$GITHUB_ENV"
+            echo "RANCHER_OIDC_DISCOVERY_URL=$RANCHER_OIDC_DISCOVERY_URL"   >> "$GITHUB_ENV"
+            echo "SSO OIDC credentials found — OIDC will be configured"
+          else
+            echo "SSO OIDC credentials not found for ${ENV} — OIDC config will be skipped"
+          fi
+
       - name: Run Ansible playbook
         run: |
           ssh-keygen -R "${IP}" || true
@@ -182,6 +255,10 @@ jobs:
             -e "ansible_user=root" \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "runner_env=${ENV}" \
+            -e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}" \
+            ${RANCHER_OIDC_CLIENT_ID:+-e "rancher_oidc_client_id=${RANCHER_OIDC_CLIENT_ID}"} \
+            ${RANCHER_OIDC_CLIENT_SECRET:+-e "rancher_oidc_client_secret=${RANCHER_OIDC_CLIENT_SECRET}"} \
+            ${RANCHER_OIDC_DISCOVERY_URL:+-e "rancher_oidc_discovery_url=${RANCHER_OIDC_DISCOVERY_URL}"} \
             ansible/rancher/rancher_setup.yml
 
   save-rancher-state:
@@ -209,6 +286,34 @@ jobs:
       VMID: ${{ needs.resolve-rancher.outputs.vmid }}
       IP:   ${{ needs.resolve-rancher.outputs.ip }}
     steps:
+      - name: Collect failure logs from CT
+        env:
+          PVE_API:  ${{ needs.resolve-rancher.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          LOG_DIR="/app/infra-platform/logs/rancher-failures"
+          mkdir -p "$LOG_DIR"
+          LOG_FILE="$LOG_DIR/rancher-${ENV}-$(date -u +%Y%m%dT%H%M%SZ)-run${{ github.run_id }}.log"
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          {
+            echo "=== Rancher failure log: run ${{ github.run_id }}, env=${ENV}, vmid=${VMID} ==="
+            echo "=== $(date -u) ==="
+            echo ""
+            echo "--- kubectl get pods -A ---"
+            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+              "pct exec ${VMID} -- k3s kubectl get pods -A --no-headers 2>/dev/null || echo '(kubectl unavailable)'" 2>/dev/null || true
+            echo ""
+            echo "--- cattle-system pod descriptions ---"
+            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+              "pct exec ${VMID} -- k3s kubectl describe pods -n cattle-system 2>/dev/null | tail -80 || echo '(no cattle-system pods)'" 2>/dev/null || true
+            echo ""
+            echo "--- k3s journal (last 100 lines) ---"
+            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+              "pct exec ${VMID} -- journalctl -u k3s -n 100 --no-pager 2>/dev/null || echo '(k3s logs unavailable)'" 2>/dev/null || echo "(pct exec failed)"
+          } | tee "$LOG_FILE" || true
+          echo "Failure log saved to $LOG_FILE"
+
       - name: Checkout code
         uses: actions/checkout@v4
 

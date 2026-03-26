@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       node_number:
-        description: 'Worker node number (e.g. 2 for worker-node-02, VMID 112, IP .112)'
+        description: 'Worker node number (e.g. 1). Dev: VMID=211+N, IP=.211+N. Prod: VMID=111+N, IP=.111+N.'
         required: true
         type: string
       target_node:
@@ -43,12 +43,15 @@ jobs:
   resolve-node:
     runs-on: self-hosted
     outputs:
-      node_number:  ${{ steps.resolve.outputs.node_number }}
-      vmid:         ${{ steps.resolve.outputs.vmid }}
-      ip_address:   ${{ steps.resolve.outputs.ip_address }}
-      vm_hostname:  ${{ steps.resolve.outputs.vm_hostname }}
-      pve_api_url:  ${{ steps.resolve.outputs.pve_api_url }}
-      pve_node:     ${{ steps.resolve.outputs.pve_node }}
+      node_number:      ${{ steps.resolve.outputs.node_number }}
+      vmid:             ${{ steps.resolve.outputs.vmid }}
+      ip_address:       ${{ steps.resolve.outputs.ip_address }}
+      vm_hostname:      ${{ steps.resolve.outputs.vm_hostname }}
+      pve_api_url:      ${{ steps.resolve.outputs.pve_api_url }}
+      pve_node:         ${{ steps.resolve.outputs.pve_node }}
+      env:              ${{ steps.resolve.outputs.env }}
+      rancher_ip:       ${{ steps.resolve.outputs.rancher_ip }}
+      rancher_hostname: ${{ steps.resolve.outputs.rancher_hostname }}
     steps:
       - name: Resolve node parameters
         id: resolve
@@ -56,39 +59,56 @@ jobs:
           NODE_NUM="${{ github.event.inputs.node_number }}"
           TARGET_NODE="${{ github.event.inputs.target_node }}"
 
-          # Validate node_number is a positive integer and within valid IP range
+          # Validate node_number is a positive integer
           if ! echo "$NODE_NUM" | grep -qE '^[1-9][0-9]*$'; then
             echo "ERROR: node_number must be a positive integer, got: $NODE_NUM"
             exit 1
           fi
-          if [ "$((110 + NODE_NUM))" -gt 254 ]; then
-            echo "ERROR: node_number $NODE_NUM would produce VMID $((110 + NODE_NUM)) > 254 (invalid IP)"
-            exit 1
-          fi
 
-          VMID=$((110 + NODE_NUM))
-          IP_ADDRESS="192.168.50.${VMID}"
-          PADDED=$(printf '%02d' "$NODE_NUM")
-          VM_HOSTNAME="worker-node-${PADDED}"
-
+          # VMID/IP scheme: prod (betsy)=110+N (.111,.112,...), dev (benedict)=210+N (.211,.212,...),
+          # qa (vladimir)=310+N (.311,.312,...).  Each env gets its own address space.
           case "$TARGET_NODE" in
-            benedict) PVE_API_URL="https://192.168.50.4:8006/api2/json" ;;
-            betsy)    PVE_API_URL="https://192.168.50.2:8006/api2/json" ;;
-            vladimir) PVE_API_URL="https://192.168.50.4:8006/api2/json" ;;
+            benedict)
+              VMID_BASE=210; ENV=dev
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              RANCHER_IP="192.168.50.202"; RANCHER_HOSTNAME="rancher-dev.databaes.net"
+              ;;
+            betsy)
+              VMID_BASE=110; ENV=prod
+              PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              RANCHER_IP="192.168.50.102"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
+              ;;
+            vladimir)
+              VMID_BASE=310; ENV=qa
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              RANCHER_IP="192.168.50.302"; RANCHER_HOSTNAME="rancher-qa.databaes.net"
+              ;;
             *)
               echo "ERROR: unknown target_node: $TARGET_NODE"
               exit 1
               ;;
           esac
 
-          echo "node_number=$NODE_NUM"     >> "$GITHUB_OUTPUT"
-          echo "vmid=$VMID"               >> "$GITHUB_OUTPUT"
-          echo "ip_address=$IP_ADDRESS"   >> "$GITHUB_OUTPUT"
-          echo "vm_hostname=$VM_HOSTNAME" >> "$GITHUB_OUTPUT"
-          echo "pve_api_url=$PVE_API_URL" >> "$GITHUB_OUTPUT"
-          echo "pve_node=$TARGET_NODE"    >> "$GITHUB_OUTPUT"
+          VMID=$((VMID_BASE + NODE_NUM))
+          if [ "$VMID" -gt 254 ]; then
+            echo "ERROR: node_number $NODE_NUM would produce VMID $VMID > 254 (invalid IP) for env $ENV"
+            exit 1
+          fi
+          IP_ADDRESS="192.168.50.${VMID}"
+          PADDED=$(printf '%02d' "$NODE_NUM")
+          VM_HOSTNAME="worker-node-${PADDED}"
 
-          echo "Resolved: $VM_HOSTNAME — VMID $VMID — $IP_ADDRESS — $TARGET_NODE"
+          echo "node_number=$NODE_NUM"           >> "$GITHUB_OUTPUT"
+          echo "vmid=$VMID"                      >> "$GITHUB_OUTPUT"
+          echo "ip_address=$IP_ADDRESS"          >> "$GITHUB_OUTPUT"
+          echo "vm_hostname=$VM_HOSTNAME"        >> "$GITHUB_OUTPUT"
+          echo "pve_api_url=$PVE_API_URL"        >> "$GITHUB_OUTPUT"
+          echo "pve_node=$TARGET_NODE"           >> "$GITHUB_OUTPUT"
+          echo "env=$ENV"                        >> "$GITHUB_OUTPUT"
+          echo "rancher_ip=$RANCHER_IP"          >> "$GITHUB_OUTPUT"
+          echo "rancher_hostname=$RANCHER_HOSTNAME" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved: $VM_HOSTNAME ($ENV) — VMID $VMID — $IP_ADDRESS — $TARGET_NODE"
 
   terraform-node:
     needs: resolve-node
@@ -167,9 +187,11 @@ jobs:
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
-      VMID:        ${{ needs.resolve-node.outputs.vmid }}
-      IP_ADDRESS:  ${{ needs.resolve-node.outputs.ip_address }}
-      VM_HOSTNAME: ${{ needs.resolve-node.outputs.vm_hostname }}
+      VMID:         ${{ needs.resolve-node.outputs.vmid }}
+      IP_ADDRESS:   ${{ needs.resolve-node.outputs.ip_address }}
+      VM_HOSTNAME:  ${{ needs.resolve-node.outputs.vm_hostname }}
+      DEPLOY_ENV:   ${{ needs.resolve-node.outputs.env }}
+      RANCHER_IP:   ${{ needs.resolve-node.outputs.rancher_ip }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -185,6 +207,21 @@ jobs:
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
             | awk 'NF > 0' > /tmp/worker_node_key
           chmod 600 /tmp/worker_node_key
+
+      - name: Fetch Rancher bootstrap credentials
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          # Optional — skipped gracefully if Rancher has not been deployed yet.
+          RANCHER_PASS=$(vault kv get -field=password secret/rancher/${DEPLOY_ENV}/bootstrap 2>/dev/null || echo "")
+          if [ -n "$RANCHER_PASS" ]; then
+            echo "::add-mask::$RANCHER_PASS"
+            echo "RANCHER_BOOTSTRAP_PASSWORD=$RANCHER_PASS" >> $GITHUB_ENV
+            echo "Rancher credentials found — cluster will be registered with Rancher"
+          else
+            echo "No Rancher credentials found for env=${DEPLOY_ENV} — skipping Rancher registration"
+          fi
 
       - name: Wait for SSH to be ready
         run: |
@@ -202,6 +239,10 @@ jobs:
             -e "ansible_host=${IP_ADDRESS}" \
             -e "ansible_user=root" \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "vm_hostname=${VM_HOSTNAME}" \
+            -e "rancher_ip=${RANCHER_IP}" \
+            -e "rancher_hostname=${{ needs.resolve-node.outputs.rancher_hostname }}" \
+            ${RANCHER_BOOTSTRAP_PASSWORD:+-e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}"} \
             ansible/worker-node/worker-node_setup.yml
 
   register-node:

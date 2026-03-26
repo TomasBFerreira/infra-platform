@@ -20,6 +20,10 @@ on:
         type: choice
         options: [dev, prod, qa]
         default: dev
+      runner_ip:
+        description: 'Override runner LXC IP (optional — used if vault path secret/github-runner/<env>/state is missing)'
+        required: false
+        default: ''
 
 jobs:
   register:
@@ -60,7 +64,33 @@ jobs:
 
       - name: Resolve runner LXC IP
         run: |
-          RUNNER_IP=$(vault kv get -field=ip secret/github-runner/${{ inputs.env }}/state)
+          # Static fallback IPs per VMID scheme (VMID 101/201/301 → IP .101/.201/.301)
+          declare -A STATIC_IPS=([dev]="192.168.50.201" [prod]="192.168.50.101" [qa]="192.168.50.301")
+
+          # 1. Try vault path (may not be populated yet)
+          RUNNER_IP=$(vault kv get -field=ip secret/github-runner/${{ inputs.env }}/state 2>/dev/null || true)
+
+          # 2. Fall back to explicit workflow input
+          if [[ -z "${RUNNER_IP}" ]]; then
+            RUNNER_IP="${{ inputs.runner_ip }}"
+            if [[ -n "${RUNNER_IP}" ]]; then
+              echo "INFO: vault path not found — using runner_ip input: ${RUNNER_IP}"
+            fi
+          fi
+
+          # 3. Fall back to static known IP from VMID scheme
+          if [[ -z "${RUNNER_IP}" ]]; then
+            RUNNER_IP="${STATIC_IPS[${{ inputs.env }}]}"
+            if [[ -n "${RUNNER_IP}" ]]; then
+              echo "INFO: vault path and runner_ip input both missing — using static fallback IP: ${RUNNER_IP}"
+            fi
+          fi
+
+          if [[ -z "${RUNNER_IP}" ]]; then
+            echo "ERROR: could not resolve runner LXC IP for env=${{ inputs.env }}" >&2
+            exit 1
+          fi
+
           echo "RUNNER_IP=${RUNNER_IP}" >> $GITHUB_ENV
 
       - name: Run Ansible to register runner for repo

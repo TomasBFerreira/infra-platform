@@ -5,7 +5,7 @@
 
   vars:
     runner_version: "2.321.0"
-    runner_user: appadm
+    runner_user: root
     # github_repo and runner_env are passed as extra vars from the pipeline.
     # Format: github_repo=owner/repo  runner_env=dev|prod
     #
@@ -15,6 +15,17 @@
     runner_home: "/opt/github-runners/{{ repo_slug }}"
 
   tasks:
+    - name: Remove conflicting Docker apt source entries
+      # If Docker was installed via the official script (/etc/apt/keyrings/docker.asc),
+      # any stale line using our old keyring path causes apt update to fail.
+      shell: |
+        if [ -f /etc/apt/sources.list.d/docker.list ]; then
+          grep -v "docker-archive-keyring.gpg" /etc/apt/sources.list.d/docker.list \
+            > /tmp/docker.list.clean
+          mv /tmp/docker.list.clean /etc/apt/sources.list.d/docker.list
+        fi
+      changed_when: false
+
     - name: Update apt cache
       apt:
         update_cache: yes
@@ -35,6 +46,7 @@
           - python3-pip
           - python3-venv
           - python3-full
+          - ansible
         state: present
 
     # ── Vault CLI ────────────────────────────────────────────────────────────
@@ -58,6 +70,96 @@
         name: vault
         state: present
         update_cache: yes
+
+    # ── SSH key for Proxmox access ────────────────────────────────────────────
+    # Pipeline pre-flight steps SSH to Proxmox (192.168.50.x) as root to run
+    # pct commands. The runner root account needs a key authorized on Proxmox.
+
+    - name: Fetch Proxmox access SSH private key from vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+          | python3 -c "
+        import sys, textwrap
+        raw = sys.stdin.read().strip().replace('\r', '')
+        B = '-----BEGIN OPENSSH PRIVATE KEY-----'
+        E = '-----END OPENSSH PRIVATE KEY-----'
+        body = raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t','')
+        print(B); print(textwrap.fill(body, width=70)); print(E)
+        "
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+      register: proxmox_ssh_privkey
+      no_log: true
+
+    - name: Install Proxmox access SSH private key for root
+      copy:
+        content: "{{ proxmox_ssh_privkey.stdout }}\n"
+        dest: /root/.ssh/id_ed25519
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Fetch Proxmox access SSH public key from vault
+      delegate_to: localhost
+      become: no
+      shell: vault kv get -field=public_key secret/ssh_keys/github_runner_proxmox_access
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+      register: proxmox_ssh_pubkey
+
+    - name: Install Proxmox access SSH public key for root
+      copy:
+        content: "{{ proxmox_ssh_pubkey.stdout }}\n"
+        dest: /root/.ssh/id_ed25519.pub
+        owner: root
+        group: root
+        mode: '0644'
+
+    # ── SSH access for register-runner.yml ───────────────────────────────────
+    # The register-runner.yml workflow SSHs into this LXC as root using the
+    # github_runner_worker key to deploy additional runner registrations.
+    # The public key must be in root's authorized_keys for that to work.
+
+    - name: Fetch github_runner_worker public key from vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        PRIVATE_KEY=$(vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+          | python3 -c "
+        import sys, textwrap
+        raw = sys.stdin.read().strip().replace('\r', '')
+        B = '-----BEGIN OPENSSH PRIVATE KEY-----'
+        E = '-----END OPENSSH PRIVATE KEY-----'
+        body = raw[raw.find(B)+len(B):raw.find(E)].replace(' ', '').replace('\n', '').replace('\t', '')
+        print(B); print(textwrap.fill(body, width=70)); print(E)
+        ")
+        echo "$PRIVATE_KEY" > /tmp/runner_worker_key
+        chmod 600 /tmp/runner_worker_key
+        ssh-keygen -y -f /tmp/runner_worker_key
+        rm -f /tmp/runner_worker_key
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+      register: runner_worker_pubkey
+      no_log: true
+
+    - name: Ensure root .ssh directory exists
+      file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Add github_runner_worker public key to root authorized_keys
+      authorized_key:
+        user: root
+        key: "{{ runner_worker_pubkey.stdout }}"
+        state: present
 
     # ── Standard users ───────────────────────────────────────────────────────
     # appadm  — service/app owner (runs the runner process, owns all files)
@@ -89,18 +191,26 @@
     # Required for container-based workflow steps and the run-terraform.sh
     # docker-compose wrapper used by all existing pipelines.
 
+    - name: Check if Docker is already installed
+      command: docker --version
+      register: docker_installed
+      ignore_errors: yes
+      changed_when: false
+
     - name: Add Docker GPG key
       shell: |
         curl -fsSL https://download.docker.com/linux/debian/gpg \
           | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
       args:
         creates: /usr/share/keyrings/docker-archive-keyring.gpg
+      when: docker_installed.rc != 0
 
     - name: Add Docker apt repository
       apt_repository:
         repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
         state: present
         filename: docker
+      when: docker_installed.rc != 0
 
     - name: Install Docker
       apt:
@@ -111,6 +221,7 @@
           - docker-compose-plugin
         state: present
         update_cache: yes
+      when: docker_installed.rc != 0
 
     - name: Add appadm to docker group
       user:
@@ -241,6 +352,19 @@
       shell: "{{ runner_home }}/svc.sh start"
       args:
         chdir: "{{ runner_home }}"
+
+    # ── Persistent working directory ─────────────────────────────────────────
+    # Pipelines hardcode "cd /app/infra-platform" instead of using
+    # $GITHUB_WORKSPACE. This persistent clone provides that path and also
+    # stores Terraform state files between pipeline runs.
+
+    - name: Clone infra-platform repo to /app/infra-platform
+      git:
+        repo: "https://github.com/TomasBFerreira/infra-platform.git"
+        dest: /app/infra-platform
+        update: no
+      args:
+        creates: /app/infra-platform/.git
 
     - name: Runner setup summary
       debug:

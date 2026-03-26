@@ -1,0 +1,61 @@
+name: Fix Runner Authorized Keys
+
+# One-off workflow to add the github_runner_worker public key to
+# /root/.ssh/authorized_keys on the target runner LXC so that
+# register-runner.yml can SSH in successfully.
+#
+# Usage:
+#   gh workflow run fix-runner-authorized-keys.yml --field env=dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Runner environment to fix'
+        type: choice
+        options: [dev, prod, qa]
+        default: dev
+
+jobs:
+  fix-authorized-keys:
+    runs-on: [self-hosted, "${{ inputs.env }}"]
+    env:
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+
+    steps:
+      - name: Add github_runner_worker public key to authorized_keys
+        run: |
+          # Derive public key from the private key stored in vault
+          PRIVATE_KEY=$(vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+            | python3 -c "
+          import sys, textwrap
+          raw = sys.stdin.read().strip().replace('\r', '')
+          B = '-----BEGIN OPENSSH PRIVATE KEY-----'
+          E = '-----END OPENSSH PRIVATE KEY-----'
+          body = raw[raw.find(B)+len(B):raw.find(E)].replace(' ', '').replace('\n', '').replace('\t', '')
+          print(B); print(textwrap.fill(body, width=70)); print(E)
+          ")
+
+          # Write to temp file, extract public key, then add to authorized_keys
+          echo "$PRIVATE_KEY" > /tmp/runner_worker_key
+          chmod 600 /tmp/runner_worker_key
+          PUBLIC_KEY=$(ssh-keygen -y -f /tmp/runner_worker_key)
+          rm -f /tmp/runner_worker_key
+
+          # Ensure .ssh dir and authorized_keys exist with correct permissions
+          mkdir -p /root/.ssh
+          chmod 700 /root/.ssh
+          touch /root/.ssh/authorized_keys
+          chmod 600 /root/.ssh/authorized_keys
+
+          # Add key if not already present
+          if grep -qF "$PUBLIC_KEY" /root/.ssh/authorized_keys 2>/dev/null; then
+            echo "Public key already in authorized_keys — nothing to do."
+          else
+            echo "$PUBLIC_KEY" >> /root/.ssh/authorized_keys
+            echo "Public key added to /root/.ssh/authorized_keys."
+          fi
+
+          echo "Current authorized_keys:"
+          cat /root/.ssh/authorized_keys

@@ -221,6 +221,25 @@ jobs:
       VMID: ${{ needs.resolve-runner.outputs.vmid }}
       IP:   ${{ needs.resolve-runner.outputs.ip }}
     steps:
+      - name: Collect failure logs from CT
+        env:
+          PVE_API:  ${{ needs.resolve-runner.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          LOG_DIR="/app/infra-platform/logs/github-runner-failures"
+          mkdir -p "$LOG_DIR"
+          LOG_FILE="$LOG_DIR/github-runner-${ENV}-$(date -u +%Y%m%dT%H%M%SZ)-run${{ github.run_id }}.log"
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          {
+            echo "=== github-runner failure log: run ${{ github.run_id }}, env=${ENV}, vmid=${VMID} ==="
+            echo "=== $(date -u) ==="
+            echo "--- system journal (last 100 lines) ---"
+            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+              "pct exec ${VMID} -- journalctl -n 100 --no-pager 2>/dev/null || echo '(journal unavailable)'" 2>/dev/null || echo "(pct exec failed)"
+          } | tee "$LOG_FILE" || true
+          echo "Failure log saved to $LOG_FILE"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
