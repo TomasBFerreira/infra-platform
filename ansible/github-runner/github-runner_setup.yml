@@ -320,7 +320,7 @@
       become_user: "{{ runner_user }}"
       shell: |
         if [ -f "{{ runner_home }}/config.sh" ] && [ -f "{{ runner_home }}/.runner" ]; then
-          {{ runner_home }}/config.sh remove \
+          RUNNER_ALLOW_RUNASROOT=1 {{ runner_home }}/config.sh remove \
             --token "{{ runner_reg_token.json.token }}" 2>/dev/null || true
         fi
       args:
@@ -331,7 +331,7 @@
     - name: Configure runner
       become_user: "{{ runner_user }}"
       shell: |
-        {{ runner_home }}/config.sh \
+        RUNNER_ALLOW_RUNASROOT=1 {{ runner_home }}/config.sh \
           --url "https://github.com/{{ github_repo }}" \
           --token "{{ runner_reg_token.json.token }}" \
           --name "github-runner-{{ runner_env }}" \
@@ -344,7 +344,7 @@
       no_log: true
 
     - name: Install runner as systemd service
-      shell: "{{ runner_home }}/svc.sh install {{ runner_user }}"
+      shell: "RUNNER_ALLOW_RUNASROOT=1 {{ runner_home }}/svc.sh install {{ runner_user }}"
       args:
         chdir: "{{ runner_home }}"
 
