@@ -33,31 +33,18 @@ jobs:
             dev)
               RANCHER_IP="192.168.50.202"
               RANCHER_HOSTNAME="rancher-dev.databaes.net"
-              VAULT_ENV_ADDR="${{ secrets.VAULT_ADDR }}"
-              VAULT_ENV_TOKEN="${{ secrets.VAULT_TOKEN }}"
               ;;
             prod)
               RANCHER_IP="192.168.50.102"
               RANCHER_HOSTNAME="rancher.databaes.net"
-              VAULT_ENV_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
-              VAULT_ENV_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
               ;;
           esac
 
-          # SSH key for Rancher LXC
-          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
-            | awk 'NF > 0' > /tmp/rancher_key
-          chmod 600 /tmp/rancher_key
-
-          # Bootstrap password and OIDC credentials from env vault
-          RANCHER_PASSWORD=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_TOKEN="$VAULT_ENV_TOKEN" \
-            vault kv get -field=password secret/rancher/${ENV}/bootstrap)
-          OIDC_CLIENT_ID=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_TOKEN="$VAULT_ENV_TOKEN" \
-            vault kv get -field=client_id secret/authentik/${ENV}/rancher-oidc)
-          OIDC_CLIENT_SECRET=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_TOKEN="$VAULT_ENV_TOKEN" \
-            vault kv get -field=client_secret secret/authentik/${ENV}/rancher-oidc)
-          OIDC_DISCOVERY_URL=$(VAULT_ADDR="$VAULT_ENV_ADDR" VAULT_TOKEN="$VAULT_ENV_TOKEN" \
-            vault kv get -field=discovery_url secret/authentik/${ENV}/rancher-oidc)
+          # All Rancher secrets live in the bootstrap vault (same as the pipeline)
+          RANCHER_PASSWORD=$(vault kv get -field=password secret/rancher/${ENV}/bootstrap)
+          OIDC_CLIENT_ID=$(vault kv get -field=client_id secret/authentik/${ENV}/rancher-oidc)
+          OIDC_CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/${ENV}/rancher-oidc)
+          OIDC_DISCOVERY_URL=$(vault kv get -field=discovery_url secret/authentik/${ENV}/rancher-oidc)
 
           echo "::add-mask::$RANCHER_PASSWORD"
           echo "::add-mask::$OIDC_CLIENT_SECRET"
@@ -174,4 +161,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: rm -f /tmp/rancher_key
+        run: echo "done"
