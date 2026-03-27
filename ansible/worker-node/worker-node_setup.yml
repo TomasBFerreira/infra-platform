@@ -179,13 +179,47 @@
               set -e
               # All variables injected via environment by the calling task.
 
+              # Wait for the Rancher API to be reachable before attempting login.
+              # curl -sk can return an empty body on connection refused/timeout,
+              # which causes a silent JSONDecodeError further down. Fail early
+              # with a clear message instead.
+              echo "Waiting for Rancher API at $RANCHER_IP ($RANCHER_HOST)..."
+              for i in $(seq 1 24); do
+                HTTP_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' \
+                  -H "Host: $RANCHER_HOST" \
+                  "https://$RANCHER_IP/v3-public/authProviders" 2>/dev/null || echo "000")
+                if [ "$HTTP_STATUS" = "200" ]; then
+                  echo "Rancher API ready (attempt $i)"
+                  break
+                fi
+                echo "Attempt $i/24: HTTP $HTTP_STATUS — retrying in 5s..."
+                sleep 5
+                if [ "$i" = "24" ]; then
+                  echo "ERROR: Rancher API at $RANCHER_IP ($RANCHER_HOST) not reachable after 120s (last HTTP $HTTP_STATUS)"
+                  exit 1
+                fi
+              done
+
               LOGIN_RESP=$(curl -sk -H "Host: $RANCHER_HOST" \
                 -X POST "https://$RANCHER_IP/v3-public/localProviders/local?action=login" \
                 -H 'Content-Type: application/json' \
                 -d '{"username":"admin","password":"'"$RANCHER_PASS"'","ttl":60000}')
+
+              if [ -z "$LOGIN_RESP" ]; then
+                echo "ERROR: Rancher login returned an empty response from https://$RANCHER_IP (Host: $RANCHER_HOST)"
+                exit 1
+              fi
+              echo "Login response: $(echo "$LOGIN_RESP" | python3 -c \
+                'import sys,json; r=json.load(sys.stdin); print("type="+str(r.get("type")), "mustChangePassword="+str(r.get("mustChangePassword")))' \
+                2>/dev/null || echo "parse error — raw: $LOGIN_RESP")"
+
               RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c '
               import sys, json
-              print(json.load(sys.stdin)["token"])
+              d = json.load(sys.stdin)
+              if "token" not in d:
+                  print("ERROR: no token in login response:", d, file=sys.stderr)
+                  sys.exit(1)
+              print(d["token"])
               ')
 
               MUST_CHANGE=$(echo "$LOGIN_RESP" | python3 -c '
