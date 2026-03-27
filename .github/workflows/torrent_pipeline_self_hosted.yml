@@ -353,10 +353,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git add config/dynamic/services.yml
-          git stash
-          git pull --rebase origin main
-          git stash pop
-          git add config/dynamic/services.yml
           if git diff --cached --quiet; then
             echo "Route already registered — nothing to commit"
           else
