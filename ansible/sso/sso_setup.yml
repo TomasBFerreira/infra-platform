@@ -511,6 +511,35 @@
             discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
       no_log: true
 
+    # The Rancher OIDC provider uses sub_mode=user_id, so Rancher principal names are
+    # genericoidc_user://<authentik-pk>. Query Authentik for all active internal superusers
+    # and store them as global admin bindings so every Rancher redeploy re-applies them.
+    - name: Fetch Authentik superusers for Rancher RBAC
+      uri:
+        url: "http://localhost:9000/api/v3/core/users/?is_superuser=true&is_active=true&type=internal"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: authentik_admins
+
+    - name: Store Rancher RBAC bindings in bootstrap Vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        GLOBAL_BINDINGS=$(python3 -c "import json; pks={{ authentik_admins.json.results | map(attribute='pk') | list | to_json }}; print(json.dumps([{'userPrincipalName':'genericoidc_user://'+str(p),'globalRoleId':'admin'} for p in pks]))")
+        echo "Superuser PKs: {{ authentik_admins.json.results | map(attribute='pk') | list | join(', ') }}"
+        # Patch if secret exists, otherwise create it — preserves any manually set cluster_bindings.
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+          vault kv patch secret/rancher/{{ vault_env | default('dev') }}/rbac \
+            global_bindings="$GLOBAL_BINDINGS" 2>/dev/null \
+        || \
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+          vault kv put secret/rancher/{{ vault_env | default('dev') }}/rbac \
+            global_bindings="$GLOBAL_BINDINGS" \
+            cluster_bindings='[]'
+        echo "Rancher RBAC bindings stored ({{ authentik_admins.json.results | length }} admin user(s))"
+
     - name: Store Vault OIDC credentials in env vault
       delegate_to: localhost
       become: no
