@@ -142,6 +142,13 @@
         state: started
 
     # ── Create admin user (idempotent) ───────────────────────────────────────
+    # BoltDB allows only one writer at a time — stop the service while we
+    # run CLI user commands, then restart.
+
+    - name: Stop Semaphore to release BoltDB lock
+      systemd:
+        name: semaphore
+        state: stopped
 
     - name: Check if admin user already exists
       command: >
@@ -163,6 +170,11 @@
       become: yes
       become_user: appadm
       when: admin_check.rc != 0
+
+    - name: Start Semaphore after user setup
+      systemd:
+        name: semaphore
+        state: started
 
     # ── Wait for service to be healthy ───────────────────────────────────────
 
