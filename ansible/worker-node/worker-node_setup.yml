@@ -300,6 +300,27 @@
             VM_HOST: "{{ vm_hostname }}"
           command: /tmp/register_rancher.sh
 
+        - name: Wait for cattle-cluster-agent deployment to be created
+          command: k3s kubectl get deployment cattle-cluster-agent -n cattle-system
+          register: agent_check
+          retries: 24
+          delay: 5
+          until: agent_check.rc == 0
+
+        # CoreDNS NodeHosts entries are not served to pods in k3s v1.34+.
+        # hostAliases injects directly into /etc/hosts of the agent pod,
+        # ensuring it reaches the Rancher LXC and not Cloudflare's public IP.
+        - name: Patch cattle-cluster-agent with hostAliases for Rancher
+          shell: |
+            k3s kubectl patch deployment cattle-cluster-agent -n cattle-system \
+              --type=strategic \
+              -p='{"spec":{"template":{"spec":{"hostAliases":[{"ip":"{{ rancher_ip }}","hostnames":["{{ rancher_hostname }}"]}]}}}}'
+
+        - name: Wait for cattle-cluster-agent rollout
+          command: >
+            k3s kubectl rollout status deployment/cattle-cluster-agent
+            -n cattle-system --timeout=120s
+
         - name: Remove Rancher registration script
           file:
             path: /tmp/register_rancher.sh
