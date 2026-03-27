@@ -48,6 +48,56 @@ jobs:
           echo "::add-mask::$ROOT_TOKEN"
           echo "root_token=$ROOT_TOKEN" >> $GITHUB_OUTPUT
 
+      - name: Patch Authentik Vault provider — add bootstrap vault redirect URI
+        if: steps.check-sso.outputs.skip != 'true'
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
+
+          # Get a fresh Authentik API token via docker exec
+          FRESH_TOKEN=$(ssh -o StrictHostKeyChecking=no \
+            $(echo "${{ secrets.PVE_USER }}" | cut -d'@' -f1)@"$SSO_IP" \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
+
+          if [ -z "$FRESH_TOKEN" ]; then
+            echo "Could not get Authentik token — skipping redirect_uri patch"
+            exit 0
+          fi
+          echo "::add-mask::$FRESH_TOKEN"
+
+          # Find the Vault OAuth2 provider
+          PROVIDER_PK=$(curl -s "http://${SSO_IP}:9000/api/v3/providers/oauth2/" \
+            -H "Authorization: Bearer $FRESH_TOKEN" \
+            | python3 -c "import sys,json; rs=[r for r in json.load(sys.stdin)['results'] if 'vault' in r['name'].lower()]; print(rs[0]['pk'] if rs else '')" 2>/dev/null || echo "")
+
+          if [ -z "$PROVIDER_PK" ]; then
+            echo "Vault provider not found in Authentik — skipping"
+            exit 0
+          fi
+          echo "Patching Vault provider pk=$PROVIDER_PK"
+
+          curl -s -X PATCH \
+            "http://${SSO_IP}:9000/api/v3/providers/oauth2/${PROVIDER_PK}/" \
+            -H "Authorization: Bearer $FRESH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "redirect_uris": [
+                {"url": "http://192.168.50.200:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "https://vault-dev.databaes.net/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "https://vault.databaes.net/ui/vault/auth/oidc/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://localhost:8250/oidc/callback", "matching_mode": "strict"},
+                {"url": "http://localhost:8200/oidc/callback", "matching_mode": "strict"}
+              ]
+            }' | python3 -c "import sys,json; r=json.load(sys.stdin); print('Patched OK — pk:', r.get('pk'))" \
+            || echo "PATCH failed"
+
       - name: Configure OIDC auth method on bootstrap vault
         if: steps.check-sso.outputs.skip != 'true'
         env:
