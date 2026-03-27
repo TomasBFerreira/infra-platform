@@ -170,6 +170,84 @@ jobs:
           echo "OIDC issuer: $(echo "$RESULT" | python3 -c \
             "import sys,json; print(json.load(sys.stdin).get('issuer', 'unknown'))" 2>/dev/null)"
 
+      - name: Grant Authentik admin user global admin role
+        run: |
+          # When an OIDC user logs into Rancher for the first time, Rancher creates
+          # a local user object for them — but with no roles. The cluster was created
+          # by the local bootstrap admin, so OIDC users can't see it until they're
+          # granted the admin GlobalRole.
+          #
+          # This step finds any Rancher users whose principalIds contain 'genericoidc'
+          # and grants them the built-in 'admin' GlobalRole. Idempotent — skipped if
+          # the binding already exists. If no OIDC users have logged in yet, it warns
+          # and exits cleanly (log in once, then re-run this workflow).
+
+          rancher_curl() {
+            curl -sk --fail-with-body -H "Host: ${RANCHER_HOSTNAME}" "$@"
+          }
+
+          # Re-login (token from previous step is not available across steps)
+          LOGIN_RESP=$(curl -sk -H "Host: ${RANCHER_HOSTNAME}" \
+            -X POST "https://${RANCHER_IP}/v3-public/localProviders/local?action=login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"admin\", \"password\": \"${RANCHER_PASSWORD}\", \"ttl\": 60000}")
+          RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null)
+          if [ -z "$RANCHER_TOKEN" ]; then
+            echo "ERROR: Could not log in. Response: $LOGIN_RESP"
+            exit 1
+          fi
+
+          echo "=== OIDC users in Rancher ==="
+          USERS=$(rancher_curl \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://${RANCHER_IP}/v3/users")
+
+          OIDC_USERS=$(echo "$USERS" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          oidc = [(u['id'], u.get('username',''), u.get('principalIds',[])) 
+                  for u in data.get('data', [])
+                  if any('genericoidc' in p for p in u.get('principalIds', []))]
+          for uid, uname, pids in oidc:
+              print(f'{uid}:{uname}')
+          " 2>/dev/null)
+
+          if [ -z "$OIDC_USERS" ]; then
+            echo "WARNING: No OIDC users have logged into Rancher yet."
+            echo "Log in via Authentik at https://${RANCHER_HOSTNAME} once, then re-run this workflow."
+            exit 0
+          fi
+
+          echo "Found OIDC users: $OIDC_USERS"
+
+          # Fetch existing admin GlobalRoleBindings so we don't duplicate
+          EXISTING_BINDINGS=$(rancher_curl \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://${RANCHER_IP}/v3/globalrolebindings?globalRoleId=admin" \
+            | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(' '.join(b.get('userId','') for b in data.get('data',[])))
+          " 2>/dev/null)
+
+          echo "$OIDC_USERS" | while IFS=: read -r USER_ID USERNAME; do
+            if echo "$EXISTING_BINDINGS" | grep -qw "$USER_ID"; then
+              echo "User $USERNAME ($USER_ID) already has admin GlobalRoleBinding — skipping"
+            else
+              echo "Granting admin GlobalRole to $USERNAME ($USER_ID)..."
+              RESULT=$(rancher_curl \
+                -X POST "https://${RANCHER_IP}/v3/globalrolebindings" \
+                -H "Authorization: Bearer $RANCHER_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"globalRoleBinding\",\"globalRoleId\":\"admin\",\"userId\":\"$USER_ID\"}" \
+                || true)
+              BINDING_ID=$(echo "$RESULT" | python3 -c \
+                "import sys,json; print(json.load(sys.stdin).get('id','error'))" 2>/dev/null)
+              echo "GlobalRoleBinding created: $BINDING_ID for $USERNAME"
+            fi
+          done
+
       - name: Cleanup
         if: always()
         run: echo "done"
