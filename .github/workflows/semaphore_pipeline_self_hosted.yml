@@ -198,15 +198,18 @@ jobs:
             | awk 'NF > 0' > /tmp/semaphore_worker_key
           chmod 600 /tmp/semaphore_worker_key
 
-      - name: Resolve env vault credentials
-        id: env-vault
+      - name: Fetch Semaphore secrets from bootstrap vault
+        id: semaphore-secrets
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
-          case "$ENV" in
-            dev)
-              echo "vault_addr=${{ secrets.VAULT_ADDR }}"    >> "$GITHUB_OUTPUT"
-              echo "vault_token=${{ secrets.VAULT_TOKEN }}"  >> "$GITHUB_OUTPUT"
-              ;;
-          esac
+          ADMIN_PASSWORD=$(vault kv get -field=admin_password secret/semaphore/${ENV}/config)
+          COOKIE_HASH=$(vault kv get -field=cookie_hash secret/semaphore/${ENV}/config)
+          COOKIE_ENCRYPTION=$(vault kv get -field=cookie_encryption secret/semaphore/${ENV}/config)
+          echo "admin_password=$ADMIN_PASSWORD"       >> "$GITHUB_OUTPUT"
+          echo "cookie_hash=$COOKIE_HASH"             >> "$GITHUB_OUTPUT"
+          echo "cookie_encryption=$COOKIE_ENCRYPTION" >> "$GITHUB_OUTPUT"
 
       - name: Wait for SSH to be ready
         run: |
@@ -225,8 +228,9 @@ jobs:
             -e "ansible_user=root" \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "vault_env=${ENV}" \
-            -e "vault_addr=${{ steps.env-vault.outputs.vault_addr }}" \
-            -e "vault_token=${{ steps.env-vault.outputs.vault_token }}" \
+            -e "semaphore_admin_password=${{ steps.semaphore-secrets.outputs.admin_password }}" \
+            -e "semaphore_cookie_hash=${{ steps.semaphore-secrets.outputs.cookie_hash }}" \
+            -e "semaphore_cookie_encryption=${{ steps.semaphore-secrets.outputs.cookie_encryption }}" \
             ansible/semaphore/semaphore_setup.yml
 
   flip-active:

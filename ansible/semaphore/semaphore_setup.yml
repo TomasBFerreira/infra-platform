@@ -37,24 +37,10 @@
         append: yes
         state: present
 
-    # ── Fetch secrets from env vault ─────────────────────────────────────────
-
-    - name: Fetch Semaphore secrets from env vault
-      uri:
-        url: "http://{{ vault_addr }}:8200/v1/secret/data/semaphore/{{ vault_env }}/config"
-        headers:
-          X-Vault-Token: "{{ vault_token }}"
-        method: GET
-        status_code: 200
-      register: vault_semaphore
-
-    - name: Set semaphore secret facts
-      set_fact:
-        semaphore_admin_password:    "{{ vault_semaphore.json.data.data.admin_password }}"
-        semaphore_cookie_hash:       "{{ vault_semaphore.json.data.data.cookie_hash }}"
-        semaphore_cookie_encryption: "{{ vault_semaphore.json.data.data.cookie_encryption }}"
-
     # ── Install Semaphore ────────────────────────────────────────────────────
+    # Secrets (semaphore_admin_password, semaphore_cookie_hash,
+    # semaphore_cookie_encryption) are fetched by the pipeline runner from
+    # the bootstrap vault and passed in as extra vars — no in-playbook vault call needed.
 
     - name: Get latest Semaphore release version
       uri:
