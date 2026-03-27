@@ -441,6 +441,32 @@
       when: vault_admin_token != ''
       no_log: true
 
+    - name: Seed env vault — semaphore config
+      delegate_to: localhost
+      become: no
+      shell: |
+        ADMIN_PASSWORD=$(VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+                         VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                         vault kv get -field=admin_password secret/semaphore/{{ vault_env | default('dev') }}/config 2>/dev/null || true)
+        if [ -z "$ADMIN_PASSWORD" ]; then
+          echo "SKIP: secret/semaphore/{{ vault_env | default('dev') }}/config not found in bootstrap vault (seed manually first)"
+          exit 0
+        fi
+        COOKIE_HASH=$(VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+                      VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                      vault kv get -field=cookie_hash secret/semaphore/{{ vault_env | default('dev') }}/config)
+        COOKIE_ENC=$(VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+                     VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                     vault kv get -field=cookie_encryption secret/semaphore/{{ vault_env | default('dev') }}/config)
+        VAULT_ADDR="http://{{ vault_ct_ip }}:8200" VAULT_TOKEN="{{ vault_admin_token }}" \
+          vault kv put secret/semaphore/{{ vault_env | default('dev') }}/config \
+            admin_password="$ADMIN_PASSWORD" \
+            cookie_hash="$COOKIE_HASH" \
+            cookie_encryption="$COOKIE_ENC"
+        echo "Seeded secret/semaphore/{{ vault_env | default('dev') }}/config from bootstrap vault"
+      when: vault_admin_token != ''
+      no_log: true
+
     - name: Seed summary
       debug:
         msg: "Shared secrets seeded from bootstrap vault into http://{{ vault_ct_ip }}:8200"

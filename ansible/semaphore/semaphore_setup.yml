@@ -1,0 +1,190 @@
+---
+- name: Configure Semaphore LXC (Ansible automation UI)
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    # ── System prerequisites ─────────────────────────────────────────────────
+
+    - name: Install system packages
+      apt:
+        name:
+          - curl
+          - git
+          - ansible
+          - python3-pip
+          - jq
+        state: present
+        update_cache: yes
+
+    # ── Standard users ───────────────────────────────────────────────────────
+    # appadm  — service/app owner (runs semaphore)
+    # tomas   — admin user for interactive access (sudo)
+
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
+    # ── Fetch secrets from env vault ─────────────────────────────────────────
+
+    - name: Fetch Semaphore secrets from env vault
+      uri:
+        url: "http://{{ vault_addr }}:8200/v1/secret/data/semaphore/{{ vault_env }}/config"
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+        method: GET
+        status_code: 200
+      register: vault_semaphore
+
+    - name: Set semaphore secret facts
+      set_fact:
+        semaphore_admin_password:    "{{ vault_semaphore.json.data.data.admin_password }}"
+        semaphore_cookie_hash:       "{{ vault_semaphore.json.data.data.cookie_hash }}"
+        semaphore_cookie_encryption: "{{ vault_semaphore.json.data.data.cookie_encryption }}"
+
+    # ── Install Semaphore ────────────────────────────────────────────────────
+
+    - name: Get latest Semaphore release version
+      uri:
+        url: https://api.github.com/repos/ansible-semaphore/semaphore/releases/latest
+        method: GET
+        return_content: yes
+      register: semaphore_release
+
+    - name: Set Semaphore version fact
+      set_fact:
+        semaphore_version: "{{ semaphore_release.json.tag_name | regex_replace('^v', '') }}"
+
+    - name: Download Semaphore deb package
+      get_url:
+        url: "https://github.com/ansible-semaphore/semaphore/releases/download/v{{ semaphore_version }}/semaphore_{{ semaphore_version }}_linux_amd64.deb"
+        dest: "/tmp/semaphore_{{ semaphore_version }}_linux_amd64.deb"
+        mode: '0644'
+
+    - name: Install Semaphore deb package
+      apt:
+        deb: "/tmp/semaphore_{{ semaphore_version }}_linux_amd64.deb"
+        state: present
+
+    # ── Configure Semaphore ──────────────────────────────────────────────────
+
+    - name: Create Semaphore directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: appadm
+        group: appadm
+        mode: '0750'
+      loop:
+        - /etc/semaphore
+        - /var/lib/semaphore
+        - /var/log/semaphore
+
+    - name: Write Semaphore config.json
+      copy:
+        dest: /etc/semaphore/config.json
+        owner: appadm
+        group: appadm
+        mode: '0640'
+        content: |
+          {
+            "bolt": {
+              "host": "/var/lib/semaphore/database.boltdb"
+            },
+            "interface": "0.0.0.0",
+            "port": "3000",
+            "tmp_path": "/tmp/semaphore",
+            "cookie_hash": "{{ semaphore_cookie_hash }}",
+            "cookie_encryption": "{{ semaphore_cookie_encryption }}",
+            "email_alert": false,
+            "email_sender": "",
+            "email_host": "",
+            "email_port": "587",
+            "email_tls": true,
+            "telegram_alert": false,
+            "web_host": "https://semaphore-dev.databaes.net",
+            "password_login_disable": false,
+            "non_admin_can_create_project": false,
+            "use_remote_runner": false
+          }
+
+    # ── Systemd service ──────────────────────────────────────────────────────
+
+    - name: Write Semaphore systemd service
+      copy:
+        dest: /etc/systemd/system/semaphore.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Ansible Semaphore
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=appadm
+          WorkingDirectory=/var/lib/semaphore
+          ExecStart=/usr/bin/semaphore server --config /etc/semaphore/config.json
+          Restart=on-failure
+          RestartSec=5s
+          StandardOutput=append:/var/log/semaphore/semaphore.log
+          StandardError=append:/var/log/semaphore/semaphore.log
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Semaphore
+      systemd:
+        name: semaphore
+        enabled: yes
+        state: started
+
+    # ── Create admin user (idempotent) ───────────────────────────────────────
+
+    - name: Check if admin user already exists
+      command: >
+        semaphore user get --config /etc/semaphore/config.json --login admin
+      register: admin_check
+      failed_when: false
+      changed_when: false
+      become: yes
+      become_user: appadm
+
+    - name: Create Semaphore admin user
+      command: >
+        semaphore user add --config /etc/semaphore/config.json
+        --admin
+        --login admin
+        --name "Administrator"
+        --email "admin@databaes.net"
+        --password "{{ semaphore_admin_password }}"
+      become: yes
+      become_user: appadm
+      when: admin_check.rc != 0
+
+    # ── Wait for service to be healthy ───────────────────────────────────────
+
+    - name: Wait for Semaphore to be ready
+      uri:
+        url: http://localhost:3000/api/ping
+        method: GET
+        status_code: 200
+      register: semaphore_health
+      retries: 12
+      delay: 5
+      until: semaphore_health.status == 200

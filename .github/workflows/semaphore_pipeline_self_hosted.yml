@@ -1,0 +1,416 @@
+name: Semaphore Pipeline (Self-Hosted)
+
+on:
+  push:
+    paths:
+      - 'terraform/semaphore/**'
+      - 'ansible/semaphore/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+
+concurrency:
+  group: semaphore-pipeline-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-slots:
+    runs-on: self-hosted
+    outputs:
+      environment:  ${{ steps.slots.outputs.environment }}
+      pve_api_url:  ${{ steps.slots.outputs.pve_api_url }}
+      pve_node:     ${{ steps.slots.outputs.pve_node }}
+      active_slot:  ${{ steps.slots.outputs.active_slot }}
+      active_vmid:  ${{ steps.slots.outputs.active_vmid }}
+      active_ip:    ${{ steps.slots.outputs.active_ip }}
+      active_host:  ${{ steps.slots.outputs.active_host }}
+      staging_slot: ${{ steps.slots.outputs.staging_slot }}
+      staging_vmid: ${{ steps.slots.outputs.staging_vmid }}
+      staging_ip:   ${{ steps.slots.outputs.staging_ip }}
+      staging_host: ${{ steps.slots.outputs.staging_host }}
+      first_run:    ${{ steps.slots.outputs.first_run }}
+    steps:
+      - name: Resolve active and staging slots
+        id: slots
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+
+          case "$ENV" in
+            dev)
+              BLUE_VMID=285;  BLUE_IP="192.168.50.249"
+              GREEN_VMID=286; GREEN_IP="192.168.50.254"
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_NODE="benedict"
+              ;;
+          esac
+
+          BLUE_HOST="semaphore-blue"
+          GREEN_HOST="semaphore-green"
+
+          ACTIVE_SLOT=$(vault kv get -field=slot secret/semaphore/$ENV/active-slot 2>/dev/null || echo "none")
+
+          if [ "$ACTIVE_SLOT" = "none" ]; then
+            echo "No active slot found — first run, deploying to blue"
+            STAGING_SLOT="blue"
+            STAGING_VMID="$BLUE_VMID"
+            STAGING_IP="$BLUE_IP"
+            STAGING_HOST="$BLUE_HOST"
+            ACTIVE_VMID=""
+            ACTIVE_IP=""
+            ACTIVE_HOST=""
+            FIRST_RUN="true"
+          elif [ "$ACTIVE_SLOT" = "blue" ]; then
+            STAGING_SLOT="green"
+            STAGING_VMID="$GREEN_VMID"
+            STAGING_IP="$GREEN_IP"
+            STAGING_HOST="$GREEN_HOST"
+            ACTIVE_VMID="$BLUE_VMID"
+            ACTIVE_IP="$BLUE_IP"
+            ACTIVE_HOST="$BLUE_HOST"
+            FIRST_RUN="false"
+          else
+            STAGING_SLOT="blue"
+            STAGING_VMID="$BLUE_VMID"
+            STAGING_IP="$BLUE_IP"
+            STAGING_HOST="$BLUE_HOST"
+            ACTIVE_VMID="$GREEN_VMID"
+            ACTIVE_IP="$GREEN_IP"
+            ACTIVE_HOST="$GREEN_HOST"
+            FIRST_RUN="false"
+          fi
+
+          echo "environment=$ENV"           >> "$GITHUB_OUTPUT"
+          echo "pve_api_url=$PVE_API_URL"   >> "$GITHUB_OUTPUT"
+          echo "pve_node=$PVE_NODE"         >> "$GITHUB_OUTPUT"
+          echo "active_slot=$ACTIVE_SLOT"   >> "$GITHUB_OUTPUT"
+          echo "active_vmid=$ACTIVE_VMID"   >> "$GITHUB_OUTPUT"
+          echo "active_ip=$ACTIVE_IP"       >> "$GITHUB_OUTPUT"
+          echo "active_host=$ACTIVE_HOST"   >> "$GITHUB_OUTPUT"
+          echo "staging_slot=$STAGING_SLOT" >> "$GITHUB_OUTPUT"
+          echo "staging_vmid=$STAGING_VMID" >> "$GITHUB_OUTPUT"
+          echo "staging_ip=$STAGING_IP"     >> "$GITHUB_OUTPUT"
+          echo "staging_host=$STAGING_HOST" >> "$GITHUB_OUTPUT"
+          echo "first_run=$FIRST_RUN"       >> "$GITHUB_OUTPUT"
+
+  terraform-staging:
+    needs: resolve-slots
+    runs-on: self-hosted
+    env:
+      ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/semaphore init -input=false
+
+      - name: Pre-flight — destroy any stale staging CT
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/semaphore destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/semaphore/terraform.${STAGING_SLOT}.${ENV}.tfstate
+
+      - name: Terraform Apply
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/semaphore apply \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate
+
+  ansible-staging:
+    needs: [resolve-slots, terraform-staging]
+    runs-on: self-hosted
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Fetch SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/semaphore_worker \
+            | awk 'NF > 0' > /tmp/semaphore_worker_key
+          chmod 600 /tmp/semaphore_worker_key
+
+      - name: Resolve env vault credentials
+        id: env-vault
+        run: |
+          case "$ENV" in
+            dev)
+              echo "vault_addr=${{ secrets.VAULT_ADDR }}"    >> "$GITHUB_OUTPUT"
+              echo "vault_token=${{ secrets.VAULT_TOKEN }}"  >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${STAGING_IP}..."
+          timeout 120 bash -c "until nc -z ${STAGING_IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+      - name: Run Ansible playbook
+        run: |
+          ssh-keygen -R "${STAGING_IP}" || true
+          ansible-playbook \
+            -i "${STAGING_IP}," \
+            -v \
+            --private-key /tmp/semaphore_worker_key \
+            -e "ansible_host=${STAGING_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "vault_env=${ENV}" \
+            -e "vault_addr=${{ steps.env-vault.outputs.vault_addr }}" \
+            -e "vault_token=${{ steps.env-vault.outputs.vault_token }}" \
+            ansible/semaphore/semaphore_setup.yml
+
+  flip-active:
+    needs: [resolve-slots, ansible-staging]
+    runs-on: self-hosted
+    steps:
+      - name: Record new active slot in bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ needs.resolve-slots.outputs.environment }}"
+          vault kv put secret/semaphore/$ENV/active-slot \
+            slot="${{ needs.resolve-slots.outputs.staging_slot }}" \
+            vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
+            ip="${{ needs.resolve-slots.outputs.staging_ip }}"
+
+  register-dns:
+    needs: [resolve-slots, flip-active]
+    if: needs.flip-active.result == 'success'
+    runs-on: self-hosted
+    env:
+      ROUTER_NAME:  semaphore-router
+      SERVICE_NAME: semaphore-service
+      HOSTNAME:     semaphore-dev.databaes.net
+      BACKEND_URL:  "http://${{ needs.resolve-slots.outputs.staging_ip }}:3000"
+    steps:
+      - name: Checkout traefik-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: TomasBFerreira/traefik-gitops
+          ref: main
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install yq if missing
+        run: |
+          if ! command -v yq &>/dev/null; then
+            curl -fsSL "https://github.com/mikefarah/yq/releases/download/v4.44.6/yq_linux_amd64" \
+              -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Upsert route in services.yml
+        run: |
+          yq -i '
+            .http.routers[env(ROUTER_NAME)].rule = "Host(`" + env(HOSTNAME) + "`)" |
+            .http.routers[env(ROUTER_NAME)].service = env(SERVICE_NAME) |
+            .http.routers[env(ROUTER_NAME)].entryPoints = ["web"] |
+            .http.routers[env(ROUTER_NAME)].middlewares = ["authentik-dev"]
+          ' config/dynamic/services.yml
+          yq -i ".http.services[env(SERVICE_NAME)].loadBalancer.servers = [{\"url\": \"${BACKEND_URL}\"}]" \
+            config/dynamic/services.yml
+
+      - name: Commit and push
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add config/dynamic/services.yml
+          git diff --cached --quiet || git commit -m "chore: upsert semaphore route → ${BACKEND_URL}"
+          git push
+
+  teardown-old-active:
+    needs: [resolve-slots, flip-active]
+    if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
+    runs-on: self-hosted
+    env:
+      ENV:         ${{ needs.resolve-slots.outputs.environment }}
+      ACTIVE_SLOT: ${{ needs.resolve-slots.outputs.active_slot }}
+      ACTIVE_VMID: ${{ needs.resolve-slots.outputs.active_vmid }}
+      ACTIVE_IP:   ${{ needs.resolve-slots.outputs.active_ip }}
+      ACTIVE_HOST: ${{ needs.resolve-slots.outputs.active_host }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
+          TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
+          TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/semaphore init -input=false
+
+      - name: Terraform Destroy old active CT
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
+          TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
+          TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/semaphore destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${ACTIVE_SLOT}.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${ACTIVE_VMID} 2>/dev/null || true; pct destroy ${ACTIVE_VMID} 2>/dev/null || true"
+
+  cleanup-on-failure:
+    needs: [resolve-slots, terraform-staging, ansible-staging]
+    if: failure()
+    runs-on: self-hosted
+    env:
+      ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - name: Collect failure logs from CT
+        env:
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          LOG_DIR="/app/infra-platform/logs/semaphore-failures"
+          mkdir -p "$LOG_DIR"
+          LOG_FILE="$LOG_DIR/semaphore-${ENV}-$(date -u +%Y%m%dT%H%M%SZ)-run${{ github.run_id }}.log"
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          {
+            echo "=== semaphore failure log: run ${{ github.run_id }}, env=${ENV}, vmid=${STAGING_VMID} ==="
+            echo "=== $(date -u) ==="
+            echo "--- system journal (last 100 lines) ---"
+            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+              "pct exec ${STAGING_VMID} -- journalctl -n 100 --no-pager 2>/dev/null || echo '(journal unavailable)'" 2>/dev/null || echo "(pct exec failed)"
+          } | tee "$LOG_FILE" || true
+          echo "Failure log saved to $LOG_FILE"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/semaphore init -input=false
+
+      - name: Terraform Destroy staging CT
+        env:
+          TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
+          TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:          ${{ env.STAGING_VMID }}
+          TF_VAR_ip_address:    ${{ env.STAGING_IP }}
+          TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
+          TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/semaphore destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/semaphore/terraform.${STAGING_SLOT}.${ENV}.tfstate

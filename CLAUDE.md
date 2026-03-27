@@ -49,6 +49,7 @@ Existing assignments:
 - network-vm: prod=155/156 (.155/.156), dev=255/256 (.250/.251), qa=355/356 (.240/.241)
 - torrent: prod=165/166 (.165/.166), dev=265/266 (.252/.253)
 - sso: prod=175/176 (.175/.176), dev=275/276 (.247/.248)
+- semaphore: dev=285/286 (.249/.254) — IPs deviate from VMID suffix (.249 blue, .254 green) due to subnet exhaustion near .255
 
 **Worker nodes — numbered singletons (deviation from blue/green):**
 Worker nodes use a per-env sequential scheme. Kubernetes provides workload resilience;
