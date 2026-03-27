@@ -56,9 +56,13 @@ jobs:
         run: |
           SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
 
+          # Fetch SSO container SSH key
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/bs_sso_key
+          chmod 600 /tmp/bs_sso_key
+
           # Get a fresh Authentik API token via docker exec
-          FRESH_TOKEN=$(ssh -o StrictHostKeyChecking=no \
-            $(echo "${{ secrets.PVE_USER }}" | cut -d'@' -f1)@"$SSO_IP" \
+          FRESH_TOKEN=$(ssh -i /tmp/bs_sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
             "docker exec authentik-server ak shell --command \
               \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
 
@@ -98,7 +102,9 @@ jobs:
             }' | python3 -c "import sys,json; r=json.load(sys.stdin); print('Patched OK — pk:', r.get('pk'))" \
             || echo "PATCH failed"
 
-      - name: Configure OIDC auth method on bootstrap vault
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/bs_sso_key
         if: steps.check-sso.outputs.skip != 'true'
         env:
           VAULT_ADDR:  http://192.168.50.200:8200
