@@ -253,16 +253,30 @@ jobs:
           SSO_BOOTSTRAP_TOKEN=$(vault kv get -field=bootstrap_token secret/sso)
 
           # Check for an existing DB backup — restore on new LXC to persist users.
-          # Stored on runner disk (not Vault) — Vault KV has a ~512KB string value
-          # limit which the Authentik DB easily exceeds.
+          # Primary store: betsy NFS at /mnt/nfs-shared-data/backups/sso/
+          # Runner disk (/opt/sso-backup/) is the local cache; NFS is the durable copy.
+          # Vault KV is not used — its ~512KB value limit is too small for the Authentik DB.
           SSO_HAS_DB_BACKUP="false"
           BACKUP_FILE="/opt/sso-backup/sso_${ENV}_db.sql.gz"
+          NFS_BACKUP="192.168.50.2:/mnt/nfs-shared-data/backups/sso/sso_${ENV}_db.sql.gz"
+          PVE_SSH_USER=$(echo "${{ secrets.PVE_USER }}" | cut -d'@' -f1)
+
           if [[ -f "$BACKUP_FILE" ]]; then
             cp "$BACKUP_FILE" /tmp/sso_db_backup.sql.gz
             SSO_HAS_DB_BACKUP="true"
             echo "DB backup found on runner disk — will restore on new LXC"
           else
-            echo "No DB backup found on runner disk — fresh install"
+            echo "No runner-local backup — checking NFS (betsy)..."
+            mkdir -p /opt/sso-backup
+            if scp -o StrictHostKeyChecking=no \
+                ${PVE_SSH_USER}@192.168.50.2:/mnt/nfs-shared-data/backups/sso/sso_${ENV}_db.sql.gz \
+                "$BACKUP_FILE" 2>/dev/null; then
+              cp "$BACKUP_FILE" /tmp/sso_db_backup.sql.gz
+              SSO_HAS_DB_BACKUP="true"
+              echo "DB backup pulled from NFS ($(du -sh "$BACKUP_FILE" | cut -f1)) — will restore on new LXC"
+            else
+              echo "No DB backup found on NFS either — fresh install"
+            fi
           fi
 
           # Export env vault address/token into GITHUB_ENV so subsequent steps
@@ -358,6 +372,24 @@ jobs:
             echo "WARNING: DB dump is empty — removing empty file"
             rm -f "$BACKUP_FILE"
           fi
+
+      - name: Mirror backup to NFS (betsy)
+        run: |
+          BACKUP_FILE="/opt/sso-backup/sso_${ENV}_db.sql.gz"
+          PVE_SSH_USER=$(echo "${{ secrets.PVE_USER }}" | cut -d'@' -f1)
+
+          if [[ ! -s "$BACKUP_FILE" ]]; then
+            echo "No backup file to mirror — skipping NFS copy"
+            exit 0
+          fi
+
+          echo "Mirroring backup to betsy NFS..."
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 \
+            "mkdir -p /mnt/nfs-shared-data/backups/sso"
+          scp -o StrictHostKeyChecking=no \
+            "$BACKUP_FILE" \
+            ${PVE_SSH_USER}@192.168.50.2:/mnt/nfs-shared-data/backups/sso/sso_${ENV}_db.sql.gz
+          echo "Backup mirrored to betsy:/mnt/nfs-shared-data/backups/sso/sso_${ENV}_db.sql.gz"
 
       - name: Cleanup SSH key
         if: always()
