@@ -276,8 +276,91 @@ jobs:
             ${RANCHER_RBAC_VARS_FILE:+-e "@${RANCHER_RBAC_VARS_FILE}"} \
             ansible/rancher/rancher_setup.yml
 
-  save-rancher-state:
+  configure-oidc:
     needs: [resolve-rancher, ansible-rancher]
+    runs-on: self-hosted
+    env:
+      ENV:              ${{ needs.resolve-rancher.outputs.environment }}
+      RANCHER_IP:       ${{ needs.resolve-rancher.outputs.ip }}
+      RANCHER_HOSTNAME: ${{ needs.resolve-rancher.outputs.hostname }}.databaes.net
+    steps:
+      - name: Fetch Rancher credentials from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          RANCHER_PASSWORD=$(vault kv get -field=password secret/rancher/${ENV}/bootstrap)
+          echo "::add-mask::$RANCHER_PASSWORD"
+          echo "RANCHER_PASSWORD=$RANCHER_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Grant admin role to logged-in OIDC users
+        run: |
+          # Finds any Rancher users whose principalIds contain 'genericoidc' and grants
+          # them the built-in 'admin' GlobalRole via userId. Safe to run on every deploy:
+          # - idempotent (skips existing bindings)
+          # - exits 0 if no OIDC users have logged in yet (group-based RBAC handles first login)
+          rancher_curl() {
+            curl -sk --fail-with-body -H "Host: ${RANCHER_HOSTNAME}" "$@"
+          }
+
+          LOGIN_RESP=$(curl -sk -H "Host: ${RANCHER_HOSTNAME}" \
+            -X POST "https://${RANCHER_IP}/v3-public/localProviders/local?action=login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"admin\", \"password\": \"${RANCHER_PASSWORD}\", \"ttl\": 60000}")
+          RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
+          if [ -z "$RANCHER_TOKEN" ]; then
+            echo "WARNING: Could not log in to Rancher — skipping OIDC user grants"
+            exit 0
+          fi
+
+          OIDC_USERS=$(rancher_curl \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://${RANCHER_IP}/v3/users" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          oidc = [(u['id'], u.get('username',''))
+                  for u in data.get('data', [])
+                  if any('genericoidc' in p for p in u.get('principalIds', []))]
+          for uid, uname in oidc:
+              print(f'{uid}:{uname}')
+          " 2>/dev/null)
+
+          if [ -z "$OIDC_USERS" ]; then
+            echo "No OIDC users have logged in yet — group-based RBAC will apply on first login."
+            exit 0
+          fi
+
+          echo "Found OIDC users: $OIDC_USERS"
+
+          EXISTING_BINDINGS=$(rancher_curl \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://${RANCHER_IP}/v3/globalrolebindings?globalRoleId=admin" \
+            | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(' '.join(b.get('userId','') for b in data.get('data',[])))
+          " 2>/dev/null)
+
+          echo "$OIDC_USERS" | while IFS=: read -r USER_ID USERNAME; do
+            if echo "$EXISTING_BINDINGS" | grep -qw "$USER_ID"; then
+              echo "User $USERNAME ($USER_ID) already has admin GlobalRoleBinding — skipping"
+            else
+              echo "Granting admin GlobalRole to $USERNAME ($USER_ID)..."
+              RESULT=$(rancher_curl \
+                -X POST "https://${RANCHER_IP}/v3/globalrolebindings" \
+                -H "Authorization: Bearer $RANCHER_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"globalRoleBinding\",\"globalRoleId\":\"admin\",\"userId\":\"$USER_ID\"}" \
+                || true)
+              BINDING_ID=$(echo "$RESULT" | python3 -c \
+                "import sys,json; print(json.load(sys.stdin).get('id','error'))" 2>/dev/null)
+              echo "GlobalRoleBinding created: $BINDING_ID for $USERNAME"
+            fi
+          done
+
+  save-rancher-state:
+    needs: [resolve-rancher, ansible-rancher, configure-oidc]
     runs-on: self-hosted
     steps:
       - name: Write rancher state to bootstrap vault
@@ -293,7 +376,7 @@ jobs:
             provisioned_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   cleanup-on-failure:
-    needs: [resolve-rancher, terraform-rancher, ansible-rancher]
+    needs: [resolve-rancher, terraform-rancher, ansible-rancher, configure-oidc]
     if: failure()
     runs-on: self-hosted
     env:
