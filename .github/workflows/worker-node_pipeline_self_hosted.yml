@@ -223,6 +223,16 @@ jobs:
             echo "No Rancher credentials found for env=${DEPLOY_ENV} — skipping Rancher registration"
           fi
 
+          # Fetch RBAC bindings so cluster-level permissions are applied after registration.
+          if vault kv get secret/rancher/${DEPLOY_ENV}/rbac > /dev/null 2>&1; then
+            RBAC_CLUSTER="$(vault kv get -field=cluster_bindings secret/rancher/${DEPLOY_ENV}/rbac 2>/dev/null || echo '[]')"
+            python3 -c "import json,sys; c=json.loads(sys.argv[1]); print(json.dumps({'rancher_rbac_cluster_bindings':c}))" "$RBAC_CLUSTER" > /tmp/rancher_rbac_vars.json
+            echo "RANCHER_RBAC_VARS_FILE=/tmp/rancher_rbac_vars.json" >> "$GITHUB_ENV"
+            echo "Rancher RBAC cluster bindings found"
+          else
+            echo "No RBAC bindings in Vault (secret/rancher/${DEPLOY_ENV}/rbac) — skipping"
+          fi
+
       - name: Wait for SSH to be ready
         run: |
           echo "Waiting for SSH on ${IP_ADDRESS}..."
@@ -243,6 +253,7 @@ jobs:
             -e "rancher_ip=${RANCHER_IP}" \
             -e "rancher_hostname=${{ needs.resolve-node.outputs.rancher_hostname }}" \
             ${RANCHER_BOOTSTRAP_PASSWORD:+-e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}"} \
+            ${RANCHER_RBAC_VARS_FILE:+-e "@${RANCHER_RBAC_VARS_FILE}"} \
             ansible/worker-node/worker-node_setup.yml
 
   register-node:

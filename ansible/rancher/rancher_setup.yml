@@ -340,6 +340,76 @@
         - rancher_oidc_client_id is defined
         - rancher_oidc_client_id | length > 0
 
+    - name: Apply Rancher RBAC bindings from Vault
+      when: rancher_rbac_global_bindings is defined or rancher_rbac_cluster_bindings is defined
+      block:
+        - name: Copy RBAC apply script (rancher LXC)
+          copy:
+            dest: /tmp/apply_rancher_rbac.py
+            mode: '0755'
+            content: |
+              #!/usr/bin/env python3
+              import json, os, subprocess
+
+              host     = os.environ['RANCHER_HOST']
+              endpoint = os.environ.get('RANCHER_ENDPOINT', 'localhost')
+              password = os.environ['RANCHER_PASS']
+              cluster  = os.environ.get('CLUSTER_ID', 'local')
+
+              def curl_json(*args):
+                  r = subprocess.run(['curl', '-sk'] + list(args),
+                                     capture_output=True, text=True)
+                  try:
+                      return json.loads(r.stdout)
+                  except Exception:
+                      return {'_raw': r.stdout, 'type': 'error'}
+
+              token_resp = curl_json(
+                  '-H', f'Host: {host}',
+                  '-X', 'POST',
+                  f'https://{endpoint}/v3-public/localProviders/local?action=login',
+                  '-H', 'Content-Type: application/json',
+                  '-d', json.dumps({'username': 'admin', 'password': password,
+                                    'ttl': 60000}))
+              token = token_resp.get('token', '')
+              if not token:
+                  print(f'ERROR: Rancher login failed: {token_resp}')
+                  exit(1)
+
+              def post_binding(ep, body):
+                  resp = curl_json(
+                      '-H', f'Host: {host}',
+                      '-H', f'Authorization: Bearer {token}',
+                      '-X', 'POST', f'https://{endpoint}/{ep}',
+                      '-H', 'Content-Type: application/json',
+                      '-d', json.dumps(body))
+                  rtype = resp.get('type', '')
+                  msg   = resp.get('message', '')
+                  if 'already exist' in msg.lower():
+                      print(f'  {ep}: already exists, ok')
+                  elif rtype and not rtype.startswith('error'):
+                      print(f'  {ep}: created {resp.get("id", "?")}')
+                  else:
+                      print(f'  WARNING {ep}: {resp}')
+
+              for b in json.loads(os.environ.get('GLOBAL_BINDINGS', '[]')):
+                  post_binding('v3/globalrolebindings', b)
+
+              for b in json.loads(os.environ.get('CLUSTER_BINDINGS', '[]')):
+                  post_binding('v3/clusterroletemplatebindings',
+                               {**b, 'clusterId': cluster})
+              print('Done.')
+
+        - name: Run RBAC apply script (rancher LXC)
+          shell: python3 /tmp/apply_rancher_rbac.py
+          environment:
+            RANCHER_HOST:     "{{ rancher_hostname }}"
+            RANCHER_ENDPOINT: "localhost"
+            RANCHER_PASS:     "{{ rancher_bootstrap_password }}"
+            GLOBAL_BINDINGS:  "{{ rancher_rbac_global_bindings | default([]) | to_json }}"
+            CLUSTER_BINDINGS: "{{ rancher_rbac_cluster_bindings | default([]) | to_json }}"
+            CLUSTER_ID:       "local"
+
     - name: Rancher setup summary
       debug:
         msg: "Rancher {{ rancher_version }} deployed on K3s {{ k3s_version }} at https://{{ rancher_hostname }}"
