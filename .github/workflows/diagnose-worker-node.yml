@@ -38,10 +38,11 @@ jobs:
             | awk 'NF > 0' > /tmp/worker_node_key
           chmod 600 /tmp/worker_node_key
 
-      - name: Check cattle-cluster-agent pods
+      - name: Write diagnostic script
         run: |
-          ssh-keygen -R "${WORKER_IP}" || true
-          ssh -o StrictHostKeyChecking=no -i /tmp/worker_node_key root@${WORKER_IP} << 'ENDSSH'
+          cat > /tmp/diag.sh << 'SCRIPT'
+          #!/bin/bash
+          set -e
           echo "=== Nodes ==="
           k3s kubectl get nodes -o wide
 
@@ -51,12 +52,13 @@ jobs:
 
           echo ""
           echo "=== cattle-cluster-agent logs (last 50 lines) ==="
-          AGENT_POD=$(k3s kubectl get pods -n cattle-system -l app=cattle-cluster-agent -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          AGENT_POD=$(k3s kubectl get pods -n cattle-system -l app=cattle-cluster-agent \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
           if [ -n "$AGENT_POD" ]; then
             k3s kubectl logs -n cattle-system "$AGENT_POD" --tail=50 2>&1 || true
             echo ""
-            echo "=== cattle-cluster-agent describe ==="
-            k3s kubectl describe pod -n cattle-system "$AGENT_POD" | tail -30
+            echo "=== cattle-cluster-agent describe (last 30 lines) ==="
+            k3s kubectl describe pod -n cattle-system "$AGENT_POD" 2>&1 | tail -30
           else
             echo "No cattle-cluster-agent pod found"
             k3s kubectl describe deployment -n cattle-system cattle-cluster-agent 2>&1 || true
@@ -64,15 +66,27 @@ jobs:
 
           echo ""
           echo "=== CoreDNS NodeHosts (Rancher entry) ==="
-          k3s kubectl get configmap coredns -n kube-system -o jsonpath='{.data.NodeHosts}' | grep -i rancher || echo "(not found)"
+          k3s kubectl get configmap coredns -n kube-system \
+            -o jsonpath='{.data.NodeHosts}' | grep -i rancher || echo "(not found)"
 
           echo ""
-          echo "=== DNS resolution test from cattle-system pod ==="
-          TEST_POD=$(k3s kubectl get pods -n cattle-system -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          echo "=== DNS test from a cattle-system pod ==="
+          TEST_POD=$(k3s kubectl get pods -n cattle-system \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
           if [ -n "$TEST_POD" ]; then
-            k3s kubectl exec -n cattle-system "$TEST_POD" -- nslookup rancher-dev.databaes.net 2>&1 || true
+            k3s kubectl exec -n cattle-system "$TEST_POD" -- \
+              nslookup rancher-dev.databaes.net 2>&1 || true
           fi
-          ENDSSH
+          SCRIPT
+          chmod +x /tmp/diag.sh
+
+      - name: Run diagnostic on worker node
+        run: |
+          ssh-keygen -R "${WORKER_IP}" || true
+          scp -o StrictHostKeyChecking=no -i /tmp/worker_node_key \
+            /tmp/diag.sh root@${WORKER_IP}:/tmp/diag.sh
+          ssh -o StrictHostKeyChecking=no -i /tmp/worker_node_key \
+            root@${WORKER_IP} bash /tmp/diag.sh
 
       - name: Check Rancher cluster state via API
         env:
@@ -97,12 +111,7 @@ jobs:
           curl -sk -H "Host: ${RANCHER_HOST}" \
             -H "Authorization: Bearer $TOKEN" \
             "https://${RANCHER_IP}/v3/clusters" \
-            | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-for c in d.get('data', []):
-    print(f\"  id={c['id']}  name={c.get('name','?')}  state={c.get('state','?')}  conditions={[x['type']+':'+x['status'] for x in c.get('conditions',[]) if x.get('status') != 'True']}\")
-"
+            | python3 -c "import sys,json; [print('  id=%s  name=%s  state=%s'%(c['id'],c.get('name','?'),c.get('state','?'))) for c in json.load(sys.stdin).get('data',[])]"
       - name: Cleanup
         if: always()
         run: rm -f /tmp/worker_node_key
