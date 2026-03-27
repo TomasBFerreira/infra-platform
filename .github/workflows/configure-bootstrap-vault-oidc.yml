@@ -1,0 +1,94 @@
+name: Configure Bootstrap Vault OIDC
+
+on:
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  configure:
+    runs-on: self-hosted
+    steps:
+      - name: Check SSO is deployed — skip if not
+        id: check-sso
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          if ! vault kv get secret/authentik/dev/vault-oidc > /dev/null 2>&1; then
+            echo "SSO OIDC credentials not yet seeded — skipping bootstrap vault OIDC config"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Read OIDC credentials from bootstrap vault
+        if: steps.check-sso.outputs.skip != 'true'
+        id: oidc-creds
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          CLIENT_ID=$(vault kv get -field=client_id secret/authentik/dev/vault-oidc)
+          CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/dev/vault-oidc)
+          echo "::add-mask::$CLIENT_SECRET"
+          echo "client_id=$CLIENT_ID"    >> $GITHUB_OUTPUT
+          echo "client_secret=$CLIENT_SECRET" >> $GITHUB_OUTPUT
+          # Bootstrap vault is always dev-aligned — use dev SSO public URL
+          echo "discovery_url=https://auth-dev.databaes.net/application/o/vault/" >> $GITHUB_OUTPUT
+
+      - name: Obtain root token via pct exec on bootstrap vault CT
+        if: steps.check-sso.outputs.skip != 'true'
+        id: root-token
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ROOT_TOKEN=$(ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+            "pct exec 200 -- python3 -c \"import json; print(json.load(open('/root/vault-init.json'))['root_token'])\"")
+          echo "::add-mask::$ROOT_TOKEN"
+          echo "root_token=$ROOT_TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Configure OIDC auth method on bootstrap vault
+        if: steps.check-sso.outputs.skip != 'true'
+        env:
+          VAULT_ADDR:  http://192.168.50.200:8200
+          VAULT_TOKEN: ${{ steps.root-token.outputs.root_token }}
+          CLIENT_ID:     ${{ steps.oidc-creds.outputs.client_id }}
+          CLIENT_SECRET: ${{ steps.oidc-creds.outputs.client_secret }}
+          DISCOVERY_URL: ${{ steps.oidc-creds.outputs.discovery_url }}
+        run: |
+          # Enable OIDC auth if not already active
+          if ! vault auth list -format=json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if 'oidc/' in d else 1)" 2>/dev/null; then
+            vault auth enable oidc
+            echo "Enabled OIDC auth method"
+          else
+            echo "OIDC auth method already enabled"
+          fi
+
+          # Write OIDC config
+          vault write auth/oidc/config \
+            oidc_discovery_url="$DISCOVERY_URL" \
+            oidc_client_id="$CLIENT_ID" \
+            oidc_client_secret="$CLIENT_SECRET" \
+            default_role="admin"
+          echo "OIDC config written"
+
+          # Ensure admin policy covers everything
+          vault policy write admin - <<'EOF'
+          path "*" {
+            capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+          }
+          EOF
+          echo "Admin policy written"
+
+          # Create/update admin OIDC role
+          vault write auth/oidc/role/admin \
+            bound_audiences="$CLIENT_ID" \
+            allowed_redirect_uris="http://192.168.50.200:8200/ui/vault/auth/oidc/oidc/callback" \
+            allowed_redirect_uris="http://localhost:8250/oidc/callback" \
+            allowed_redirect_uris="http://localhost:8200/oidc/callback" \
+            user_claim="sub" \
+            policies="admin" \
+            ttl="12h"
+          echo "Admin OIDC role written"
+          echo "Bootstrap vault OIDC configured — login at http://192.168.50.200:8200 via OIDC"

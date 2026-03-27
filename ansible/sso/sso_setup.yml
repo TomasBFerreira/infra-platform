@@ -357,6 +357,7 @@
         # Build redirect_uris as a proper list of dicts via set_fact to avoid
         # Ansible uri module serialising inline YAML map-in-list items as strings.
         _vault_redirect_uris:
+          - {url: "http://192.168.50.200:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
           - {url: "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
           - {url: "http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
           - {url: "http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
@@ -384,6 +385,18 @@
         status_code: 201
       register: created_vault_provider
       when: not _vault_provider_exists
+
+    - name: Update Vault OAuth2 provider redirect URIs in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/{{ _existing_provider_pk }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          redirect_uris: "{{ _vault_redirect_uris }}"
+        status_code: 200
+      when: _vault_provider_exists
 
     - name: Resolve final provider facts (created vs existing)
       set_fact:
