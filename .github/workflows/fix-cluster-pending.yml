@@ -1,0 +1,174 @@
+name: Fix Cluster Pending
+
+# Fixes a worker-node cluster stuck in "Pending" state in Rancher.
+#
+# Root cause: Rancher setup did not create the tls-ca secret, so
+# CATTLE_CA_CHECKSUM is empty in the import manifest. The cattle-cluster-agent
+# crashes because it cannot find /etc/kubernetes/ssl/certs/serverca. Also,
+# CoreDNS NodeHosts is not served to pods reliably — agent resolves
+# rancher-dev.databaes.net via external DNS (Cloudflare) instead of the
+# private IP, so TLS verification fails.
+#
+# Fix applied here (worker node side):
+#   1. Extract Rancher CA cert via TLS handshake from the runner
+#   2. Update Rancher cacerts API setting (so future imports work)
+#   3. Patch cattle-credentials secret with the CA cert as 'serverca'
+#   4. Set CATTLE_CA_CHECKSUM on the cattle-cluster-agent deployment
+#   5. Add hostAliases so the pod uses the private IP, not Cloudflare
+#
+# Usage:
+#   gh workflow run fix-cluster-pending.yml \
+#     --field environment=dev --field worker_ip=192.168.50.211
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+      worker_ip:
+        description: 'Worker node IP'
+        required: true
+        default: '192.168.50.211'
+
+jobs:
+  fix:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      WORKER_IP:    ${{ inputs.worker_ip }}
+      RANCHER_IP:   "192.168.50.202"
+      RANCHER_HOST: "rancher-dev.databaes.net"
+
+    steps:
+      - name: Fetch credentials from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+          RANCHER_PASS=$(vault kv get -field=password secret/rancher/${{ inputs.environment }}/bootstrap)
+          echo "::add-mask::$RANCHER_PASS"
+          echo "RANCHER_PASS=$RANCHER_PASS" >> $GITHUB_ENV
+
+      - name: Extract Rancher CA cert and update Rancher cacerts setting
+        run: |
+          # Extract the self-signed cert from the Rancher TLS endpoint.
+          # The runner is on the homelab network so it can reach 192.168.50.202.
+          CA_CERT=$(echo | openssl s_client \
+            -connect "${RANCHER_IP}:443" \
+            -servername "${RANCHER_HOST}" 2>/dev/null \
+            | openssl x509)
+
+          if [ -z "$CA_CERT" ]; then
+            echo "ERROR: Could not extract CA cert from ${RANCHER_IP}:443"
+            exit 1
+          fi
+
+          CA_CHECKSUM=$(echo "$CA_CERT" | sha256sum | awk '{print $1}')
+          echo "CA_CHECKSUM=$CA_CHECKSUM" >> $GITHUB_ENV
+          echo "CA cert SHA256: $CA_CHECKSUM"
+
+          # Write cert to file for later steps
+          echo "$CA_CERT" > /tmp/rancher-ca.crt
+
+          # Login to Rancher API
+          TOKEN=$(curl -sk -H "Host: ${RANCHER_HOST}" \
+            -X POST "https://${RANCHER_IP}/v3-public/localProviders/local?action=login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"admin\",\"password\":\"${RANCHER_PASS}\"}" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('token',''))" 2>/dev/null)
+          echo "::add-mask::$TOKEN"
+          echo "RANCHER_TOKEN=$TOKEN" >> $GITHUB_ENV
+
+          # Update the cacerts setting in Rancher so future import manifests
+          # include CATTLE_CA_CHECKSUM automatically.
+          CA_JSON=$(python3 -c "import json; print(json.dumps({'value': open('/tmp/rancher-ca.crt').read()}))")
+          RESP=$(curl -sk -H "Host: ${RANCHER_HOST}" \
+            -H "Authorization: Bearer $TOKEN" \
+            -X PUT "https://${RANCHER_IP}/v3/settings/cacerts" \
+            -H "Content-Type: application/json" \
+            -d "$CA_JSON")
+          echo "Rancher cacerts updated: $(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('ok' if d.get('value') else 'empty')" 2>/dev/null || echo 'see output')"
+
+      - name: Write fix script
+        run: |
+          CA_CHECKSUM="${CA_CHECKSUM}"
+          CA_B64=$(base64 -w0 /tmp/rancher-ca.crt)
+
+          cat > /tmp/fix.sh << SCRIPT
+          #!/bin/bash
+          set -ex
+          RANCHER_IP=192.168.50.202
+          RANCHER_HOST=rancher-dev.databaes.net
+          CA_CHECKSUM="${CA_CHECKSUM}"
+          CA_B64="${CA_B64}"
+
+          echo "=== Current cattle-cluster-agent status ==="
+          k3s kubectl get pods -n cattle-system
+
+          # Find the cattle-credentials secret name
+          CREDS_SECRET=\$(k3s kubectl get deployment cattle-cluster-agent \
+            -n cattle-system \
+            -o jsonpath='{.spec.template.spec.volumes[?(@.name=="cattle-credentials")].secret.secretName}' \
+            2>/dev/null || echo "")
+          if [ -z "\$CREDS_SECRET" ]; then
+            echo "ERROR: could not find cattle-credentials secret name"
+            exit 1
+          fi
+          echo "cattle-credentials secret: \$CREDS_SECRET"
+
+          echo "=== Patching \$CREDS_SECRET with serverca ==="
+          k3s kubectl patch secret "\$CREDS_SECRET" -n cattle-system \
+            --type=merge \
+            -p "{\"data\":{\"serverca\":\"\${CA_B64}\"}}"
+
+          echo "=== Adding hostAliases (private IP for Rancher hostname) ==="
+          k3s kubectl patch deployment cattle-cluster-agent -n cattle-system \
+            --type='strategic' \
+            -p='{"spec":{"template":{"spec":{"hostAliases":[{"ip":"'"${RANCHER_IP}"'","hostnames":["'"${RANCHER_HOST}"'"]}]}}}}'
+
+          echo "=== Setting CATTLE_CA_CHECKSUM ==="
+          k3s kubectl set env deployment/cattle-cluster-agent \
+            -n cattle-system \
+            "CATTLE_CA_CHECKSUM=\${CA_CHECKSUM}"
+
+          echo "=== Waiting for rollout ==="
+          k3s kubectl rollout status deployment/cattle-cluster-agent \
+            -n cattle-system --timeout=120s
+
+          echo "=== New pod logs ==="
+          sleep 10
+          AGENT_POD=\$(k3s kubectl get pods -n cattle-system -l app=cattle-cluster-agent \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [ -n "\$AGENT_POD" ]; then
+            k3s kubectl logs -n cattle-system "\$AGENT_POD" --tail=40 2>&1 || true
+          fi
+          SCRIPT
+          chmod +x /tmp/fix.sh
+
+      - name: Apply fix on worker node
+        run: |
+          ssh-keygen -R "${WORKER_IP}" || true
+          scp -o StrictHostKeyChecking=no -i /tmp/worker_node_key \
+            /tmp/fix.sh root@${WORKER_IP}:/tmp/fix.sh
+          ssh -o StrictHostKeyChecking=no -i /tmp/worker_node_key \
+            root@${WORKER_IP} bash /tmp/fix.sh
+
+      - name: Check Rancher cluster state
+        run: |
+          sleep 30
+          echo "=== Rancher cluster state ==="
+          curl -sk -H "Host: ${RANCHER_HOST}" \
+            -H "Authorization: Bearer ${RANCHER_TOKEN}" \
+            "https://${RANCHER_IP}/v3/clusters" \
+            | python3 -c "import sys,json; [print('  id=%s  name=%s  state=%s'%(c['id'],c.get('name','?'),c.get('state','?'))) for c in json.load(sys.stdin).get('data',[])]"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/worker_node_key /tmp/rancher-ca.crt /tmp/fix.sh

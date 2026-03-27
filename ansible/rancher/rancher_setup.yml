@@ -154,6 +154,17 @@
           -n cattle-system \
           --dry-run=client -o yaml | k3s kubectl apply -f -
 
+    # tls-ca must contain the CA cert (same as the self-signed cert) so that
+    # Rancher sets CATTLE_CA_CHECKSUM in cluster import manifests. Without it
+    # cattle-cluster-agent pods crash because they cannot find /etc/kubernetes/
+    # ssl/certs/serverca (the Rancher TLS CA).
+    - name: Create Rancher CA secret (tls-ca)
+      shell: |
+        k3s kubectl create secret generic tls-ca \
+          --from-file=cacerts.pem=/tmp/rancher-tls/tls.crt \
+          -n cattle-system \
+          --dry-run=client -o yaml | k3s kubectl apply -f -
+
     # ── Rancher ───────────────────────────────────────────────────────────────
 
     - name: Add Rancher Helm repo
@@ -172,7 +183,8 @@
           --version "{{ rancher_version }}" \
           --set hostname="{{ rancher_hostname }}" \
           --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
-          --set ingress.tls.source=secret
+          --set ingress.tls.source=secret \
+          --set privateCA=true
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
