@@ -328,7 +328,7 @@
           --arg csec "{{ rancher_oidc_client_secret }}" \
           --arg iss "{{ rancher_oidc_discovery_url }}" \
           --arg rurl "https://{{ rancher_hostname }}/verify-auth" \
-          '. + {enabled:true,clientId:$cid,clientSecret:$csec,issuer:$iss,scope:"openid profile email",rancherUrl:$rurl,accessMode:"unrestricted",allowedPrincipalIds:[],groupSearchEnabled:false}')
+          '. + {enabled:true,clientId:$cid,clientSecret:$csec,issuer:$iss,scope:"openid profile email groups",rancherUrl:$rurl,accessMode:"unrestricted",allowedPrincipalIds:[],groupSearchEnabled:true}')
         RESULT=$(rancher_curl -X PUT "https://localhost/v3/genericOIDCConfigs/genericoidc" \
           -H "Authorization: Bearer $RANCHER_TOKEN" \
           -H "Content-Type: application/json" \

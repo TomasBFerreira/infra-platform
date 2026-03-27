@@ -152,11 +152,11 @@ jobs:
             'clientId': '$OIDC_CLIENT_ID',
             'clientSecret': '$OIDC_CLIENT_SECRET',
             'issuer': '$OIDC_DISCOVERY_URL',
-            'scope': 'openid profile email',
+            'scope': 'openid profile email groups',
             'rancherUrl': 'https://${RANCHER_HOSTNAME}/verify-auth',
             'accessMode': 'unrestricted',
             'allowedPrincipalIds': [],
-            'groupSearchEnabled': False,
+            'groupSearchEnabled': True,
           })
           print(json.dumps(d))
           ")
