@@ -264,6 +264,7 @@ jobs:
           repository: TomasBFerreira/traefik-gitops
           ref: main
           token: ${{ secrets.GH_PAT }}
+          path: traefik-gitops
 
       - name: Install yq if missing
         run: |
@@ -273,6 +274,7 @@ jobs:
           fi
 
       - name: Upsert route in services.yml
+        working-directory: traefik-gitops
         run: |
           yq -i '
             .http.routers[env(ROUTER_NAME)].rule = "Host(`" + env(HOSTNAME) + "`)" |
@@ -284,6 +286,7 @@ jobs:
             config/dynamic/services.yml
 
       - name: Commit and push
+        working-directory: traefik-gitops
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
