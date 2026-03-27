@@ -1,0 +1,108 @@
+name: Diagnose Worker Node
+
+# Quick diagnostic: SSH into a worker node and report k3s/cattle-cluster-agent state.
+# Use this to investigate why a cluster shows "Pending" in Rancher.
+#
+# Usage:
+#   gh workflow run diagnose-worker-node.yml \
+#     --field environment=dev --field worker_ip=192.168.50.211
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+      worker_ip:
+        description: 'Worker node IP (e.g. 192.168.50.211)'
+        required: true
+        default: '192.168.50.211'
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      WORKER_IP: ${{ inputs.worker_ip }}
+      RANCHER_IP: "192.168.50.202"
+      RANCHER_HOST: "rancher-dev.databaes.net"
+    steps:
+      - name: Fetch SSH key from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+      - name: Check cattle-cluster-agent pods
+        run: |
+          ssh-keygen -R "${WORKER_IP}" || true
+          ssh -o StrictHostKeyChecking=no -i /tmp/worker_node_key root@${WORKER_IP} << 'ENDSSH'
+          echo "=== Nodes ==="
+          k3s kubectl get nodes -o wide
+
+          echo ""
+          echo "=== Pods in cattle-system ==="
+          k3s kubectl get pods -n cattle-system -o wide
+
+          echo ""
+          echo "=== cattle-cluster-agent logs (last 50 lines) ==="
+          AGENT_POD=$(k3s kubectl get pods -n cattle-system -l app=cattle-cluster-agent -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [ -n "$AGENT_POD" ]; then
+            k3s kubectl logs -n cattle-system "$AGENT_POD" --tail=50 2>&1 || true
+            echo ""
+            echo "=== cattle-cluster-agent describe ==="
+            k3s kubectl describe pod -n cattle-system "$AGENT_POD" | tail -30
+          else
+            echo "No cattle-cluster-agent pod found"
+            k3s kubectl describe deployment -n cattle-system cattle-cluster-agent 2>&1 || true
+          fi
+
+          echo ""
+          echo "=== CoreDNS NodeHosts (Rancher entry) ==="
+          k3s kubectl get configmap coredns -n kube-system -o jsonpath='{.data.NodeHosts}' | grep -i rancher || echo "(not found)"
+
+          echo ""
+          echo "=== DNS resolution test from cattle-system pod ==="
+          TEST_POD=$(k3s kubectl get pods -n cattle-system -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [ -n "$TEST_POD" ]; then
+            k3s kubectl exec -n cattle-system "$TEST_POD" -- nslookup rancher-dev.databaes.net 2>&1 || true
+          fi
+          ENDSSH
+
+      - name: Check Rancher cluster state via API
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          RANCHER_PASS=$(vault kv get -field=password secret/rancher/dev/bootstrap 2>/dev/null || echo "")
+          if [ -z "$RANCHER_PASS" ]; then
+            echo "No Rancher credentials found"
+            exit 0
+          fi
+          echo "::add-mask::$RANCHER_PASS"
+
+          TOKEN=$(curl -sk -H "Host: ${RANCHER_HOST}" \
+            -X POST "https://${RANCHER_IP}/v3-public/localProviders/local?action=login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"admin\",\"password\":\"${RANCHER_PASS}\"}" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('token',''))" 2>/dev/null)
+          echo "::add-mask::$TOKEN"
+
+          echo "=== All Rancher clusters ==="
+          curl -sk -H "Host: ${RANCHER_HOST}" \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://${RANCHER_IP}/v3/clusters" \
+            | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for c in d.get('data', []):
+    print(f\"  id={c['id']}  name={c.get('name','?')}  state={c.get('state','?')}  conditions={[x['type']+':'+x['status'] for x in c.get('conditions',[]) if x.get('status') != 'True']}\")
+"
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/worker_node_key
