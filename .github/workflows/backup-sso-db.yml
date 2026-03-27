@@ -1,0 +1,77 @@
+name: Backup SSO Database to NFS
+
+# Standalone backup workflow — dumps the current active Authentik PostgreSQL
+# to betsy NFS (/mnt/nfs-shared-data/backups/sso/) without triggering a
+# full blue/green rotation. Useful for:
+#   - Testing the NFS backup path
+#   - Taking an on-demand backup before a risky change
+#   - Seeding the backup after a fresh runner rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  backup:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENV: ${{ inputs.environment }}
+    steps:
+      - name: Resolve active SSO IP from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ACTIVE_IP=$(vault kv get -field=ip secret/sso/${ENV}/active-slot 2>/dev/null || echo "")
+          if [ -z "$ACTIVE_IP" ]; then
+            echo "ERROR: No active SSO slot found for env=${ENV}"
+            exit 1
+          fi
+          echo "Active SSO LXC: ${ACTIVE_IP}"
+          echo "ACTIVE_IP=${ACTIVE_IP}" >> $GITHUB_ENV
+
+      - name: Dump PostgreSQL and mirror to NFS
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_backup_key
+          chmod 600 /tmp/sso_backup_key
+
+          BACKUP_FILE="/opt/sso-backup/sso_${ENV}_db.sql.gz"
+          mkdir -p /opt/sso-backup
+
+          echo "Dumping Authentik PostgreSQL from ${ACTIVE_IP}..."
+          ssh -o StrictHostKeyChecking=no -i /tmp/sso_backup_key root@${ACTIVE_IP} \
+            "docker exec authentik-postgresql pg_dump -U authentik authentik 2>/dev/null | gzip" \
+            > "$BACKUP_FILE" 2>/dev/null || true
+
+          if [[ ! -s "$BACKUP_FILE" ]]; then
+            echo "ERROR: DB dump is empty — Authentik may not be running on ${ACTIVE_IP}"
+            rm -f "$BACKUP_FILE"
+            exit 1
+          fi
+          echo "Local backup: $(du -sh "$BACKUP_FILE" | cut -f1)"
+
+          PVE_SSH_USER=$(echo "${{ secrets.PVE_USER }}" | cut -d'@' -f1)
+          echo "Mirroring to betsy NFS..."
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 \
+            "mkdir -p /mnt/nfs-shared-data/backups/sso"
+          scp -o StrictHostKeyChecking=no \
+            "$BACKUP_FILE" \
+            ${PVE_SSH_USER}@192.168.50.2:/mnt/nfs-shared-data/backups/sso/sso_${ENV}_db.sql.gz
+
+          NFS_SIZE=$(ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 \
+            "du -sh /mnt/nfs-shared-data/backups/sso/sso_${ENV}_db.sql.gz 2>/dev/null | cut -f1")
+          echo "NFS backup verified: ${NFS_SIZE} at betsy:/mnt/nfs-shared-data/backups/sso/sso_${ENV}_db.sql.gz"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/sso_backup_key
