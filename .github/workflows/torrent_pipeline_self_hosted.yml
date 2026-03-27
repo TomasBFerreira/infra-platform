@@ -314,13 +314,53 @@ jobs:
 
   register-dns:
     needs: [resolve-slots, flip-active]
-    uses: TomasBFerreira/traefik-gitops/.github/workflows/register-route.yml@main
-    with:
-      router_name:  qbittorrent-router
-      service_name: qbittorrent-service
-      hostname:     torrent.databaes.net
-      backend_urls: "http://${{ needs.resolve-slots.outputs.staging_ip }}:8080"
-      # middleware: authentik-dev  # uncomment once SSO is configured for this service
+    if: needs.flip-active.result == 'success'
+    runs-on: self-hosted
+    env:
+      ROUTER_NAME:  qbittorrent-router
+      SERVICE_NAME: qbittorrent-service
+      HOSTNAME:     torrent.databaes.net
+      BACKEND_URL:  "http://${{ needs.resolve-slots.outputs.staging_ip }}:8080"
+    steps:
+      - name: Checkout traefik-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: TomasBFerreira/traefik-gitops
+          ref: main
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install yq if missing
+        run: |
+          if ! command -v yq &>/dev/null; then
+            curl -fsSL "https://github.com/mikefarah/yq/releases/download/v4.44.6/yq_linux_amd64" \
+              -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Upsert route in services.yml
+        run: |
+          yq -i '
+            .http.routers[env(ROUTER_NAME)].rule = "Host(`" + env(HOSTNAME) + "`)" |
+            .http.routers[env(ROUTER_NAME)].service = env(SERVICE_NAME) |
+            .http.routers[env(ROUTER_NAME)].entryPoints = ["web"]
+          ' config/dynamic/services.yml
+          yq -i "del(.http.routers[env(ROUTER_NAME)].middlewares)" \
+            config/dynamic/services.yml
+          yq -i ".http.services[env(SERVICE_NAME)].loadBalancer.servers = [{\"url\": \"${BACKEND_URL}\"}]" \
+            config/dynamic/services.yml
+
+      - name: Commit and push
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git pull --rebase origin main
+          git add config/dynamic/services.yml
+          if git diff --cached --quiet; then
+            echo "Route already registered — nothing to commit"
+          else
+            git commit -m "feat(routes): register ${HOSTNAME}"
+            git push origin main
+            echo "Pushed — sync-dns.yml will fire automatically"
+          fi
 
   teardown-old-active:
     needs: [resolve-slots, flip-active]
