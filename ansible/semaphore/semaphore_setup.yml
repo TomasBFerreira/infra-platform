@@ -14,6 +14,7 @@
           - ansible
           - python3-pip
           - jq
+          - sudo
         state: present
         update_cache: yes
 
