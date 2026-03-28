@@ -83,24 +83,55 @@ journalctl -u cloudflared -f  # watch for "Connected to Cloudflare"
 
 ## GitHub Actions runner is stuck
 
-**Symptom:** A job is queued but never picked up, or a job is stuck mid-run.
+There are two runner tiers. Identify which one is stuck.
 
-**Check Runner.Listener process:**
+### Env runner (CT 201 for dev, CT 101 for prod)
+
 ```bash
-ps aux | grep Runner
+# SSH into the runner CT (CT 201 for dev)
+ssh root@192.168.20.101  # dev
+
+# Check service status
+SERVICE=$(systemctl list-units --type=service | grep 'actions.runner' | awk '{print $1}' | head -1)
+systemctl status "$SERVICE"
 ```
 
-If `Runner.Listener` is running but jobs aren't being picked up, it may have lost connection to `broker.actions.githubusercontent.com`. Sending `SIGTERM` forces a reconnect (the service wrapper restarts it automatically):
+If `Runner.Listener` is running but jobs aren't being picked up, it may have lost connection to GitHub. Sending `SIGTERM` forces a reconnect (the service wrapper restarts it automatically):
 ```bash
-kill -SIGTERM <pid-of-Runner.Listener>
+pgrep -a Runner.Listener  # find PID
+kill -SIGTERM <pid>
 # RunnerService.js restarts it within a few seconds
 ```
 
 **Restart the runner service:**
 ```bash
-cd /app/actions-runner
-sudo ./svc.sh stop
-sudo ./svc.sh start
+# From inside the runner CT:
+cd /opt/github-runners/tomasbferreira-infra-platform
+./svc.sh stop
+./svc.sh start
+```
+
+### Management runner (CT 200 — bootstrap vault)
+
+```bash
+ssh root@192.168.50.200  # or via Proxmox: pct exec 200 -- bash
+
+systemctl status actions.runner.TomasBFerreira-infra-platform.github-runner-management
+# Restart if needed:
+cd /opt/github-runners/tomasbferreira-infra-platform
+./svc.sh stop && ./svc.sh start
+```
+
+### Env runner lost its CT entirely
+
+If the runner CT was destroyed and the env runner is missing:
+
+```bash
+# Re-run the github-runner pipeline — it runs on the management runner (CT 200)
+# which is never affected by env teardowns
+gh workflow run github-runner_pipeline_self_hosted.yml \
+  --repo TomasBFerreira/infra-platform \
+  --field environment=dev
 ```
 
 ---
