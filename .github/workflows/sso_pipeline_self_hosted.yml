@@ -351,6 +351,7 @@ jobs:
 
   flip-active:
     needs: [resolve-slots, ansible-staging]
+    if: always() && needs.ansible-staging.result == 'success'
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     steps:
       - name: Record new active slot in bootstrap vault
@@ -366,7 +367,7 @@ jobs:
 
   configure-vault-oidc:
     needs: [resolve-slots, flip-active]
-    if: needs.flip-active.result == 'success'
+    if: always() && needs.flip-active.result == 'success'
     uses: ./.github/workflows/configure-vault-oidc.yml
     with:
       environment: ${{ needs.resolve-slots.outputs.environment }}
@@ -374,7 +375,7 @@ jobs:
 
   configure-bootstrap-vault-oidc:
     needs: [flip-active, configure-vault-oidc]
-    if: needs.flip-active.result == 'success'
+    if: always() && needs.flip-active.result == 'success'
     uses: ./.github/workflows/configure-bootstrap-vault-oidc.yml
     secrets: inherit
 
@@ -435,6 +436,7 @@ jobs:
   teardown-old-active:
     needs: [resolve-slots, flip-active, backup-db, configure-vault-oidc, configure-bootstrap-vault-oidc]
     if: >-
+      always() &&
       needs.resolve-slots.outputs.first_run == 'false' &&
       needs.flip-active.result == 'success' &&
       (needs.backup-db.result == 'success' || needs.backup-db.result == 'failure') &&
