@@ -23,13 +23,9 @@
       apt:
         name:
           - curl
-          - apt-transport-https
-          - ca-certificates
-          - open-iscsi      # required by k3s for some storage backends
           - nfs-common      # required for NFS PersistentVolumes
           - qemu-guest-agent
         state: present
-        update_cache: yes
         cache_valid_time: 3600  # skip apt-get update if cloud-init ran it < 1hr ago
         lock_timeout: 30
 
