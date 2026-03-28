@@ -54,6 +54,30 @@
     # backend, which does not interfere with nftables.  After the install we
     # reset the Ansible connection and wait for SSH to recover before continuing.
 
+    # ── k3s airgap install ───────────────────────────────────────────────────
+    # The VM is on an internal VLAN with no direct internet access.
+    # We download the k3s binary and install script on the Ansible controller
+    # (the GitHub Actions runner, which has internet access) and copy them to
+    # the VM, then run the installer with INSTALL_K3S_SKIP_DOWNLOAD=true.
+
+    - name: Download k3s binary on controller
+      get_url:
+        url: https://github.com/k3s-io/k3s/releases/latest/download/k3s
+        dest: /tmp/k3s-binary
+        mode: '0755'
+        timeout: 120
+      delegate_to: localhost
+      run_once: true
+
+    - name: Download k3s install script on controller
+      get_url:
+        url: https://get.k3s.io
+        dest: /tmp/k3s-install.sh
+        mode: '0755'
+        timeout: 60
+      delegate_to: localhost
+      run_once: true
+
     - name: Switch to iptables-legacy before k3s install
       shell: |
         apt-get install -y -q iptables arptables ebtables || true
@@ -63,12 +87,22 @@
         update-alternatives --set ebtables /usr/sbin/ebtables-legacy || true
       changed_when: false
 
-    - name: Install k3s
-      shell: |
-        curl -sfL https://get.k3s.io | sh -
+    - name: Copy k3s binary to VM
+      copy:
+        src: /tmp/k3s-binary
+        dest: /usr/local/bin/k3s
+        mode: '0755'
+
+    - name: Copy k3s install script to VM
+      copy:
+        src: /tmp/k3s-install.sh
+        dest: /tmp/k3s-install.sh
+        mode: '0755'
+
+    - name: Install k3s (airgap — skip download, binary already present)
+      shell: INSTALL_K3S_SKIP_DOWNLOAD=true sh /tmp/k3s-install.sh
       args:
-        creates: /usr/local/bin/k3s
-      ignore_unreachable: yes
+        creates: /etc/rancher/k3s/k3s.yaml
 
     - name: Reset SSH connection after k3s CNI starts
       meta: reset_connection
