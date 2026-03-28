@@ -1,0 +1,377 @@
+name: Worker Node (GPU) Pipeline (Self-Hosted)
+
+# GPU worker nodes follow the same numbered-singleton scheme as regular worker
+# nodes but deploy to a separate VMID range and include GPU passthrough.
+# Only betsy (prod) has the GTX 970; other environments share the same pipeline
+# structure for future expansion but will not have GPU passthrough hardware.
+#
+# VMID scheme (GPU worker nodes):
+#   prod (betsy):     VMID = 120+N, IP = 192.168.10.(20+N) → N=1: 121 → .21
+#   dev  (benedict):  VMID = 220+N, IP = 192.168.20.(20+N) → N=1: 221 → .21
+#   qa   (vladimir):  VMID = 320+N, IP = 192.168.30.(20+N) → N=1: 321 → .21
+#
+# 6-job structure (mirroring worker-node pipeline):
+#   resolve-node  → resolve-slots equivalent
+#   terraform-node → terraform-staging equivalent
+#   ansible-node  → ansible-staging equivalent
+#   register-node → flip-active equivalent (records node in bootstrap vault)
+#   (no teardown-old-active — singletons; use manual deprovision)
+#   cleanup-on-failure → unchanged
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_number:
+        description: 'GPU worker node number (e.g. 1). Prod: VMID=120+N, IP=192.168.10.(20+N).'
+        required: true
+        default: '1'
+        type: string
+      target_node:
+        description: 'Proxmox node to deploy on (GPU passthrough only available on betsy)'
+        required: true
+        default: 'betsy'
+        type: choice
+        options:
+          - betsy
+          - benedict
+          - vladimir
+      template_vmid:
+        description: 'VMID of the cloud-init template VM to clone (must exist on target node)'
+        required: true
+        default: '9000'
+        type: string
+
+concurrency:
+  group: worker-node-gpu-pipeline-${{ github.event.inputs.node_number }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-node:
+    runs-on: [self-hosted, "${{ github.event.inputs.target_node == 'betsy' && 'prod' || github.event.inputs.target_node == 'vladimir' && 'qa' || 'dev' }}"]
+    outputs:
+      node_number:      ${{ steps.resolve.outputs.node_number }}
+      vmid:             ${{ steps.resolve.outputs.vmid }}
+      ip_address:       ${{ steps.resolve.outputs.ip_address }}
+      vm_hostname:      ${{ steps.resolve.outputs.vm_hostname }}
+      pve_api_url:      ${{ steps.resolve.outputs.pve_api_url }}
+      pve_node:         ${{ steps.resolve.outputs.pve_node }}
+      env:              ${{ steps.resolve.outputs.env }}
+      rancher_ip:       ${{ steps.resolve.outputs.rancher_ip }}
+      rancher_hostname: ${{ steps.resolve.outputs.rancher_hostname }}
+      gateway:          ${{ steps.resolve.outputs.gateway }}
+      network_bridge:   ${{ steps.resolve.outputs.network_bridge }}
+    steps:
+      - name: Resolve node parameters
+        id: resolve
+        run: |
+          NODE_NUM="${{ github.event.inputs.node_number }}"
+          TARGET_NODE="${{ github.event.inputs.target_node }}"
+
+          if ! echo "$NODE_NUM" | grep -qE '^[1-9][0-9]*$'; then
+            echo "ERROR: node_number must be a positive integer, got: $NODE_NUM"
+            exit 1
+          fi
+
+          # GPU worker VMID/IP scheme: prod(betsy)=120+N, dev(benedict)=220+N, qa(vladimir)=320+N
+          # IP: 192.168.<env_subnet>.(20+N)
+          case "$TARGET_NODE" in
+            benedict)
+              VMID_BASE=220; ENV=dev; ENV_SUBNET=20
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
+              RANCHER_IP="192.168.20.2"; RANCHER_HOSTNAME="rancher-dev.databaes.net"
+              ;;
+            betsy)
+              VMID_BASE=120; ENV=prod; ENV_SUBNET=10
+              PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
+              RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
+              ;;
+            vladimir)
+              VMID_BASE=320; ENV=qa; ENV_SUBNET=30
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
+              RANCHER_IP="192.168.30.2"; RANCHER_HOSTNAME="rancher-qa.databaes.net"
+              ;;
+            *)
+              echo "ERROR: unknown target_node: $TARGET_NODE"
+              exit 1
+              ;;
+          esac
+
+          VMID=$((VMID_BASE + NODE_NUM))
+          IP_LAST=$((20 + NODE_NUM))
+          IP_ADDRESS="192.168.${ENV_SUBNET}.${IP_LAST}"
+          PADDED=$(printf '%02d' "$NODE_NUM")
+          VM_HOSTNAME="worker-node-gpu-${PADDED}"
+
+          echo "node_number=$NODE_NUM"              >> "$GITHUB_OUTPUT"
+          echo "vmid=$VMID"                         >> "$GITHUB_OUTPUT"
+          echo "ip_address=$IP_ADDRESS"             >> "$GITHUB_OUTPUT"
+          echo "vm_hostname=$VM_HOSTNAME"           >> "$GITHUB_OUTPUT"
+          echo "pve_api_url=$PVE_API_URL"           >> "$GITHUB_OUTPUT"
+          echo "pve_node=$TARGET_NODE"              >> "$GITHUB_OUTPUT"
+          echo "env=$ENV"                           >> "$GITHUB_OUTPUT"
+          echo "rancher_ip=$RANCHER_IP"             >> "$GITHUB_OUTPUT"
+          echo "rancher_hostname=$RANCHER_HOSTNAME" >> "$GITHUB_OUTPUT"
+          echo "gateway=$GATEWAY"                   >> "$GITHUB_OUTPUT"
+          echo "network_bridge=$NETWORK_BRIDGE"     >> "$GITHUB_OUTPUT"
+
+          echo "Resolved: $VM_HOSTNAME ($ENV) — VMID $VMID — $IP_ADDRESS — $TARGET_NODE"
+
+  terraform-node:
+    needs: resolve-node
+    runs-on: [self-hosted, "${{ needs.resolve-node.outputs.env }}"]
+    env:
+      NODE_NUM:    ${{ needs.resolve-node.outputs.node_number }}
+      VMID:        ${{ needs.resolve-node.outputs.vmid }}
+      IP_ADDRESS:  ${{ needs.resolve-node.outputs.ip_address }}
+      VM_HOSTNAME: ${{ needs.resolve-node.outputs.vm_hostname }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ inputs.target_node == 'betsy' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
+          TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node-gpu init -input=false
+
+      - name: Pre-flight — destroy any stale VM with this VMID
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ inputs.target_node == 'betsy' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
+          TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
+          PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node-gpu destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.node-${VMID}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "qm stop ${VMID} 2>/dev/null || true; qm destroy ${VMID} --purge 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/worker-node-gpu/terraform.node-${VMID}.tfstate
+
+      - name: Terraform Apply
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ inputs.target_node == 'betsy' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
+          TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node-gpu apply \
+            -no-color -input=false -auto-approve \
+            -state=terraform.node-${VMID}.tfstate
+
+  ansible-node:
+    needs: [resolve-node, terraform-node]
+    runs-on: [self-hosted, "${{ needs.resolve-node.outputs.env }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      VMID:         ${{ needs.resolve-node.outputs.vmid }}
+      IP_ADDRESS:   ${{ needs.resolve-node.outputs.ip_address }}
+      VM_HOSTNAME:  ${{ needs.resolve-node.outputs.vm_hostname }}
+      DEPLOY_ENV:   ${{ needs.resolve-node.outputs.env }}
+      RANCHER_IP:   ${{ needs.resolve-node.outputs.rancher_ip }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Fetch SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+      - name: Fetch Rancher bootstrap credentials
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          RANCHER_PASS=$(vault kv get -field=password secret/rancher/${DEPLOY_ENV}/bootstrap 2>/dev/null || echo "")
+          if [ -n "$RANCHER_PASS" ]; then
+            echo "::add-mask::$RANCHER_PASS"
+            echo "RANCHER_BOOTSTRAP_PASSWORD=$RANCHER_PASS" >> $GITHUB_ENV
+            echo "Rancher credentials found — cluster will be registered with Rancher"
+          else
+            echo "No Rancher credentials found for env=${DEPLOY_ENV} — skipping Rancher registration"
+          fi
+
+          if vault kv get secret/rancher/${DEPLOY_ENV}/rbac > /dev/null 2>&1; then
+            RBAC_CLUSTER="$(vault kv get -field=cluster_bindings secret/rancher/${DEPLOY_ENV}/rbac 2>/dev/null || echo '[]')"
+            python3 -c "import json,sys; c=json.loads(sys.argv[1]); print(json.dumps({'rancher_rbac_cluster_bindings':c}))" "$RBAC_CLUSTER" > /tmp/rancher_rbac_vars.json
+            echo "RANCHER_RBAC_VARS_FILE=/tmp/rancher_rbac_vars.json" >> "$GITHUB_ENV"
+            echo "Rancher RBAC cluster bindings found"
+          else
+            echo "No RBAC bindings in Vault (secret/rancher/${DEPLOY_ENV}/rbac) — skipping"
+          fi
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${IP_ADDRESS}..."
+          timeout 180 bash -c "until nc -z ${IP_ADDRESS} 22; do sleep 5; done"
+          echo "SSH is up"
+
+      - name: Run Ansible playbook
+        run: |
+          ssh-keygen -R "${IP_ADDRESS}" || true
+          ansible-playbook \
+            -i "${IP_ADDRESS}," \
+            -v \
+            --private-key /tmp/worker_node_key \
+            -e "ansible_host=${IP_ADDRESS}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "vm_hostname=${VM_HOSTNAME}" \
+            -e "rancher_ip=${RANCHER_IP}" \
+            -e "rancher_hostname=${{ needs.resolve-node.outputs.rancher_hostname }}" \
+            ${RANCHER_BOOTSTRAP_PASSWORD:+-e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}"} \
+            ${RANCHER_RBAC_VARS_FILE:+-e "@${RANCHER_RBAC_VARS_FILE}"} \
+            ansible/worker-node-gpu/worker-node-gpu_setup.yml
+
+  register-node:
+    needs: [resolve-node, ansible-node]
+    runs-on: [self-hosted, "${{ needs.resolve-node.outputs.env }}"]
+    steps:
+      - name: Record node state in bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          NODE_NUM="${{ needs.resolve-node.outputs.node_number }}"
+          PVE_NODE="${{ needs.resolve-node.outputs.pve_node }}"
+          IP="${{ needs.resolve-node.outputs.ip_address }}"
+
+          vault kv put secret/worker-node-gpu/${NODE_NUM}/state \
+            vmid="${{ needs.resolve-node.outputs.vmid }}" \
+            ip="${IP}" \
+            hostname="${{ needs.resolve-node.outputs.vm_hostname }}" \
+            pve_node="${PVE_NODE}" \
+            provisioned_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          case "${PVE_NODE}" in
+            benedict) ENV=dev ;;
+            betsy)    ENV=prod ;;
+            vladimir) ENV=qa ;;
+            *) echo "Unknown pve_node '${PVE_NODE}', skipping env slot write"; exit 0 ;;
+          esac
+          vault kv put secret/worker-node-gpu/${ENV}/active-slot \
+            ip="${IP}" \
+            node_number="${NODE_NUM}" \
+            vmid="${{ needs.resolve-node.outputs.vmid }}"
+
+  cleanup-on-failure:
+    needs: [resolve-node, terraform-node, ansible-node]
+    if: failure()
+    runs-on: [self-hosted, "${{ needs.resolve-node.outputs.env }}"]
+    env:
+      VMID: ${{ needs.resolve-node.outputs.vmid }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
+      - name: Terraform Init
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ inputs.target_node == 'betsy' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
+          TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node-gpu init -input=false
+
+      - name: Terraform Destroy failed VM
+        env:
+          TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
+          TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
+          TF_VAR_pve_pass:       ${{ inputs.target_node == 'betsy' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          TF_VAR_vmid:           ${{ env.VMID }}
+          TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
+          TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
+          TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
+          PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/worker-node-gpu destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.node-${VMID}.tfstate || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            "qm stop ${VMID} 2>/dev/null || true; qm destroy ${VMID} --purge 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/worker-node-gpu/terraform.node-${VMID}.tfstate
