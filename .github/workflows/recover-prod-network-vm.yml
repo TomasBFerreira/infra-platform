@@ -11,7 +11,7 @@ jobs:
       - name: Check container status via Proxmox API
         env:
           PVE_USER: ${{ secrets.PVE_USER }}
-          PVE_PASS: ${{ secrets.PVE_PASS }}
+          PVE_PASS: ${{ secrets.PVE_PROD_PASS }}
         run: |
           # Authenticate to Proxmox and get ticket
           RESPONSE=$(curl -s -k -X POST \
@@ -36,7 +36,7 @@ jobs:
         if: env.CONTAINER_STATUS != 'running'
         env:
           PVE_USER: ${{ secrets.PVE_USER }}
-          PVE_PASS: ${{ secrets.PVE_PASS }}
+          PVE_PASS: ${{ secrets.PVE_PROD_PASS }}
         run: |
           echo "Container is not running ($CONTAINER_STATUS) — starting it..."
           curl -s -k -X POST \

@@ -134,6 +134,7 @@ The Terraform Vault provider always uses the **bootstrap vault** (`VAULT_BOOTSTR
 | VAULT_QA_ROOT_TOKEN   | QA vault root token (vault-ct re-runs)       |
 | VAULT_PROD_ROOT_TOKEN | Prod vault root token (vault-ct re-runs)     |
 | PVE_USER              | Proxmox user (e.g. root@pam)                 |
-| PVE_PASS              | Proxmox password                             |
+| PVE_PASS              | Proxmox password (dev/QA nodes — benedict/vladimir) |
+| PVE_PROD_PASS         | Proxmox password (prod node — betsy)         |
 | SSH_USER              | Default SSH user for CTs                     |
 | GH_PAT                | GitHub PAT for setting secrets via gh CLI    |
