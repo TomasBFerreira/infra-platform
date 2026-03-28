@@ -269,7 +269,14 @@ jobs:
           git pull origin ${{ github.ref_name }}
 
       - name: Pull latest traefik-gitops (canonical Traefik config source)
-        run: git -C /app/traefik-gitops pull --rebase origin main
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -d /app/traefik-gitops/.git ]; then
+            git -C /app/traefik-gitops pull --rebase origin main
+          else
+            gh repo clone TomasBFerreira/traefik-gitops /app/traefik-gitops
+          fi
 
       - name: Install Ansible collections
         run: |
