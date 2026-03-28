@@ -7,9 +7,9 @@
     # ── System prerequisites ─────────────────────────────────────────────────
 
     - name: Wait for cloud-init to finish
-      shell: |
-        timeout 120 bash -c 'until [ -f /var/lib/cloud/instance/boot-finished ]; do sleep 3; done'
+      command: cloud-init status --wait
       changed_when: false
+      failed_when: false
 
     - name: Install prerequisites
       apt:
