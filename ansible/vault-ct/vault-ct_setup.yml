@@ -524,10 +524,10 @@
         # Redirect URIs must cover both blue/green IPs for all envs + CLI port
         vault write auth/oidc/role/admin \
           bound_audiences="$CLIENT_ID" \
-          allowed_redirect_uris="http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback" \
-          allowed_redirect_uris="http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback" \
-          allowed_redirect_uris="http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback" \
-          allowed_redirect_uris="http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback" \
+          allowed_redirect_uris="http://192.168.20.45:8200/ui/vault/auth/oidc/oidc/callback" \
+          allowed_redirect_uris="http://192.168.20.46:8200/ui/vault/auth/oidc/oidc/callback" \
+          allowed_redirect_uris="http://192.168.10.45:8200/ui/vault/auth/oidc/oidc/callback" \
+          allowed_redirect_uris="http://192.168.10.46:8200/ui/vault/auth/oidc/oidc/callback" \
           allowed_redirect_uris="http://localhost:8250/oidc/callback" \
           allowed_redirect_uris="http://localhost:8200/oidc/callback" \
           user_claim="sub" \

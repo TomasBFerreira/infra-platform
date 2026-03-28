@@ -51,3 +51,13 @@ variable "template_vmid" {
   type        = number
   default     = 9000
 }
+
+variable "network_bridge" {
+  description = "Proxmox network bridge for the CT (e.g. vmbr10 for prod, vmbr20 for dev, vmbr30 for qa)"
+  type        = string
+}
+
+variable "gateway" {
+  description = "Default gateway for the CT (e.g. 192.168.10.1 for prod, 192.168.20.1 for dev, 192.168.30.1 for qa)"
+  type        = string
+}

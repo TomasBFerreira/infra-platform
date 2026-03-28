@@ -16,9 +16,9 @@ resource "proxmox_lxc" "rancher" {
 
   network {
     name   = "eth0"
-    bridge = "vmbr0"
+    bridge = var.network_bridge
     ip     = "${var.ip_address}/24"
-    gw     = "192.168.50.1"
+    gw     = var.gateway
   }
 
   # K3s requires a privileged LXC — unprivileged containers cannot manage

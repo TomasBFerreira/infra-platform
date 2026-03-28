@@ -9,11 +9,11 @@ Bootstrap vault (CT 200, 192.168.50.200)
     Permanent. Never redeployed. Stores SSH keys, slot state, shared infra secrets.
     Credentials: VAULT_BOOTSTRAP_ADDR / VAULT_DEV_TOKEN GitHub secrets.
 
-Dev env vault (192.168.50.245 or .246, whichever is active)
+Dev env vault (192.168.20.45 or .46, whichever is active)
     Blue/green deployed. Stores dev environment secrets.
     Credentials: VAULT_ADDR / VAULT_TOKEN GitHub secrets.
 
-Prod env vault (192.168.50.145 or .146, whichever is active)
+Prod env vault (192.168.10.45 or .46, whichever is active)
     Blue/green deployed. Stores prod environment secrets.
     Credentials: VAULT_PROD_ADDR / VAULT_PROD_TOKEN GitHub secrets.
 ```
@@ -76,7 +76,7 @@ Runner state (singletons, no slot rotation):
 
 **Admin operations** (enabling auth methods, writing policies) require the root token. The root token is stored at `/root/vault-init.json` on the vault CT itself (mode 0400). On each vault-ct deploy, the root token is also saved to `VAULT_DEV_ROOT_TOKEN` / `VAULT_ROOT_TOKEN` GitHub secrets via `gh secret set`.
 
-**OIDC login** (interactive, human use): after OIDC is configured, users log in via `vault login -method=oidc -address=http://192.168.50.245:8200` or through the Vault UI → Sign in with OIDC provider. Grants `admin` policy (full access).
+**OIDC login** (interactive, human use): after OIDC is configured, users log in via `vault login -method=oidc -address=http://192.168.20.45:8200` or through the Vault UI → Sign in with OIDC provider. Grants `admin` policy (full access).
 
 ## Vault OIDC Auth Method
 
@@ -84,17 +84,17 @@ Configured automatically by the `configure-vault-oidc` workflow after every vaul
 
 | Setting | Value |
 |---------|-------|
-| Discovery URL | `http://192.168.50.247:9000/application/o/vault/` (dev) |
+| Discovery URL | `http://192.168.20.75:9000/application/o/vault/` (dev) |
 | Default role | `admin` |
 | User claim | `sub` |
 | Policy | `admin` (full access — appropriate for homelab) |
 | Token TTL | 12h |
 
 Allowed redirect URIs (configured in both Vault and Authentik):
-- `http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback`
-- `http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback`
-- `http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback`
-- `http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback`
+- `http://192.168.20.45:8200/ui/vault/auth/oidc/oidc/callback`
+- `http://192.168.20.46:8200/ui/vault/auth/oidc/oidc/callback`
+- `http://192.168.10.45:8200/ui/vault/auth/oidc/oidc/callback`
+- `http://192.168.10.46:8200/ui/vault/auth/oidc/oidc/callback`
 - `https://vault-dev.databaes.net/ui/vault/auth/oidc/oidc/callback`
 - `https://vault.databaes.net/ui/vault/auth/oidc/oidc/callback`
 - `http://localhost:8250/oidc/callback`

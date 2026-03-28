@@ -32,6 +32,8 @@ jobs:
       vmid:         ${{ steps.rancher.outputs.vmid }}
       ip:           ${{ steps.rancher.outputs.ip }}
       hostname:     ${{ steps.rancher.outputs.hostname }}
+      gateway:        ${{ steps.rancher.outputs.gateway }}
+      network_bridge: ${{ steps.rancher.outputs.network_bridge }}
     steps:
       - name: Resolve rancher VMID, IP, and node
         id: rancher
@@ -39,22 +41,28 @@ jobs:
           ENV="${{ github.event.inputs.environment || 'dev' }}"
 
           # rancher uses singleton scheme (no blue/green):
-          # prod=102/.102 on betsy, dev=202/.202 on benedict, qa=302/.302 on vladimir
+          # prod=102/.2 on betsy, dev=202/.2 on benedict, qa=302/.2 on vladimir
           case "$ENV" in
             dev)
-              VMID=202; IP="192.168.50.202"
+              VMID=202; IP="192.168.20.2"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="benedict"
+              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
+              RANCHER_IP="192.168.20.2"; RANCHER_HOSTNAME="rancher-dev.databaes.net"
               ;;
             qa)
-              VMID=302; IP="192.168.50.302"
+              VMID=302; IP="192.168.30.2"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="vladimir"
+              GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
+              RANCHER_IP="192.168.30.2"; RANCHER_HOSTNAME="rancher-qa.databaes.net"
               ;;
             prod)
-              VMID=102; IP="192.168.50.102"
+              VMID=102; IP="192.168.10.2"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
               PVE_NODE="betsy"
+              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
+              RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
               ;;
           esac
 
@@ -64,6 +72,10 @@ jobs:
           echo "vmid=$VMID"               >> "$GITHUB_OUTPUT"
           echo "ip=$IP"                   >> "$GITHUB_OUTPUT"
           echo "hostname=rancher-$ENV"    >> "$GITHUB_OUTPUT"
+          echo "gateway=$GATEWAY"               >> "$GITHUB_OUTPUT"
+          echo "network_bridge=$NETWORK_BRIDGE" >> "$GITHUB_OUTPUT"
+          echo "rancher_ip=$RANCHER_IP"         >> "$GITHUB_OUTPUT"
+          echo "rancher_hostname=$RANCHER_HOSTNAME" >> "$GITHUB_OUTPUT"
 
   terraform-rancher:
     needs: resolve-rancher
@@ -77,6 +89,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-rancher.outputs.pve_api_url }}
@@ -89,6 +108,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-rancher.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-rancher.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/rancher init -input=false
@@ -107,6 +128,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-rancher.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-rancher.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/rancher destroy \
@@ -130,6 +153,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-rancher.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-rancher.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/rancher apply \
@@ -190,6 +215,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Install Ansible collections
         run: |
@@ -415,6 +447,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-rancher.outputs.pve_api_url }}
@@ -427,6 +466,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ needs.resolve-rancher.outputs.hostname }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-rancher.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-rancher.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/rancher init -input=false
@@ -443,6 +484,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ needs.resolve-rancher.outputs.hostname }}
           TF_VAR_target_node:   ${{ needs.resolve-rancher.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-rancher.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-rancher.outputs.gateway }}
           PVE_API:  ${{ needs.resolve-rancher.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |

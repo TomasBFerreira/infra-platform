@@ -3,8 +3,12 @@
 ## Stack
 
 ```
-GitHub Actions (self-hosted runner on CT 200)
-    ├── Terraform  — provisions Proxmox LXC containers
+GitHub Actions (two-tier self-hosted runner setup)
+    ├── CT 200 (bootstrap vault): management runner — label [self-hosted, management]
+    │       Runs the github-runner pipeline only; stable anchor that survives env destruction
+    ├── CT 201/101/301 (env runners): env runners — label [self-hosted, linux, <env>]
+    │       Run all other pipelines for their respective env
+    ├── Terraform  — provisions Proxmox LXC containers (Docker or direct binary fallback)
     ├── Ansible    — configures services inside containers
     └── gh CLI     — manages secrets, triggers workflows
 
@@ -26,6 +30,8 @@ Services (all LXC containers, Debian 12)
 **Vault as source of truth for runtime secrets.** All service credentials (Tailscale keys, AdGuard passwords, WireGuard keys, OIDC client secrets) live in Vault, not in environment variables or config files on disk. Pipelines fetch secrets at deploy time and inject them as Ansible variables.
 
 **Bootstrap vault is the stable anchor.** A permanently-running vault on CT 200 stores SSH keys, slot state, and shared infra secrets. It never gets blue/green deployed — if it goes down, nothing can deploy, but running services are unaffected.
+
+**Management runner on bootstrap vault.** CT 200 also runs a permanent GitHub Actions runner with the `management` label. The github-runner pipeline runs on this runner so it can rebuild any env runner (including CT 201) from scratch — even after a full env teardown. All other pipelines run on the env-specific runners (CT 201 for dev, etc.).
 
 **Critical infra starts first on host reboot.** `vault-ct`, `network-vm`, and `sso` have `onboot = true` and Proxmox startup order configured (`vault-ct` order 1, `network-vm` order 2, `sso` order 3, each with a 30 s `up_delay`). This ensures secrets, networking, and authentication are available before any downstream services attempt to start.
 

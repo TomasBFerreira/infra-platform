@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   resolve-runner:
-    runs-on: self-hosted
+    runs-on: [self-hosted, management]
     outputs:
       environment:  ${{ steps.runner.outputs.environment }}
       pve_api_url:  ${{ steps.runner.outputs.pve_api_url }}
@@ -32,6 +32,8 @@ jobs:
       vmid:         ${{ steps.runner.outputs.vmid }}
       ip:           ${{ steps.runner.outputs.ip }}
       hostname:     ${{ steps.runner.outputs.hostname }}
+      gateway:        ${{ steps.runner.outputs.gateway }}
+      network_bridge: ${{ steps.runner.outputs.network_bridge }}
     steps:
       - name: Resolve runner VMID, IP, and node
         id: runner
@@ -39,22 +41,26 @@ jobs:
           ENV="${{ github.event.inputs.environment || 'dev' }}"
 
           # github-runner uses singleton scheme (no blue/green):
-          # prod=101/.101 on betsy, dev=201/.201 on benedict, qa=301/.301 on vladimir
+          # prod=101 on betsy, dev=201 on benedict, qa=301 on vladimir
+          # IP last-octet = 101 (not .1 to avoid gateway conflict)
           case "$ENV" in
             dev)
-              VMID=201; IP="192.168.50.201"
+              VMID=201; IP="192.168.20.101"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="benedict"
+              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
               ;;
             qa)
-              VMID=301; IP="192.168.50.301"
+              VMID=301; IP="192.168.30.101"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="vladimir"
+              GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
               ;;
             prod)
-              VMID=101; IP="192.168.50.101"
+              VMID=101; IP="192.168.10.101"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
               PVE_NODE="betsy"
+              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
               ;;
           esac
 
@@ -64,10 +70,12 @@ jobs:
           echo "vmid=$VMID"               >> "$GITHUB_OUTPUT"
           echo "ip=$IP"                   >> "$GITHUB_OUTPUT"
           echo "hostname=github-runner-$ENV" >> "$GITHUB_OUTPUT"
+          echo "gateway=$GATEWAY"               >> "$GITHUB_OUTPUT"
+          echo "network_bridge=$NETWORK_BRIDGE" >> "$GITHUB_OUTPUT"
 
   terraform-runner:
     needs: resolve-runner
-    runs-on: self-hosted
+    runs-on: [self-hosted, management]
     env:
       ENV:      ${{ needs.resolve-runner.outputs.environment }}
       VMID:     ${{ needs.resolve-runner.outputs.vmid }}
@@ -76,6 +84,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Terraform Init
         env:
@@ -89,6 +104,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-runner.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-runner.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false
@@ -107,6 +124,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-runner.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-runner.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner destroy \
@@ -130,6 +149,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ env.HOSTNAME }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-runner.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-runner.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner apply \
@@ -138,7 +159,7 @@ jobs:
 
   ansible-runner:
     needs: [resolve-runner, terraform-runner]
-    runs-on: self-hosted
+    runs-on: [self-hosted, management]
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -147,6 +168,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Install Ansible collections
         run: |
@@ -197,7 +225,7 @@ jobs:
 
   save-runner-state:
     needs: [resolve-runner, ansible-runner]
-    runs-on: self-hosted
+    runs-on: [self-hosted, management]
     steps:
       - name: Write runner state to bootstrap vault
         env:
@@ -215,7 +243,7 @@ jobs:
   cleanup-on-failure:
     needs: [resolve-runner, terraform-runner, ansible-runner]
     if: failure()
-    runs-on: self-hosted
+    runs-on: [self-hosted, management]
     env:
       ENV:  ${{ needs.resolve-runner.outputs.environment }}
       VMID: ${{ needs.resolve-runner.outputs.vmid }}
@@ -243,6 +271,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-runner.outputs.pve_api_url }}
@@ -255,6 +290,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ needs.resolve-runner.outputs.hostname }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-runner.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-runner.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/github-runner init -input=false
@@ -271,6 +308,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.IP }}
           TF_VAR_vm_hostname:   ${{ needs.resolve-runner.outputs.hostname }}
           TF_VAR_target_node:   ${{ needs.resolve-runner.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-runner.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-runner.outputs.gateway }}
           PVE_API:  ${{ needs.resolve-runner.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |

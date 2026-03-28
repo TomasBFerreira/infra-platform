@@ -9,7 +9,7 @@ Every new app/service being onboarded must satisfy all of the following before i
 
 3. **Deploy on a worker node or static host** — must be provisioned on a Proxmox worker node (benedict/vladimir/betsy) or a designated static host. Ad-hoc deployments directly on the hypervisor are not allowed.
 4. **VMID and IP registration** — claim the next available VMID slot following the `1xx` (prod) / `2xx` (dev) / `3xx` (QA) prefix scheme and update the assignment table in this file. No unregistered or ad-hoc IPs.
-5. **Blue/green pipeline** — every service must have a pipeline with all 6 standard jobs in order: `resolve-slots` → `terraform-staging` → `ansible-staging` → `flip-active` → `teardown-old-active` → `cleanup-on-failure`. Single-slot deployments are not allowed. Pipelines must use the shared env runner via `runs-on: [self-hosted, <env>]` (e.g. `[self-hosted, dev]`). Do not assume a personal dev machine or ad-hoc host.
+5. **Blue/green pipeline** — every service must have a pipeline with all 6 standard jobs in order: `resolve-slots` → `terraform-staging` → `ansible-staging` → `flip-active` → `teardown-old-active` → `cleanup-on-failure`. Single-slot deployments are not allowed. Pipelines must use the shared env runner via `runs-on: [self-hosted, <env>]` (e.g. `[self-hosted, dev]`). Do not assume a personal dev machine or ad-hoc host. **Exception:** the `github-runner` pipeline uses `runs-on: [self-hosted, management]` (CT 200) so it can rebuild the env runner even after a full env teardown — never change it back to the env runner label.
 6. **Authentik SSO** — the service must be gated behind Authentik via the Traefik `forwardAuth` middleware (`authentik-dev` / `authentik-prod`). Unauthenticated public exposure is not allowed unless explicitly approved.
 7. **Cloudflare CNAME via traefik-gitops** — routing and the public CNAME must be added to the `TomasBFerreira/traefik-gitops` repo (`config/dynamic/services.yml`). Do not configure ingress directly in pipelines or hardcode hostnames elsewhere.
 8. **Vault secrets structure** — SSH keys go in the bootstrap vault at `secret/ssh_keys/<service>_worker`. Application secrets go in the env-specific vault. All secret paths must be documented in `docs/vaults.md`.
@@ -32,47 +32,45 @@ Proxmox homelab infrastructure managed via Terraform + Ansible + GitHub Actions 
 | vladimir  | 192.168.50.4    | qa   |
 | betsy     | 192.168.50.2    | prod |
 
-All nodes share the `192.168.50.0/24` subnet, gateway `192.168.50.1`.
+All nodes share the `192.168.50.0/24` management network (gateway `192.168.50.1`). Services run on per-environment subnets (see below).
 
 ## VMID and IP scheme
 
-| Env  | Prefix | Blue VMID | Blue IP         | Green VMID | Green IP        |
-|------|--------|-----------|-----------------|------------|-----------------|
-| prod | 1xx    | x45       | 192.168.50.x45  | x46        | 192.168.50.x46  |
-| dev  | 2xx    | x45       | 192.168.50.x45  | x46        | 192.168.50.x46  |
-| qa   | 3xx    | x45       | 192.168.50.x43* | x46        | 192.168.50.x44* |
+Each environment has its own /24 subnet. IP last octet = VMID last 2 digits (e.g., VMID 245 → .45), except github-runner (x01 → .101 to avoid gateway conflict).
 
-*QA IPs use .243/.244 since dev owns .245/.246.
+| Env  | Prefix | Service subnet     | Gateway       | Bridge |
+|------|--------|-------------------|---------------|--------|
+| prod | 1xx    | 192.168.10.0/24   | 192.168.10.1  | vmbr10 |
+| dev  | 2xx    | 192.168.20.0/24   | 192.168.20.1  | vmbr20 |
+| qa   | 3xx    | 192.168.30.0/24   | 192.168.30.1  | vmbr30 |
+
+Management network (Proxmox nodes, bootstrap vault): 192.168.50.0/24
 
 Existing assignments:
-- vault-ct: prod=145/146 (.145/.146), dev=245/246 (.245/.246), qa=345/346 (.243/.244)
-- network-vm: prod=155/156 (.155/.156), dev=255/256 (.250/.251), qa=355/356 (.240/.241)
-- torrent: prod=165/166 (.165/.166), dev=265/266 (.252/.253)
-- sso: prod=175/176 (.175/.176), dev=275/276 (.247/.248)
-- semaphore: dev=285/286 (.249/.254) — IPs deviate from VMID suffix (.249 blue, .254 green) due to subnet exhaustion near .255
+- vault-ct: prod=145/146 (192.168.10.45/.46), dev=245/246 (192.168.20.45/.46), qa=345/346 (192.168.30.45/.46)
+- network-vm: prod=155/156 (192.168.10.55/.56), dev=255/256 (192.168.20.55/.56), qa=355/356 (192.168.30.55/.56)
+- torrent: prod=165/166 (192.168.10.65/.66), dev=265/266 (192.168.20.65/.66)
+- sso: prod=175/176 (192.168.10.75/.76), dev=275/276 (192.168.20.75/.76)
+- semaphore: dev=285/286 (192.168.20.85/.86)
 
-**Worker nodes — numbered singletons (deviation from blue/green):**
-Worker nodes use a per-env sequential scheme. Kubernetes provides workload resilience;
-VM-level blue/green does not apply.
-- Prod (betsy):  VMID = 110+N, IP = 192.168.50.(110+N)  → 111, 112, 113…
-- Dev (benedict): VMID = 210+N, IP = 192.168.50.(210+N) → 211, 212, 213…
-- QA (vladimir):  VMID = 310+N, IP = 192.168.50.(310+N) → 311, 312, 313…
+**Worker nodes — numbered singletons:**
+- Prod (betsy):  VMID = 110+N, IP = 192.168.10.(10+N)  → 111→.11, 112→.12, 113→.13…
+- Dev (benedict): VMID = 210+N, IP = 192.168.20.(10+N) → 211→.11, 212→.12, 213→.13…
+- QA (vladimir):  VMID = 310+N, IP = 192.168.30.(10+N) → 311→.11, 312→.12, 313→.13…
 
 Current nodes:
-- worker-node-01 (dev):  VMID 211, IP .211 (benedict — pipeline-managed)
-- worker-node-01 (prod): VMID 111, IP .111 (betsy — existing manual VM, pending pipeline migration)
+- worker-node-01 (dev):  VMID 211, IP 192.168.20.11 (benedict — pipeline-managed)
+- worker-node-01 (prod): VMID 111, IP 192.168.10.11 (betsy — existing manual VM, pending pipeline migration)
 
-**GitHub Actions runners — env singletons (deviation from blue/green):**
-One runner LXC per environment, permanently assigned. Replaced in-place (destroy + reprovision) by the `github-runner` pipeline. Runners start at `order=5` — after vault, network, and sso. New apps targeting an env use `runs-on: [self-hosted, <env>]`.
-- github-runner-prod: VMID 101, IP 192.168.50.101 (betsy)
-- github-runner-dev:  VMID 201, IP 192.168.50.201 (benedict)
-- github-runner-qa:   VMID 301, IP 192.168.50.301 (vladimir)
+**GitHub Actions runners — env singletons:**
+- github-runner-prod: VMID 101, IP 192.168.10.101 (betsy)
+- github-runner-dev:  VMID 201, IP 192.168.20.101 (benedict)
+- github-runner-qa:   VMID 301, IP 192.168.30.101 (vladimir)
 
-**Rancher (K3s management plane) — env singletons (deviation from blue/green):**
-One Rancher LXC per environment. Runs a single-node K3s cluster with Rancher deployed via Helm. Replaced in-place by the `rancher` pipeline. Starts at `order=6` — after all other infra. Manages workload clusters for that env.
-- rancher-prod: VMID 102, IP 192.168.50.102 (betsy)
-- rancher-dev:  VMID 202, IP 192.168.50.202 (benedict)
-- rancher-qa:   VMID 302, IP 192.168.50.302 (vladimir)
+**Rancher (K3s management plane) — env singletons:**
+- rancher-prod: VMID 102, IP 192.168.10.2 (betsy)
+- rancher-dev:  VMID 202, IP 192.168.20.2 (benedict)
+- rancher-qa:   VMID 302, IP 192.168.30.2 (vladimir)
 
 ## Vault architecture
 

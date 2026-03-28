@@ -358,10 +358,10 @@
         # Ansible uri module serialising inline YAML map-in-list items as strings.
         _vault_redirect_uris:
           - {url: "http://192.168.50.200:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
-          - {url: "http://192.168.50.245:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
-          - {url: "http://192.168.50.246:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
-          - {url: "http://192.168.50.145:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
-          - {url: "http://192.168.50.146:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
+          - {url: "http://192.168.20.45:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
+          - {url: "http://192.168.20.46:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
+          - {url: "http://192.168.10.45:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
+          - {url: "http://192.168.10.46:8200/ui/vault/auth/oidc/oidc/callback", matching_mode: "strict"}
           - {url: "http://localhost:8250/oidc/callback", matching_mode: "strict"}
           - {url: "http://localhost:8200/oidc/callback", matching_mode: "strict"}
 

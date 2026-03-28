@@ -42,7 +42,7 @@ Your Terraform files are configured for:
 - **VM IDs**: 
   - Media Stack: 200
   - Network VM: 220
-- **Network**: 192.168.50.x subnet
+- **Network**: per-env subnets — prod 192.168.10.0/24, dev 192.168.20.0/24, qa 192.168.30.0/24
 
 ### Multiple Nodes?
 If you have multiple Proxmox nodes:
@@ -153,7 +153,7 @@ curl -k "https://your-proxmox-host:8006/api2/json/version" \
 ```bash
 # Test SSH to existing VMs
 ssh root@192.168.50.200  # Media stack
-ssh root@192.168.50.220  # Network VM
+ssh root@192.168.20.55  # Network VM (dev blue)
 ```
 
 ## Security Notes

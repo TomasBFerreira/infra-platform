@@ -26,6 +26,14 @@
         fi
       changed_when: false
 
+    - name: Add static route to dev service subnet via benedict
+      blockinfile:
+        path: /etc/network/interfaces
+        marker: "# {mark} ANSIBLE MANAGED — dev subnet route"
+        block: |
+          up ip route add 192.168.20.0/24 via 192.168.50.4 || true
+      notify: Apply network routes
+
     - name: Update apt cache
       apt:
         update_cache: yes
@@ -68,6 +76,30 @@
     - name: Install Vault CLI
       apt:
         name: vault
+        state: present
+        update_cache: yes
+
+    # ── GitHub CLI ───────────────────────────────────────────────────────────
+    # Required so Ansible playbooks can call `gh secret set` at runtime
+    # (e.g. vault-ct pipeline updates VAULT_ADDR/VAULT_TOKEN after deploy).
+
+    - name: Add GitHub CLI GPG key
+      shell: |
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+          | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/githubcli-archive-keyring.gpg
+
+    - name: Add GitHub CLI apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
+        state: present
+        filename: github-cli
+
+    - name: Install GitHub CLI
+      apt:
+        name: gh
         state: present
         update_cache: yes
 
@@ -283,7 +315,7 @@
         vault kv get -field=token secret/github-runner/gh_pat
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_ROOT_TOKEN') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
       register: gh_pat_result
       no_log: true
 
@@ -373,3 +405,7 @@
     - name: Runner setup summary
       debug:
         msg: "GitHub Actions runner 'github-runner-{{ runner_env }}' registered to repo {{ github_repo }} with labels: self-hosted, linux, {{ runner_env }}"
+
+  handlers:
+    - name: Apply network routes
+      shell: ip route add 192.168.20.0/24 via 192.168.50.4 2>/dev/null || true

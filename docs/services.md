@@ -6,8 +6,8 @@
 
 | | Dev | Prod |
 |-|-----|------|
-| Active IP | 192.168.50.247 (blue) or .248 (green) | 192.168.50.175 or .176 |
-| UI | `http://192.168.50.247:9000` | `http://192.168.50.175:9000` |
+| Active IP | 192.168.20.75 (blue) or .76 (green) | 192.168.10.75 or .76 |
+| UI | `http://192.168.20.75:9000` | `http://192.168.10.75:9000` |
 | Public URL | `https://auth-dev.databaes.net` | `https://auth.databaes.net` (not yet) |
 | Active slot | `secret/sso/dev/active-slot` in bootstrap vault | `secret/sso/prod/active-slot` |
 
@@ -17,7 +17,7 @@
 - `Vault` — client credentials in `secret/authentik/vault-oidc` in env vault
 
 **Traefik forwardAuth middleware:**
-- `authentik-dev` middleware defined in `services.yml` points to `http://192.168.50.247:9000/outpost.goauthentik.io/auth/traefik`
+- `authentik-dev` middleware defined in `services.yml` points to `http://192.168.20.75:9000/outpost.goauthentik.io/auth/traefik`
 - Attach to any Traefik router to gate it behind SSO
 
 **Known quirks:**
@@ -35,8 +35,8 @@
 
 | | Dev | Prod |
 |-|-----|------|
-| Active IP | 192.168.50.245 (blue) or .246 (green) | 192.168.50.145 or .146 |
-| UI | `http://192.168.50.245:8200` | `http://192.168.50.145:8200` |
+| Active IP | 192.168.20.45 (blue) or .46 (green) | 192.168.10.45 or .46 |
+| UI | `http://192.168.20.45:8200` | `http://192.168.10.45:8200` |
 | Public URL | `https://vault-dev.databaes.net` | `https://vault.databaes.net` |
 | Active slot | `secret/vault-ct/dev/active-slot` in bootstrap vault | `secret/vault-ct/prod/active-slot` |
 
@@ -51,14 +51,14 @@
 **Login (interactive):**
 ```bash
 # Via CLI
-vault login -method=oidc -address=http://192.168.50.245:8200
+vault login -method=oidc -address=http://192.168.20.45:8200
 
 # Via UI
-# Go to http://192.168.50.245:8200 → Sign in with OIDC provider
+# Go to http://192.168.20.45:8200 → Sign in with OIDC provider
 ```
 
 **Traefik routing:**
-- `vault-dev.databaes.net` → Traefik health-checks both .245 and .246; routes to whichever returns HTTP 200 on `/v1/sys/health` (active node returns 200, down/standby returns non-200)
+- `vault-dev.databaes.net` → Traefik health-checks both .20.45 and .20.46; routes to whichever returns HTTP 200 on `/v1/sys/health` (active node returns 200, down/standby returns non-200)
 
 ---
 
@@ -68,7 +68,7 @@ vault login -method=oidc -address=http://192.168.50.245:8200
 
 | | Dev | Prod |
 |-|-----|------|
-| Active IP | 192.168.50.250 or .251 | 192.168.50.155 or .156 |
+| Active IP | 192.168.20.55 or .56 | 192.168.10.55 or .56 |
 | Active slot | `secret/network-vm/dev/active-slot` in bootstrap vault | `secret/network-vm/prod/active-slot` |
 
 **Services running:**

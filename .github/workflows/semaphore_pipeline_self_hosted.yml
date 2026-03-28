@@ -35,6 +35,8 @@ jobs:
       staging_ip:   ${{ steps.slots.outputs.staging_ip }}
       staging_host: ${{ steps.slots.outputs.staging_host }}
       first_run:    ${{ steps.slots.outputs.first_run }}
+      gateway:        ${{ steps.slots.outputs.gateway }}
+      network_bridge: ${{ steps.slots.outputs.network_bridge }}
     steps:
       - name: Resolve active and staging slots
         id: slots
@@ -46,10 +48,11 @@ jobs:
 
           case "$ENV" in
             dev)
-              BLUE_VMID=285;  BLUE_IP="192.168.50.249"
-              GREEN_VMID=286; GREEN_IP="192.168.50.254"
+              BLUE_VMID=285;  BLUE_IP="192.168.20.85"
+              GREEN_VMID=286; GREEN_IP="192.168.20.86"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="benedict"
+              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
               ;;
           esac
 
@@ -100,6 +103,8 @@ jobs:
           echo "staging_ip=$STAGING_IP"     >> "$GITHUB_OUTPUT"
           echo "staging_host=$STAGING_HOST" >> "$GITHUB_OUTPUT"
           echo "first_run=$FIRST_RUN"       >> "$GITHUB_OUTPUT"
+          echo "gateway=$GATEWAY"               >> "$GITHUB_OUTPUT"
+          echo "network_bridge=$NETWORK_BRIDGE" >> "$GITHUB_OUTPUT"
 
   terraform-staging:
     needs: resolve-slots
@@ -114,6 +119,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
@@ -126,6 +138,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/semaphore init -input=false
@@ -142,6 +156,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
@@ -167,6 +183,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/semaphore apply \
@@ -185,6 +203,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r ansible/requirements.yml
@@ -266,6 +291,13 @@ jobs:
           token: ${{ secrets.GH_PAT }}
           path: traefik-gitops
 
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
       - name: Install yq if missing
         run: |
           if ! command -v yq &>/dev/null; then
@@ -308,6 +340,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
@@ -320,6 +359,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/semaphore init -input=false
@@ -336,6 +377,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
@@ -381,6 +424,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
@@ -393,6 +443,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/semaphore init -input=false
@@ -409,6 +461,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |

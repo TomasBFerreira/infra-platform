@@ -8,32 +8,54 @@
 | vladimir | 192.168.50.4 | qa |
 | betsy | 192.168.50.2 | prod |
 
-All nodes share `192.168.50.0/24`, gateway `192.168.50.1`.
+Proxmox nodes remain on the management network (`192.168.50.0/24`, gateway `192.168.50.1`). Services run on per-environment subnets.
 
 ## VMID and IP Scheme
 
+Services run on per-environment /24 subnets. Proxmox nodes and the bootstrap vault remain on the management network (192.168.50.0/24).
+
+| Env  | Service subnet   | Gateway      | Bridge |
+|------|-----------------|--------------|--------|
+| prod | 192.168.10.0/24 | 192.168.10.1 | vmbr10 |
+| dev  | 192.168.20.0/24 | 192.168.20.1 | vmbr20 |
+| qa   | 192.168.30.0/24 | 192.168.30.1 | vmbr30 |
+
+IP last-octet = VMID last 2 digits (e.g. VMID 245 → .45). Exception: github-runner (x01 → .101).
+
 | Service | Env | Blue VMID | Blue IP | Green VMID | Green IP |
 |---------|-----|-----------|---------|------------|----------|
-| vault-ct | prod | 145 | 192.168.50.145 | 146 | 192.168.50.146 |
-| vault-ct | dev | 245 | 192.168.50.245 | 246 | 192.168.50.246 |
-| vault-ct | qa | 345 | 192.168.50.243 | 346 | 192.168.50.244 |
-| network-vm | prod | 155 | 192.168.50.155 | 156 | 192.168.50.156 |
-| network-vm | dev | 255 | 192.168.50.250 | 256 | 192.168.50.251 |
-| network-vm | qa | 355 | 192.168.50.240 | 356 | 192.168.50.241 |
-| sso | prod | 175 | 192.168.50.175 | 176 | 192.168.50.176 |
-| sso | dev | 275 | 192.168.50.247 | 276 | 192.168.50.248 |
-| runner | - | 200 | 192.168.50.200 | - | - |
-
-> **Note:** QA uses .243/.244 instead of .245/.246 since dev owns those.
+| vault-ct | prod | 145 | 192.168.10.45 | 146 | 192.168.10.46 |
+| vault-ct | dev | 245 | 192.168.20.45 | 246 | 192.168.20.46 |
+| vault-ct | qa | 345 | 192.168.30.45 | 346 | 192.168.30.46 |
+| network-vm | prod | 155 | 192.168.10.55 | 156 | 192.168.10.56 |
+| network-vm | dev | 255 | 192.168.20.55 | 256 | 192.168.20.56 |
+| network-vm | qa | 355 | 192.168.30.55 | 356 | 192.168.30.56 |
+| sso | prod | 175 | 192.168.10.75 | 176 | 192.168.10.76 |
+| sso | dev | 275 | 192.168.20.75 | 276 | 192.168.20.76 |
+| torrent | prod | 165 | 192.168.10.65 | 166 | 192.168.10.66 |
+| torrent | dev | 265 | 192.168.20.65 | 266 | 192.168.20.66 |
+| semaphore | dev | 285 | 192.168.20.85 | 286 | 192.168.20.86 |
+| bootstrap vault | mgmt | 200 | 192.168.50.200 | - | - |
 
 ### Worker Nodes — Numbered Singletons
 
-Worker nodes do not follow the blue/green dual-slot pattern. Each is a permanent VM numbered sequentially: `VMID = 110 + N`, `IP = 192.168.50.(110+N)`. Kubernetes provides workload resilience at the application layer.
+`VMID = env_base + N`, `IP = 192.168.<env_subnet>.(VMID last 2 digits)`.
 
 | Node | VMID | IP | Proxmox host | Status |
 |------|------|----|--------------|--------|
-| worker-node-01 | 111 | 192.168.50.111 | betsy | existing (manual, pending pipeline migration) |
-| worker-node-02 | 112 | 192.168.50.112 | benedict | pipeline-managed (dev) |
+| worker-node-01 (prod) | 111 | 192.168.10.11 | betsy | existing (manual, pending pipeline migration) |
+| worker-node-01 (dev)  | 211 | 192.168.20.11 | benedict | pipeline-managed |
+
+### Singletons (GitHub Runner, Rancher)
+
+| Service | Env | VMID | IP |
+|---------|-----|------|----|
+| github-runner | prod | 101 | 192.168.10.101 |
+| github-runner | dev  | 201 | 192.168.20.101 |
+| github-runner | qa   | 301 | 192.168.30.101 |
+| rancher | prod | 102 | 192.168.10.2 |
+| rancher | dev  | 202 | 192.168.20.2 |
+| rancher | qa   | 302 | 192.168.30.2 |
 
 ## Cloudflare Tunnels
 
@@ -89,3 +111,5 @@ WireGuard is configured on the **prod** network-vm only, providing a VPN tunnel 
 ## Tailscale
 
 All LXC containers join the Tailscale network using an authkey from `secret/tailscale` in the env vault. This allows the runner and other services to reach each other over Tailscale IPs regardless of which blue/green slot is active.
+
+The network-vm acts as a Tailscale subnet router and advertises all four subnets: `192.168.10.0/24,192.168.20.0/24,192.168.30.0/24,192.168.50.0/24` (all three env service subnets plus the management subnet). This ensures full reachability across all envs over Tailscale.

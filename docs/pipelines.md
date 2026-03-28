@@ -1,6 +1,10 @@
 # CI/CD Pipelines
 
-All pipelines run on the self-hosted runner at CT 200 (192.168.50.200). Trigger via GitHub Actions → workflow_dispatch, selecting the target environment.
+Pipelines run on two tiers of self-hosted runners:
+- **`[self-hosted, management]`** (CT 200, bootstrap vault) — github-runner pipeline only. Stable anchor that survives full env destruction.
+- **`[self-hosted, linux, <env>]`** (CT 201 for dev, CT 101 for prod, CT 301 for qa) — all other pipelines.
+
+Trigger via GitHub Actions → workflow_dispatch, selecting the target environment.
 
 ## vault-ct Pipeline
 
@@ -142,7 +146,7 @@ Worker nodes use a flat sequential scheme instead of blue/green slots. Kubernete
 | Parameter | Formula |
 |-----------|---------|
 | VMID | `110 + node_number` |
-| IP | `192.168.50.<vmid>` |
+| IP | `192.168.<env_subnet>.(VMID last 2 digits)` |
 | Hostname | `worker-node-<NN>` (zero-padded) |
 
 ### Inputs
@@ -179,6 +183,41 @@ Every worker node gets:
 
 - Adding a new node to the cluster
 - Rebuilding a node after hardware failure
+
+---
+
+## GitHub Runner Pipeline
+
+**File:** `.github/workflows/github-runner_pipeline_self_hosted.yml`
+**Purpose:** Provision and configure the env runner LXC (singleton, not blue/green)
+**Runs on:** `[self-hosted, management]` (CT 200 — bootstrap vault)
+
+### Why it runs on the management runner
+
+The github-runner pipeline provisions CT 201 (dev) / CT 101 (prod). If it ran on CT 201, it would destroy and recreate its own host mid-pipeline. The management runner on CT 200 is a permanent, never-pipelined runner that acts as a stable bootstrap point. This means even a full env teardown can be recovered by re-running this pipeline.
+
+### Jobs
+
+| Job | What it does |
+|-----|-------------|
+| `resolve-runner` | Computes VMID, IP, bridge, gateway for the target env |
+| `terraform-runner` | Pre-flight destroys existing runner CT, provisions new LXC |
+| `ansible-runner` | Injects GH_PAT into bootstrap vault, runs `github-runner_setup.yml` (installs runner binary, registers with GitHub, clones `/app/infra-platform`) |
+| `save-runner-state` | Writes `{vmid, ip, hostname}` to bootstrap vault at `secret/github-runner/<env>/state` |
+| `cleanup-on-failure` | Destroys the LXC if any job fails |
+
+### When to run
+
+- Initial env setup (before any other pipelines)
+- After a full env teardown/recovery test
+- To upgrade the runner binary version (change `runner_version` in `github-runner_setup.yml`)
+
+### Inputs
+
+| Input | Description |
+|-------|-------------|
+| `environment` | `dev`, `qa`, or `prod` |
+| `github_repo` | Repo to register the runner against (default: `TomasBFerreira/infra-platform`) |
 
 ---
 

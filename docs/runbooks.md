@@ -3,7 +3,7 @@
 ## How to log into Vault
 
 **Via UI (OIDC):**
-1. Go to `http://192.168.50.245:8200` (dev) or `https://vault.databaes.net` (prod)
+1. Go to `http://192.168.20.45:8200` (dev) or `https://vault.databaes.net` (prod)
 2. Select **OIDC** from the method dropdown
 3. Click **Sign in with OIDC Provider**
 4. Log in with your Authentik account (`akadmin` or your user)
@@ -11,14 +11,14 @@
 
 **Via CLI (OIDC):**
 ```bash
-export VAULT_ADDR=http://192.168.50.245:8200
+export VAULT_ADDR=http://192.168.20.45:8200
 vault login -method=oidc
 # Opens browser for Authentik login
 ```
 
 **Via CLI (token — for scripts):**
 ```bash
-export VAULT_ADDR=http://192.168.50.245:8200
+export VAULT_ADDR=http://192.168.20.45:8200
 export VAULT_TOKEN=<ci-token-from-github-secrets>
 vault kv get secret/some/path
 ```
@@ -70,7 +70,7 @@ http:
 
 **Fix:**
 ```bash
-ssh root@192.168.50.250  # or .251 — whichever is active
+ssh root@192.168.20.55  # or .56 — whichever is active (dev); prod: 192.168.10.55/.56
 systemctl restart cloudflared
 journalctl -u cloudflared -f  # watch for "Connected to Cloudflare"
 ```
@@ -83,24 +83,55 @@ journalctl -u cloudflared -f  # watch for "Connected to Cloudflare"
 
 ## GitHub Actions runner is stuck
 
-**Symptom:** A job is queued but never picked up, or a job is stuck mid-run.
+There are two runner tiers. Identify which one is stuck.
 
-**Check Runner.Listener process:**
+### Env runner (CT 201 for dev, CT 101 for prod)
+
 ```bash
-ps aux | grep Runner
+# SSH into the runner CT (CT 201 for dev)
+ssh root@192.168.20.101  # dev
+
+# Check service status
+SERVICE=$(systemctl list-units --type=service | grep 'actions.runner' | awk '{print $1}' | head -1)
+systemctl status "$SERVICE"
 ```
 
-If `Runner.Listener` is running but jobs aren't being picked up, it may have lost connection to `broker.actions.githubusercontent.com`. Sending `SIGTERM` forces a reconnect (the service wrapper restarts it automatically):
+If `Runner.Listener` is running but jobs aren't being picked up, it may have lost connection to GitHub. Sending `SIGTERM` forces a reconnect (the service wrapper restarts it automatically):
 ```bash
-kill -SIGTERM <pid-of-Runner.Listener>
+pgrep -a Runner.Listener  # find PID
+kill -SIGTERM <pid>
 # RunnerService.js restarts it within a few seconds
 ```
 
 **Restart the runner service:**
 ```bash
-cd /app/actions-runner
-sudo ./svc.sh stop
-sudo ./svc.sh start
+# From inside the runner CT:
+cd /opt/github-runners/tomasbferreira-infra-platform
+./svc.sh stop
+./svc.sh start
+```
+
+### Management runner (CT 200 — bootstrap vault)
+
+```bash
+ssh root@192.168.50.200  # or via Proxmox: pct exec 200 -- bash
+
+systemctl status actions.runner.TomasBFerreira-infra-platform.github-runner-management
+# Restart if needed:
+cd /opt/github-runners/tomasbferreira-infra-platform
+./svc.sh stop && ./svc.sh start
+```
+
+### Env runner lost its CT entirely
+
+If the runner CT was destroyed and the env runner is missing:
+
+```bash
+# Re-run the github-runner pipeline — it runs on the management runner (CT 200)
+# which is never affected by env teardowns
+gh workflow run github-runner_pipeline_self_hosted.yml \
+  --repo TomasBFerreira/infra-platform \
+  --field environment=dev
 ```
 
 ---
@@ -110,7 +141,7 @@ sudo ./svc.sh start
 The `vault-unseal` systemd service should handle this automatically. If it fails:
 
 ```bash
-ssh root@192.168.50.245  # active vault IP
+ssh root@192.168.20.45  # active vault IP (dev); prod: 192.168.10.45
 systemctl status vault-unseal
 # If failed, run manually:
 export VAULT_ADDR=http://127.0.0.1:8200
@@ -133,7 +164,7 @@ vault kv get secret/sso/dev/bootstrap_password
 
 **Note:** If the SSO pipeline has re-run since you last fetched the password, the password in Authentik's DB may not match what's in vault (Authentik only sets the password on first DB initialization). In that case, reset via:
 ```bash
-ssh root@192.168.50.247  # active SSO IP
+ssh root@192.168.20.75  # active SSO IP (dev); prod: 192.168.10.75
 docker exec authentik-server ak set_password --username akadmin
 ```
 
@@ -210,7 +241,7 @@ Go to **infra-platform → Actions → Worker Node Pipeline → Run workflow**:
 - `target_node`: Proxmox node to deploy on (`benedict` for dev, `betsy` for prod)
 - `template_vmid`: VMID of the cloud-init template VM on the target node (default: `9000`)
 
-VMID and IP are computed automatically: VMID = `110 + node_number`, IP = `192.168.50.<vmid>`.
+VMID and IP are computed automatically: VMID = `env_base + node_number` (110 for prod, 210 for dev, 310 for qa), IP = `192.168.<env_subnet>.(VMID last 2 digits)`.
 
 ### Decommissioning a worker node
 
