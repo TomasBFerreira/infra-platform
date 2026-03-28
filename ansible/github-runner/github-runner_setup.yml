@@ -315,7 +315,7 @@
         vault kv get -field=token secret/github-runner/gh_pat
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_ROOT_TOKEN') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
       register: gh_pat_result
       no_log: true
 

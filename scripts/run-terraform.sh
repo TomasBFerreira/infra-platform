@@ -8,30 +8,43 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Check if docker-compose is available
-if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-    echo "Error: Docker or Docker Compose is not installed"
-    exit 1
-fi
+# Determine execution mode: Docker (preferred) or direct terraform binary fallback
+USE_DIRECT_TERRAFORM=false
+DOCKER_COMPOSE_CMD=""
 
-# Determine docker compose command
-DOCKER_COMPOSE_CMD="docker-compose"
-if docker compose version &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker compose"
+if command -v docker-compose &> /dev/null || docker compose version &> /dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+    if docker compose version &> /dev/null 2>&1; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    fi
+elif command -v terraform &> /dev/null; then
+    USE_DIRECT_TERRAFORM=true
+    echo "Docker not available — using direct terraform binary: $(terraform version | head -1)"
+else
+    echo "Error: neither Docker nor a terraform binary is available"
+    exit 1
 fi
 
 # Function to run terraform command
 run_terraform() {
     local cmd="$1"
     shift
-    
+
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@"
-            $DOCKER_COMPOSE_CMD run --rm -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid -e TF_VAR_network_bridge -e TF_VAR_gateway terraform "$cmd" "$@"
+            if [ "$USE_DIRECT_TERRAFORM" = "true" ]; then
+                terraform "$cmd" "$@"
+            else
+                $DOCKER_COMPOSE_CMD run --rm -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid -e TF_VAR_network_bridge -e TF_VAR_gateway terraform "$cmd" "$@"
+            fi
             ;;
         "help"|"-h"|"--help")
-            $DOCKER_COMPOSE_CMD run --rm terraform help
+            if [ "$USE_DIRECT_TERRAFORM" = "true" ]; then
+                terraform help
+            else
+                $DOCKER_COMPOSE_CMD run --rm terraform help
+            fi
             ;;
         *)
             echo "Error: Unknown terraform command '$cmd'"
@@ -50,10 +63,18 @@ run_terraform_with_chdir() {
     case "$cmd" in
         "init"|"plan"|"apply"|"destroy"|"validate"|"fmt"|"show"|"output"|"import"|"state"|"taint"|"untaint"|"force-unlock"|"workspace"|"version")
             echo "Running: terraform $cmd $@ (in directory: $chdir)"
-            $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid -e TF_VAR_network_bridge -e TF_VAR_gateway terraform "$cmd" "$@"
+            if [ "$USE_DIRECT_TERRAFORM" = "true" ]; then
+                (cd "$PROJECT_ROOT/$chdir" && terraform "$cmd" "$@")
+            else
+                $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid -e TF_VAR_network_bridge -e TF_VAR_gateway terraform "$cmd" "$@"
+            fi
             ;;
         "help"|"-h"|"--help")
-            $DOCKER_COMPOSE_CMD run --rm terraform help
+            if [ "$USE_DIRECT_TERRAFORM" = "true" ]; then
+                terraform help
+            else
+                $DOCKER_COMPOSE_CMD run --rm terraform help
+            fi
             ;;
         *)
             echo "Error: Unknown terraform command '$cmd'"
