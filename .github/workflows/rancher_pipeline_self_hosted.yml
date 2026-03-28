@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   resolve-rancher:
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     outputs:
       environment:  ${{ steps.rancher.outputs.environment }}
       pve_api_url:  ${{ steps.rancher.outputs.pve_api_url }}
@@ -79,7 +79,7 @@ jobs:
 
   terraform-rancher:
     needs: resolve-rancher
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:      ${{ needs.resolve-rancher.outputs.environment }}
       VMID:     ${{ needs.resolve-rancher.outputs.vmid }}
@@ -206,7 +206,7 @@ jobs:
 
   ansible-rancher:
     needs: [resolve-rancher, terraform-rancher]
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -310,7 +310,7 @@ jobs:
 
   configure-oidc:
     needs: [resolve-rancher, ansible-rancher]
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:              ${{ needs.resolve-rancher.outputs.environment }}
       RANCHER_IP:       ${{ needs.resolve-rancher.outputs.ip }}
@@ -393,7 +393,7 @@ jobs:
 
   save-rancher-state:
     needs: [resolve-rancher, ansible-rancher, configure-oidc]
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     steps:
       - name: Write rancher state to bootstrap vault
         env:
@@ -410,7 +410,7 @@ jobs:
   cleanup-on-failure:
     needs: [resolve-rancher, terraform-rancher, ansible-rancher, configure-oidc]
     if: failure()
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:  ${{ needs.resolve-rancher.outputs.environment }}
       VMID: ${{ needs.resolve-rancher.outputs.vmid }}

@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   resolve-slots:
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ github.event.inputs.environment || 'dev' }}"]
     outputs:
       environment:  ${{ steps.slots.outputs.environment }}
       pve_api_url:  ${{ steps.slots.outputs.pve_api_url }}
@@ -112,7 +112,7 @@ jobs:
 
   generate-secrets:
     needs: resolve-slots
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV: ${{ needs.resolve-slots.outputs.environment }}
     steps:
@@ -143,7 +143,7 @@ jobs:
 
   terraform-staging:
     needs: [resolve-slots, generate-secrets]
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:          ${{ needs.resolve-slots.outputs.environment }}
       STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
@@ -232,7 +232,7 @@ jobs:
     if: >-
       needs.terraform-staging.result == 'success' &&
       (needs.backup-db.result == 'success' || needs.backup-db.result == 'skipped')
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -350,7 +350,7 @@ jobs:
 
   flip-active:
     needs: [resolve-slots, ansible-staging]
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     steps:
       - name: Record new active slot in bootstrap vault
         env:
@@ -380,7 +380,7 @@ jobs:
   backup-db:
     needs: [resolve-slots]
     if: needs.resolve-slots.outputs.first_run == 'false'
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:       ${{ needs.resolve-slots.outputs.environment }}
       ACTIVE_IP: ${{ needs.resolve-slots.outputs.active_ip }}
@@ -439,7 +439,7 @@ jobs:
       (needs.backup-db.result == 'success' || needs.backup-db.result == 'failure') &&
       (needs.configure-vault-oidc.result == 'success' || needs.configure-vault-oidc.result == 'failure') &&
       (needs.configure-bootstrap-vault-oidc.result == 'success' || needs.configure-bootstrap-vault-oidc.result == 'failure')
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:         ${{ needs.resolve-slots.outputs.environment }}
       ACTIVE_SLOT: ${{ needs.resolve-slots.outputs.active_slot }}
@@ -504,7 +504,7 @@ jobs:
   cleanup-on-failure:
     needs: [resolve-slots, terraform-staging, ansible-staging]
     if: failure()
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:          ${{ needs.resolve-slots.outputs.environment }}
       STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}

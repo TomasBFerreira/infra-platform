@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   resolve-slots:
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ github.event.inputs.environment || 'dev' }}"]
     outputs:
       environment:  ${{ steps.slots.outputs.environment }}
       pve_api_url:  ${{ steps.slots.outputs.pve_api_url }}
@@ -108,7 +108,7 @@ jobs:
 
   terraform-staging:
     needs: resolve-slots
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:          ${{ needs.resolve-slots.outputs.environment }}
       STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
@@ -193,7 +193,7 @@ jobs:
 
   ansible-staging:
     needs: [resolve-slots, terraform-staging]
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -260,7 +260,7 @@ jobs:
 
   flip-active:
     needs: [resolve-slots, ansible-staging]
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     steps:
       - name: Record new active slot in bootstrap vault
         env:
@@ -276,7 +276,7 @@ jobs:
   register-dns:
     needs: [resolve-slots, flip-active]
     if: needs.flip-active.result == 'success'
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ROUTER_NAME:  semaphore-router
       SERVICE_NAME: semaphore-service
@@ -329,7 +329,7 @@ jobs:
   teardown-old-active:
     needs: [resolve-slots, flip-active]
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:         ${{ needs.resolve-slots.outputs.environment }}
       ACTIVE_SLOT: ${{ needs.resolve-slots.outputs.active_slot }}
@@ -394,7 +394,7 @@ jobs:
   cleanup-on-failure:
     needs: [resolve-slots, terraform-staging, ansible-staging]
     if: failure()
-    runs-on: self-hosted
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:          ${{ needs.resolve-slots.outputs.environment }}
       STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
