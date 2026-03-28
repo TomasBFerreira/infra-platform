@@ -14,6 +14,7 @@ on:
         type: choice
         options:
           - dev
+          - prod
 
 concurrency:
   group: semaphore-pipeline-${{ github.event.inputs.environment || 'dev' }}
@@ -53,6 +54,13 @@ jobs:
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="benedict"
               GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
+              ;;
+            prod)
+              BLUE_VMID=185;  BLUE_IP="192.168.10.85"
+              GREEN_VMID=186; GREEN_IP="192.168.10.86"
+              PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              PVE_NODE="betsy"
+              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
               ;;
           esac
 
@@ -193,6 +201,7 @@ jobs:
 
   ansible-staging:
     needs: [resolve-slots, terraform-staging]
+    if: always() && needs.terraform-staging.result == 'success'
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       LC_ALL: C.UTF-8
@@ -260,6 +269,7 @@ jobs:
 
   flip-active:
     needs: [resolve-slots, ansible-staging]
+    if: always() && needs.ansible-staging.result == 'success'
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     steps:
       - name: Record new active slot in bootstrap vault
@@ -275,12 +285,12 @@ jobs:
 
   register-dns:
     needs: [resolve-slots, flip-active]
-    if: needs.flip-active.result == 'success'
+    if: always() && needs.flip-active.result == 'success'
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
-      ROUTER_NAME:  semaphore-router
-      SERVICE_NAME: semaphore-service
-      HOSTNAME:     semaphore-dev.databaes.net
+      ROUTER_NAME:  ${{ needs.resolve-slots.outputs.environment == 'prod' && 'semaphore-prod-router' || 'semaphore-router' }}
+      SERVICE_NAME: ${{ needs.resolve-slots.outputs.environment == 'prod' && 'semaphore-prod-service' || 'semaphore-service' }}
+      HOSTNAME:     ${{ needs.resolve-slots.outputs.environment == 'prod' && 'semaphore.databaes.net' || 'semaphore-dev.databaes.net' }}
       BACKEND_URL:  "http://${{ needs.resolve-slots.outputs.staging_ip }}:3000"
     steps:
       - name: Checkout traefik-gitops
@@ -307,12 +317,14 @@ jobs:
 
       - name: Upsert route in services.yml
         working-directory: traefik-gitops
+        env:
+          AUTHENTIK_MIDDLEWARE: ${{ needs.resolve-slots.outputs.environment == 'prod' && 'authentik-prod' || 'authentik-dev' }}
         run: |
           yq -i '
             .http.routers[env(ROUTER_NAME)].rule = "Host(`" + env(HOSTNAME) + "`)" |
             .http.routers[env(ROUTER_NAME)].service = env(SERVICE_NAME) |
             .http.routers[env(ROUTER_NAME)].entryPoints = ["web"] |
-            .http.routers[env(ROUTER_NAME)].middlewares = ["authentik-dev"]
+            .http.routers[env(ROUTER_NAME)].middlewares = [env(AUTHENTIK_MIDDLEWARE)]
           ' config/dynamic/services.yml
           yq -i ".http.services[env(SERVICE_NAME)].loadBalancer.servers = [{\"url\": \"${BACKEND_URL}\"}]" \
             config/dynamic/services.yml
@@ -328,7 +340,7 @@ jobs:
 
   teardown-old-active:
     needs: [resolve-slots, flip-active]
-    if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
+    if: always() && needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:         ${{ needs.resolve-slots.outputs.environment }}
