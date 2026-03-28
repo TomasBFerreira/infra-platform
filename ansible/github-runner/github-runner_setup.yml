@@ -79,6 +79,30 @@
         state: present
         update_cache: yes
 
+    # ── GitHub CLI ───────────────────────────────────────────────────────────
+    # Required so Ansible playbooks can call `gh secret set` at runtime
+    # (e.g. vault-ct pipeline updates VAULT_ADDR/VAULT_TOKEN after deploy).
+
+    - name: Add GitHub CLI GPG key
+      shell: |
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+          | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/githubcli-archive-keyring.gpg
+
+    - name: Add GitHub CLI apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
+        state: present
+        filename: github-cli
+
+    - name: Install GitHub CLI
+      apt:
+        name: gh
+        state: present
+        update_cache: yes
+
     # ── SSH key for Proxmox access ────────────────────────────────────────────
     # Pipeline pre-flight steps SSH to Proxmox (192.168.50.x) as root to run
     # pct commands. The runner root account needs a key authorized on Proxmox.
