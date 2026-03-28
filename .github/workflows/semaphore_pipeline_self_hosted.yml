@@ -285,6 +285,11 @@ jobs:
     steps:
       - name: Checkout traefik-gitops
         uses: actions/checkout@v4
+        with:
+          repository: TomasBFerreira/traefik-gitops
+          ref: main
+          token: ${{ secrets.GH_PAT }}
+          path: traefik-gitops
 
       - name: Sync code to persistent clone
         run: |
@@ -292,11 +297,6 @@ jobs:
           git fetch origin
           git checkout ${{ github.ref_name }}
           git pull origin ${{ github.ref_name }}
-        with:
-          repository: TomasBFerreira/traefik-gitops
-          ref: main
-          token: ${{ secrets.GH_PAT }}
-          path: traefik-gitops
 
       - name: Install yq if missing
         run: |
