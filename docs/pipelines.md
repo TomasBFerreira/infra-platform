@@ -142,7 +142,7 @@ Worker nodes use a flat sequential scheme instead of blue/green slots. Kubernete
 | Parameter | Formula |
 |-----------|---------|
 | VMID | `110 + node_number` |
-| IP | `192.168.50.<vmid>` |
+| IP | `192.168.<env_subnet>.(VMID last 2 digits)` |
 | Hostname | `worker-node-<NN>` (zero-padded) |
 
 ### Inputs

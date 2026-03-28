@@ -3,7 +3,7 @@
 ## How to log into Vault
 
 **Via UI (OIDC):**
-1. Go to `http://192.168.50.245:8200` (dev) or `https://vault.databaes.net` (prod)
+1. Go to `http://192.168.20.45:8200` (dev) or `https://vault.databaes.net` (prod)
 2. Select **OIDC** from the method dropdown
 3. Click **Sign in with OIDC Provider**
 4. Log in with your Authentik account (`akadmin` or your user)
@@ -11,14 +11,14 @@
 
 **Via CLI (OIDC):**
 ```bash
-export VAULT_ADDR=http://192.168.50.245:8200
+export VAULT_ADDR=http://192.168.20.45:8200
 vault login -method=oidc
 # Opens browser for Authentik login
 ```
 
 **Via CLI (token — for scripts):**
 ```bash
-export VAULT_ADDR=http://192.168.50.245:8200
+export VAULT_ADDR=http://192.168.20.45:8200
 export VAULT_TOKEN=<ci-token-from-github-secrets>
 vault kv get secret/some/path
 ```
@@ -70,7 +70,7 @@ http:
 
 **Fix:**
 ```bash
-ssh root@192.168.50.250  # or .251 — whichever is active
+ssh root@192.168.20.55  # or .56 — whichever is active (dev); prod: 192.168.10.55/.56
 systemctl restart cloudflared
 journalctl -u cloudflared -f  # watch for "Connected to Cloudflare"
 ```
@@ -110,7 +110,7 @@ sudo ./svc.sh start
 The `vault-unseal` systemd service should handle this automatically. If it fails:
 
 ```bash
-ssh root@192.168.50.245  # active vault IP
+ssh root@192.168.20.45  # active vault IP (dev); prod: 192.168.10.45
 systemctl status vault-unseal
 # If failed, run manually:
 export VAULT_ADDR=http://127.0.0.1:8200
@@ -133,7 +133,7 @@ vault kv get secret/sso/dev/bootstrap_password
 
 **Note:** If the SSO pipeline has re-run since you last fetched the password, the password in Authentik's DB may not match what's in vault (Authentik only sets the password on first DB initialization). In that case, reset via:
 ```bash
-ssh root@192.168.50.247  # active SSO IP
+ssh root@192.168.20.75  # active SSO IP (dev); prod: 192.168.10.75
 docker exec authentik-server ak set_password --username akadmin
 ```
 
@@ -210,7 +210,7 @@ Go to **infra-platform → Actions → Worker Node Pipeline → Run workflow**:
 - `target_node`: Proxmox node to deploy on (`benedict` for dev, `betsy` for prod)
 - `template_vmid`: VMID of the cloud-init template VM on the target node (default: `9000`)
 
-VMID and IP are computed automatically: VMID = `110 + node_number`, IP = `192.168.50.<vmid>`.
+VMID and IP are computed automatically: VMID = `env_base + node_number` (110 for prod, 210 for dev, 310 for qa), IP = `192.168.<env_subnet>.(VMID last 2 digits)`.
 
 ### Decommissioning a worker node
 

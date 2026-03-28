@@ -16,9 +16,9 @@ resource "proxmox_lxc" "sso" {
 
   network {
     name   = "eth0"
-    bridge = "vmbr0"
+    bridge = var.network_bridge
     ip     = "${var.ip_address}/24"
-    gw     = "192.168.50.1"
+    gw     = var.gateway
   }
 
   unprivileged = true

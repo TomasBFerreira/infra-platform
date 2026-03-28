@@ -33,6 +33,8 @@ jobs:
       staging_ip:   ${{ steps.slots.outputs.staging_ip }}
       staging_host: ${{ steps.slots.outputs.staging_host }}
       first_run:    ${{ steps.slots.outputs.first_run }}
+      gateway:        ${{ steps.slots.outputs.gateway }}
+      network_bridge: ${{ steps.slots.outputs.network_bridge }}
     steps:
       - name: Resolve active and staging slots
         id: slots
@@ -45,25 +47,28 @@ jobs:
           ENV="${{ github.event.inputs.environment || 'dev' }}"
 
           # VMID scheme: prod=1xx, dev=2xx, qa=3xx (x45/x46 for blue/green)
-          # IPs match VMID last octet where valid; QA uses .243/.244 (dev owns .245/.246)
+          # IPs: last octet = VMID last 2 digits; env encoded in 3rd octet (10=prod,20=dev,30=qa)
           case "$ENV" in
             dev)
-              BLUE_VMID=245;  BLUE_IP="192.168.50.245"
-              GREEN_VMID=246; GREEN_IP="192.168.50.246"
+              BLUE_VMID=245;  BLUE_IP="192.168.20.45"
+              GREEN_VMID=246; GREEN_IP="192.168.20.46"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="benedict"
+              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
               ;;
             qa)
-              BLUE_VMID=345;  BLUE_IP="192.168.50.243"
-              GREEN_VMID=346; GREEN_IP="192.168.50.244"
+              BLUE_VMID=345;  BLUE_IP="192.168.30.45"
+              GREEN_VMID=346; GREEN_IP="192.168.30.46"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="vladimir"
+              GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
               ;;
             prod)
-              BLUE_VMID=145;  BLUE_IP="192.168.50.145"
-              GREEN_VMID=146; GREEN_IP="192.168.50.146"
+              BLUE_VMID=145;  BLUE_IP="192.168.10.45"
+              GREEN_VMID=146; GREEN_IP="192.168.10.46"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
               PVE_NODE="betsy"
+              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
               ;;
           esac
 
@@ -114,6 +119,8 @@ jobs:
           echo "staging_ip=$STAGING_IP"     >> "$GITHUB_OUTPUT"
           echo "staging_host=$STAGING_HOST" >> "$GITHUB_OUTPUT"
           echo "first_run=$FIRST_RUN"       >> "$GITHUB_OUTPUT"
+          echo "gateway=$GATEWAY"               >> "$GITHUB_OUTPUT"
+          echo "network_bridge=$NETWORK_BRIDGE" >> "$GITHUB_OUTPUT"
 
   terraform-staging:
     needs: resolve-slots
@@ -161,6 +168,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/vault-ct init -input=false
@@ -177,6 +186,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
@@ -202,6 +213,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/vault-ct apply \
@@ -310,6 +323,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/vault-ct init -input=false
@@ -326,6 +341,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname:   ${{ env.ACTIVE_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
@@ -391,6 +408,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/vault-ct init -input=false
@@ -407,6 +426,8 @@ jobs:
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname:   ${{ env.STAGING_HOST }}
           TF_VAR_target_node:   ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |

@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       node_number:
-        description: 'Worker node number (e.g. 1). Dev: VMID=211+N, IP=.211+N. Prod: VMID=111+N, IP=.111+N.'
+        description: 'Worker node number (e.g. 1). Dev: VMID=210+N, IP=192.168.20.(10+N). Prod: VMID=110+N, IP=192.168.10.(10+N).'
         required: true
         type: string
       target_node:
@@ -52,6 +52,8 @@ jobs:
       env:              ${{ steps.resolve.outputs.env }}
       rancher_ip:       ${{ steps.resolve.outputs.rancher_ip }}
       rancher_hostname: ${{ steps.resolve.outputs.rancher_hostname }}
+      gateway:        ${{ steps.resolve.outputs.gateway }}
+      network_bridge: ${{ steps.resolve.outputs.network_bridge }}
     steps:
       - name: Resolve node parameters
         id: resolve
@@ -65,23 +67,27 @@ jobs:
             exit 1
           fi
 
-          # VMID/IP scheme: prod (betsy)=110+N (.111,.112,...), dev (benedict)=210+N (.211,.212,...),
-          # qa (vladimir)=310+N (.311,.312,...).  Each env gets its own address space.
+          # VMID/IP scheme: prod(betsy)=110+N, dev(benedict)=210+N, qa(vladimir)=310+N
+          # IP: 192.168.<env_subnet>.<vmid_last_2_digits>
+          #   prod=192.168.10.x, dev=192.168.20.x, qa=192.168.30.x
           case "$TARGET_NODE" in
             benedict)
-              VMID_BASE=210; ENV=dev
+              VMID_BASE=210; ENV=dev; ENV_SUBNET=20
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
-              RANCHER_IP="192.168.50.202"; RANCHER_HOSTNAME="rancher-dev.databaes.net"
+              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
+              RANCHER_IP="192.168.20.2"; RANCHER_HOSTNAME="rancher-dev.databaes.net"
               ;;
             betsy)
-              VMID_BASE=110; ENV=prod
+              VMID_BASE=110; ENV=prod; ENV_SUBNET=10
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
-              RANCHER_IP="192.168.50.102"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
+              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
+              RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
               ;;
             vladimir)
-              VMID_BASE=310; ENV=qa
+              VMID_BASE=310; ENV=qa; ENV_SUBNET=30
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
-              RANCHER_IP="192.168.50.302"; RANCHER_HOSTNAME="rancher-qa.databaes.net"
+              GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
+              RANCHER_IP="192.168.30.2"; RANCHER_HOSTNAME="rancher-qa.databaes.net"
               ;;
             *)
               echo "ERROR: unknown target_node: $TARGET_NODE"
@@ -90,11 +96,8 @@ jobs:
           esac
 
           VMID=$((VMID_BASE + NODE_NUM))
-          if [ "$VMID" -gt 254 ]; then
-            echo "ERROR: node_number $NODE_NUM would produce VMID $VMID > 254 (invalid IP) for env $ENV"
-            exit 1
-          fi
-          IP_ADDRESS="192.168.50.${VMID}"
+          VMID_SUFFIX=$((VMID % 100))
+          IP_ADDRESS="192.168.${ENV_SUBNET}.${VMID_SUFFIX}"
           PADDED=$(printf '%02d' "$NODE_NUM")
           VM_HOSTNAME="worker-node-${PADDED}"
 
@@ -107,8 +110,10 @@ jobs:
           echo "env=$ENV"                        >> "$GITHUB_OUTPUT"
           echo "rancher_ip=$RANCHER_IP"          >> "$GITHUB_OUTPUT"
           echo "rancher_hostname=$RANCHER_HOSTNAME" >> "$GITHUB_OUTPUT"
+          echo "gateway=$GATEWAY"               >> "$GITHUB_OUTPUT"
+          echo "network_bridge=$NETWORK_BRIDGE" >> "$GITHUB_OUTPUT"
 
-          echo "Resolved: $VM_HOSTNAME ($ENV) — VMID $VMID — $IP_ADDRESS — $TARGET_NODE"
+          echo "Resolved: $VM_HOSTNAME ($ENV) — VMID $VMID — $IP_ADDRESS — $TARGET_NODE (subnet 192.168.${ENV_SUBNET}.0/24)"
 
   terraform-node:
     needs: resolve-node
@@ -133,6 +138,8 @@ jobs:
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
@@ -149,6 +156,8 @@ jobs:
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
           PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
@@ -174,6 +183,8 @@ jobs:
           TF_VAR_ip_address:     ${{ env.IP_ADDRESS }}
           TF_VAR_vm_hostname:    ${{ env.VM_HOSTNAME }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
@@ -311,6 +322,8 @@ jobs:
           TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
           TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
@@ -327,6 +340,8 @@ jobs:
           TF_VAR_ip_address:     ${{ needs.resolve-node.outputs.ip_address }}
           TF_VAR_vm_hostname:    ${{ needs.resolve-node.outputs.vm_hostname }}
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
           PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}

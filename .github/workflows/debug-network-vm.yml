@@ -34,8 +34,8 @@ jobs:
 
           echo ""
           echo "=== Vault health from this host ==="
-          curl -s -o /dev/null -w "245: %{http_code}\n" http://192.168.50.245:8200/v1/sys/health || echo "245: unreachable"
-          curl -s -o /dev/null -w "246: %{http_code}\n" http://192.168.50.246:8200/v1/sys/health || echo "246: unreachable"
+          curl -s -o /dev/null -w "dev-blue: %{http_code}\n" http://192.168.20.45:8200/v1/sys/health || echo "dev-blue: unreachable"
+          curl -s -o /dev/null -w "dev-green: %{http_code}\n" http://192.168.20.46:8200/v1/sys/health || echo "dev-green: unreachable"
 
           echo ""
           echo "=== cloudflared status ==="

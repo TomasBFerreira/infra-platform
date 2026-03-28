@@ -157,7 +157,7 @@ Host benedict
 # ── Media VM (static) ─────────────────────────────────────────────────────────
 
 Host media-vm
-  HostName 192.168.50.111
+  HostName 192.168.10.11
   User root
   IdentityFile ${SSH_DIR}/media-stack_worker_id_ed25519
   StrictHostKeyChecking no

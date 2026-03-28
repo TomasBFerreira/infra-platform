@@ -32,18 +32,18 @@ resource "proxmox_virtual_environment_vm" "worker_node" {
 
   network_device {
     model  = "virtio"
-    bridge = "vmbr0"
+    bridge = var.network_bridge
   }
 
   initialization {
     ip_config {
       ipv4 {
         address = "${var.ip_address}/24"
-        gateway = "192.168.50.1"
+        gateway = var.gateway
       }
     }
     dns {
-      servers = ["192.168.50.1"]
+      servers = [var.gateway]
     }
     user_account {
       username = "root"

@@ -47,7 +47,7 @@ jobs:
           echo "Waiting for container to start and network to be ready..."
           for i in $(seq 1 30); do
             sleep 5
-            if nc -zw3 192.168.50.155 22 2>/dev/null; then
+            if nc -zw3 192.168.10.55 22 2>/dev/null; then
               echo "SSH reachable after ${i}x5s"
               break
             fi
@@ -56,7 +56,7 @@ jobs:
 
       - name: Verify SSH reachable
         run: |
-          nc -zw5 192.168.50.155 22 || (echo "ERROR: container still not reachable on SSH" && exit 1)
+          nc -zw5 192.168.10.55 22 || (echo "ERROR: container still not reachable on SSH" && exit 1)
           echo "Container 155 is reachable"
 
       - name: Fetch SSH key from bootstrap vault
@@ -70,7 +70,7 @@ jobs:
 
       - name: Restore cloudflared and Traefik
         run: |
-          ssh -i /tmp/nw_key -o StrictHostKeyChecking=no root@192.168.50.155 bash <<'EOF'
+          ssh -i /tmp/nw_key -o StrictHostKeyChecking=no root@192.168.10.55 bash <<'EOF'
           echo "=== Container identity ==="
           hostname && hostname -I
 

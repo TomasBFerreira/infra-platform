@@ -33,6 +33,8 @@ jobs:
       staging_ip: ${{ steps.slots.outputs.staging_ip }}
       staging_host: ${{ steps.slots.outputs.staging_host }}
       first_run: ${{ steps.slots.outputs.first_run }}
+      gateway:        ${{ steps.slots.outputs.gateway }}
+      network_bridge: ${{ steps.slots.outputs.network_bridge }}
     steps:
       - name: Resolve active and staging slots
         id: slots
@@ -44,22 +46,25 @@ jobs:
 
           case "$ENV" in
             dev)
-              BLUE_VMID=255;  BLUE_IP="192.168.50.250"
-              GREEN_VMID=256; GREEN_IP="192.168.50.251"
+              BLUE_VMID=255;  BLUE_IP="192.168.20.55"
+              GREEN_VMID=256; GREEN_IP="192.168.20.56"
               PVE_NODE="benedict"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
               ;;
             qa)
-              BLUE_VMID=355;  BLUE_IP="192.168.50.240"
-              GREEN_VMID=356; GREEN_IP="192.168.50.241"
+              BLUE_VMID=355;  BLUE_IP="192.168.30.55"
+              GREEN_VMID=356; GREEN_IP="192.168.30.56"
               PVE_NODE="vladimir"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
               ;;
             prod)
-              BLUE_VMID=155;  BLUE_IP="192.168.50.155"
-              GREEN_VMID=156; GREEN_IP="192.168.50.156"
+              BLUE_VMID=155;  BLUE_IP="192.168.10.55"
+              GREEN_VMID=156; GREEN_IP="192.168.10.56"
               PVE_NODE="betsy"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
               ;;
           esac
 
@@ -110,6 +115,8 @@ jobs:
           echo "staging_ip=$STAGING_IP" >> "$GITHUB_OUTPUT"
           echo "staging_host=$STAGING_HOST" >> "$GITHUB_OUTPUT"
           echo "first_run=$FIRST_RUN" >> "$GITHUB_OUTPUT"
+          echo "gateway=$GATEWAY"               >> "$GITHUB_OUTPUT"
+          echo "network_bridge=$NETWORK_BRIDGE" >> "$GITHUB_OUTPUT"
 
   terraform-staging:
     needs: resolve-slots
@@ -143,6 +150,8 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
@@ -159,6 +168,8 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
@@ -186,6 +197,8 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
@@ -388,6 +401,8 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname: ${{ env.ACTIVE_HOST }}
@@ -404,6 +419,8 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
           TF_VAR_vm_hostname: ${{ env.ACTIVE_HOST }}
@@ -462,6 +479,8 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
@@ -478,6 +497,8 @@ jobs:
           TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_vmid: ${{ env.STAGING_VMID }}
           TF_VAR_ip_address: ${{ env.STAGING_IP }}
           TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
