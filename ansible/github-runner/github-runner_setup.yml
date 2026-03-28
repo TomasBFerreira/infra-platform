@@ -26,6 +26,14 @@
         fi
       changed_when: false
 
+    - name: Add static route to dev service subnet via benedict
+      blockinfile:
+        path: /etc/network/interfaces
+        marker: "# {mark} ANSIBLE MANAGED — dev subnet route"
+        block: |
+          up ip route add 192.168.20.0/24 via 192.168.50.4 || true
+      notify: Apply network routes
+
     - name: Update apt cache
       apt:
         update_cache: yes
@@ -373,3 +381,7 @@
     - name: Runner setup summary
       debug:
         msg: "GitHub Actions runner 'github-runner-{{ runner_env }}' registered to repo {{ github_repo }} with labels: self-hosted, linux, {{ runner_env }}"
+
+  handlers:
+    - name: Apply network routes
+      shell: ip route add 192.168.20.0/24 via 192.168.50.4 2>/dev/null || true
