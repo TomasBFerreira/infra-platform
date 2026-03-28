@@ -130,8 +130,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Migrate legacy state file (first-ever blue/green run)
         run: |
@@ -255,8 +260,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Pull latest traefik-gitops (canonical Traefik config source)
         run: git -C /app/traefik-gitops pull --rebase origin main
@@ -383,8 +393,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Tailscale logout on old active VM
         env:
@@ -475,8 +490,13 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Terraform Init
         env:

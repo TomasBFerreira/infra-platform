@@ -122,8 +122,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Terraform Init
         env:
@@ -248,8 +253,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r ansible/requirements.yml
@@ -340,8 +350,13 @@ jobs:
     steps:
       - name: Checkout traefik-gitops
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
         with:
           repository: TomasBFerreira/traefik-gitops
           ref: main
@@ -395,8 +410,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Terraform Init
         env:
@@ -474,8 +494,13 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          path: /app/infra-platform
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
 
       - name: Terraform Init
         env:
