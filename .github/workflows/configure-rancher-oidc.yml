@@ -31,11 +31,11 @@ jobs:
           # Rancher is a singleton per env — static VMID/IP scheme
           case "$ENV" in
             dev)
-              RANCHER_IP="192.168.50.202"
+              RANCHER_IP="192.168.20.2"
               RANCHER_HOSTNAME="rancher-dev.databaes.net"
               ;;
             prod)
-              RANCHER_IP="192.168.50.102"
+              RANCHER_IP="192.168.10.2"
               RANCHER_HOSTNAME="rancher.databaes.net"
               ;;
           esac
