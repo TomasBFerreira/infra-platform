@@ -2,6 +2,8 @@
 - name: Configure worker node
   hosts: all
   gather_facts: true
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
   tasks:
     # ── System prerequisites ─────────────────────────────────────────────────
