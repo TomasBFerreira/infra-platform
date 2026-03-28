@@ -7,7 +7,7 @@
     # ── System prerequisites ─────────────────────────────────────────────────
 
     - name: Wait for cloud-init to finish
-      command: cloud-init status --wait
+      command: cloud-init status --wait --timeout=60
       changed_when: false
       failed_when: false
 
@@ -22,7 +22,7 @@
           - qemu-guest-agent
         state: present
         update_cache: yes
-        lock_timeout: 120
+        lock_timeout: 30
 
     - name: Enable and start qemu-guest-agent
       systemd:
@@ -63,14 +63,14 @@
 
     - name: Wait for SSH to recover after k3s networking changes
       wait_for_connection:
-        delay: 15
-        timeout: 120
+        delay: 5
+        timeout: 60
 
     - name: Wait for k3s node to be Ready
       command: k3s kubectl get nodes
       register: k3s_nodes
-      retries: 12
-      delay: 10
+      retries: 6
+      delay: 5
       until: k3s_nodes.rc == 0 and 'Ready' in k3s_nodes.stdout
 
     - name: Ensure k3s is enabled and running
@@ -317,7 +317,7 @@
         - name: Wait for cattle-cluster-agent deployment to be created
           command: k3s kubectl get deployment cattle-cluster-agent -n cattle-system
           register: agent_check
-          retries: 24
+          retries: 6
           delay: 5
           until: agent_check.rc == 0
 
@@ -333,7 +333,7 @@
         - name: Wait for cattle-cluster-agent rollout
           command: >
             k3s kubectl rollout status deployment/cattle-cluster-agent
-            -n cattle-system --timeout=120s
+            -n cattle-system --timeout=60s
 
         - name: Remove Rancher registration script
           file:
