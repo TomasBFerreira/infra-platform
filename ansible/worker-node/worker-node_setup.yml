@@ -6,6 +6,11 @@
   tasks:
     # ── System prerequisites ─────────────────────────────────────────────────
 
+    - name: Wait for cloud-init to finish
+      command: cloud-init status --wait
+      changed_when: false
+      failed_when: false
+
     - name: Install prerequisites
       apt:
         name:
@@ -17,6 +22,7 @@
           - qemu-guest-agent
         state: present
         update_cache: yes
+        lock_timeout: 120
 
     - name: Enable and start qemu-guest-agent
       systemd:
