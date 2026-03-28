@@ -253,6 +253,7 @@
         content: |
           # Run inside Authentik's Django shell to ensure the bootstrap API token exists.
           # This is called via: ak shell --command "exec(open(...)read())"
+          # Delete-and-recreate on every deploy so DB restores never carry a stale/wrong key.
           import sys
           try:
               from authentik.core.models import Token, User, TokenIntents
@@ -261,14 +262,15 @@
                   print('NO_USER')
                   sys.exit(1)
               key = '{{ sso_bootstrap_token }}'
-              t, _ = Token.objects.get_or_create(
+              Token.objects.filter(identifier='authentik-bootstrap-token').delete()
+              t = Token.objects.create(
                   identifier='authentik-bootstrap-token',
-                  defaults={'user': user, 'intent': TokenIntents.INTENT_API, 'key': key}
+                  user=user,
+                  intent=TokenIntents.INTENT_API,
+                  key=key,
+                  expiring=False,
               )
-              if t.key != key:
-                  t.key = key
-                  t.save()
-              print('OK:' + key[:8])
+              print('OK:' + t.key[:8])
           except Exception as e:
               print('ERROR:', str(e))
               sys.exit(1)
