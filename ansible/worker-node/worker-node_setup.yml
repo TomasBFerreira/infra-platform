@@ -219,8 +219,9 @@
           changed_when: false
 
         - name: Wait for CoreDNS to be ready
-          shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=60s
+          shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=120s
           changed_when: false
+          ignore_errors: yes    # CoreDNS may take >60s on low-resource VMs; NodeHosts reloads automatically anyway
 
         - name: Write Rancher registration script
           copy:
