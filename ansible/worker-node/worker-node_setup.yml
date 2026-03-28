@@ -380,7 +380,8 @@
         - name: Wait for cattle-cluster-agent rollout
           command: >
             k3s kubectl rollout status deployment/cattle-cluster-agent
-            -n cattle-system --timeout=60s
+            -n cattle-system --timeout=180s
+          ignore_errors: yes    # image pull may take >60s; agent will connect when ready
 
         - name: Remove Rancher registration script
           file:
