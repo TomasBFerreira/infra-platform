@@ -134,6 +134,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          path: /app/infra-platform
 
       - name: Migrate legacy state files
         run: |
@@ -233,6 +235,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          path: /app/infra-platform
 
       - name: Install Ansible collections
         run: |
@@ -310,6 +314,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          path: /app/infra-platform
 
       - name: Terraform Init
         env:
@@ -395,6 +401,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          path: /app/infra-platform
 
       - name: Terraform Init
         env:

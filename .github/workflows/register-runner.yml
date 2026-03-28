@@ -37,6 +37,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: /app/infra-platform
 
       - name: Ensure Vault CLI is installed
         run: |
