@@ -19,6 +19,10 @@
         delay: 5
         timeout: 120
 
+    - name: Update apt cache (90s timeout, best-effort — sources may be restricted)
+      shell: timeout 90 apt-get update -qq || true
+      changed_when: false
+
     - name: Install prerequisites
       apt:
         name:
@@ -26,7 +30,7 @@
           - nfs-common      # required for NFS PersistentVolumes
           - qemu-guest-agent
         state: present
-        cache_valid_time: 3600  # skip apt-get update if cloud-init ran it < 1hr ago
+        update_cache: no
         lock_timeout: 30
 
     - name: Enable and start qemu-guest-agent
