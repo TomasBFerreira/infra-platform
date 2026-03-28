@@ -230,6 +230,7 @@ jobs:
     needs: [resolve-slots, terraform-staging, backup-db]
     # Run whether backup-db succeeded (re-deploy) or was skipped (first run).
     if: >-
+      always() &&
       needs.terraform-staging.result == 'success' &&
       (needs.backup-db.result == 'success' || needs.backup-db.result == 'skipped')
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
