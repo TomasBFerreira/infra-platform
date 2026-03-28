@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   resolve-node:
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: [self-hosted, "${{ github.event.inputs.target_node == 'betsy' && 'prod' || github.event.inputs.target_node == 'vladimir' && 'qa' || 'dev' }}"]
     outputs:
       node_number:      ${{ steps.resolve.outputs.node_number }}
       vmid:             ${{ steps.resolve.outputs.vmid }}
@@ -117,7 +117,7 @@ jobs:
 
   terraform-node:
     needs: resolve-node
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: [self-hosted, "${{ needs.resolve-node.outputs.env }}"]
     env:
       NODE_NUM:    ${{ needs.resolve-node.outputs.node_number }}
       VMID:        ${{ needs.resolve-node.outputs.vmid }}
@@ -201,7 +201,7 @@ jobs:
 
   ansible-node:
     needs: [resolve-node, terraform-node]
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: [self-hosted, "${{ needs.resolve-node.outputs.env }}"]
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -283,7 +283,7 @@ jobs:
 
   register-node:
     needs: [resolve-node, ansible-node]
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: [self-hosted, "${{ needs.resolve-node.outputs.env }}"]
     steps:
       - name: Record node state in bootstrap vault
         env:
@@ -318,7 +318,7 @@ jobs:
   cleanup-on-failure:
     needs: [resolve-node, terraform-node, ansible-node]
     if: failure()
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: [self-hosted, "${{ needs.resolve-node.outputs.env }}"]
     env:
       VMID: ${{ needs.resolve-node.outputs.vmid }}
     steps:
