@@ -62,6 +62,14 @@ Current nodes:
 - worker-node-01 (dev):  VMID 211, IP 192.168.20.11 (benedict — pipeline-managed)
 - worker-node-01 (prod): VMID 111, IP 192.168.10.11 (betsy — existing manual VM, pending pipeline migration)
 
+**GPU worker nodes — numbered singletons (separate VMID range from regular worker nodes):**
+- Prod (betsy):  VMID = 120+N, IP = 192.168.10.(20+N) → N=1: 121 → .21
+- Dev (benedict): VMID = 220+N, IP = 192.168.20.(20+N) → N=1: 221 → .21
+- QA (vladimir):  VMID = 320+N, IP = 192.168.30.(20+N) → N=1: 321 → .21
+
+Current GPU nodes:
+- worker-node-gpu-01 (prod): VMID 121, IP 192.168.10.21 (betsy — GTX 970 passthrough, IOMMU group 15, PCI 0000:26:00)
+
 **GitHub Actions runners — env singletons:**
 - github-runner-prod: VMID 101, IP 192.168.10.101 (betsy)
 - github-runner-dev:  VMID 201, IP 192.168.20.101 (benedict)
