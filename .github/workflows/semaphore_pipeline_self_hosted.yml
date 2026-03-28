@@ -130,7 +130,7 @@ jobs:
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -148,7 +148,7 @@ jobs:
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -175,7 +175,7 @@ jobs:
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -351,7 +351,7 @@ jobs:
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -369,7 +369,7 @@ jobs:
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -435,7 +435,7 @@ jobs:
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -453,7 +453,7 @@ jobs:
         env:
           TF_VAR_pve_api:       ${{ needs.resolve-slots.outputs.pve_api_url }}
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+          TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
           TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
