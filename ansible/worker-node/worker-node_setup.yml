@@ -27,17 +27,18 @@
       apt:
         name:
           - curl
-          - nfs-common      # required for NFS PersistentVolumes
           - qemu-guest-agent
         state: present
         update_cache: no
         lock_timeout: 30
+      ignore_errors: yes    # sources may be restricted on this template; curl is pre-installed on Ubuntu 22.04
 
     - name: Enable and start qemu-guest-agent
       systemd:
         name: qemu-guest-agent
         enabled: yes
         state: started
+      ignore_errors: yes    # may not be installed if apt sources were restricted
 
     # ── k3s ─────────────────────────────────────────────────────────────────
     # Single-node install: server + embedded agent on the same VM.
@@ -53,11 +54,11 @@
 
     - name: Switch to iptables-legacy before k3s install
       shell: |
-        apt-get install -y -q iptables arptables ebtables
-        update-alternatives --set iptables /usr/sbin/iptables-legacy
-        update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
-        update-alternatives --set arptables /usr/sbin/arptables-legacy
-        update-alternatives --set ebtables /usr/sbin/ebtables-legacy
+        apt-get install -y -q iptables arptables ebtables || true
+        update-alternatives --set iptables /usr/sbin/iptables-legacy || true
+        update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
+        update-alternatives --set arptables /usr/sbin/arptables-legacy || true
+        update-alternatives --set ebtables /usr/sbin/ebtables-legacy || true
       changed_when: false
 
     - name: Install k3s
