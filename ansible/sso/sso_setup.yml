@@ -557,7 +557,7 @@
         VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
           vault kv put secret/rancher/{{ vault_env | default('dev') }}/rbac \
             global_bindings="$GLOBAL_BINDINGS" \
-            cluster_bindings='[]'
+            cluster_bindings="[]"
         echo "Rancher RBAC bindings stored ({{ authentik_admin_groups.json.results | length }} admin group(s))"
 
     - name: Store Vault OIDC credentials in env vault

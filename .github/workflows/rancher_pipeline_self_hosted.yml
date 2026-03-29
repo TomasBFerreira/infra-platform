@@ -283,7 +283,7 @@ jobs:
           if vault kv get secret/rancher/${ENV}/rbac > /dev/null 2>&1; then
             RBAC_GLOBAL="$(vault kv get -field=global_bindings  secret/rancher/${ENV}/rbac 2>/dev/null || echo '[]')"
             RBAC_CLUSTER="$(vault kv get -field=cluster_bindings secret/rancher/${ENV}/rbac 2>/dev/null || echo '[]')"
-            python3 -c "import json,sys; g=json.loads(sys.argv[1]); c=json.loads(sys.argv[2]); print(json.dumps({'rancher_rbac_global_bindings':g,'rancher_rbac_cluster_bindings':c}))" "$RBAC_GLOBAL" "$RBAC_CLUSTER" > /tmp/rancher_rbac_vars.json
+            python3 -c "import json,sys; g=json.loads(sys.argv[1] or '[]'); c=json.loads(sys.argv[2] or '[]'); print(json.dumps({'rancher_rbac_global_bindings':g,'rancher_rbac_cluster_bindings':c}))" "$RBAC_GLOBAL" "$RBAC_CLUSTER" > /tmp/rancher_rbac_vars.json
             echo "RANCHER_RBAC_VARS_FILE=/tmp/rancher_rbac_vars.json" >> "$GITHUB_ENV"
             echo "Rancher RBAC bindings found — will be applied after setup"
           else
