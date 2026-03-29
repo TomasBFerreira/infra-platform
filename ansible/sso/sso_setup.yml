@@ -336,6 +336,10 @@
 
     - name: Set Authentik resource facts
       set_fact:
+        # Browser-facing Authentik URL — matches the iss claim Authentik puts in tokens.
+        # OIDC consumers (Rancher, Vault) must use this as their issuer so token
+        # validation succeeds; using the internal IP causes an iss mismatch.
+        _sso_host_browser: "{% if vault_env == 'prod' %}https://auth.databaes.net{% else %}https://auth-dev.databaes.net{% endif %}"
         # Take the first signing key (Authentik always has one default)
         _signing_key: "{{ authentik_signing_keys.json.results[0].pk }}"
         # Prefer implicit consent flow (better UX for homelab), fallback to first
@@ -514,7 +518,7 @@
           client_id="{{ _rancher_client_id }}" \
           client_secret="{{ _rancher_client_secret }}" \
           sso_ip="{{ ansible_host }}" \
-          discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
+          discovery_url="{{ _sso_host_browser }}/application/o/rancher/"
 
         # Also write to bootstrap vault so rancher pipeline re-runs can re-seed this secret
         VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
@@ -523,7 +527,7 @@
             client_id="{{ _rancher_client_id }}" \
             client_secret="{{ _rancher_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
-            discovery_url="http://{{ ansible_host }}:9000/application/o/rancher/"
+            discovery_url="{{ _sso_host_browser }}/application/o/rancher/"
       no_log: true
 
     # Query Authentik for superuser groups (is_superuser=true on the group object).
@@ -553,7 +557,7 @@
         VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
           vault kv put secret/rancher/{{ vault_env | default('dev') }}/rbac \
             global_bindings="$GLOBAL_BINDINGS" \
-            cluster_bindings='[]'
+            cluster_bindings="[]"
         echo "Rancher RBAC bindings stored ({{ authentik_admin_groups.json.results | length }} admin group(s))"
 
     - name: Store Vault OIDC credentials in env vault
@@ -574,7 +578,7 @@
           client_id="{{ _vault_client_id }}" \
           client_secret="{{ _vault_client_secret }}" \
           sso_ip="{{ ansible_host }}" \
-          discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
+          discovery_url="{{ _sso_host_browser }}/application/o/vault/"
 
         # Also write to bootstrap vault so vault-ct redeploys can re-seed this secret
         VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
@@ -583,5 +587,88 @@
             client_id="{{ _vault_client_id }}" \
             client_secret="{{ _vault_client_secret }}" \
             sso_ip="{{ ansible_host }}" \
-            discovery_url="http://{{ ansible_host }}:9000/application/o/vault/"
+            discovery_url="{{ _sso_host_browser }}/application/o/vault/"
       no_log: true
+
+    # ── Authentik API — configure WikiJS Proxy provider ──────────────────────
+    # WikiJS is gated by the Traefik authentik-dev/prod forwardAuth middleware.
+    # A Proxy Provider (forward_single mode) must exist in Authentik and be
+    # assigned to the embedded outpost so it can handle the auth challenge.
+
+    - name: Check if WikiJS Proxy provider already exists
+      uri:
+        url: "http://localhost:9000/api/v3/providers/proxy/?name=WikiJS"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_wikijs_provider
+
+    - name: Set WikiJS provider facts
+      set_fact:
+        _wikijs_provider_exists: "{{ existing_wikijs_provider.json.pagination.count > 0 }}"
+        _existing_wikijs_provider_pk: "{{ existing_wikijs_provider.json.results[0].pk | default('') }}"
+        _wikijs_external_host: "{% if vault_env == 'prod' %}https://wikijs.databaes.net{% else %}https://wikijs-dev.databaes.net{% endif %}"
+
+    - name: Create WikiJS Proxy provider in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/providers/proxy/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "WikiJS"
+          authorization_flow: "{{ _auth_flow }}"
+          invalidation_flow: "{{ _invalidation_flow }}"
+          mode: "forward_single"
+          external_host: "{{ _wikijs_external_host }}"
+        status_code: 201
+      register: created_wikijs_provider
+      when: not _wikijs_provider_exists
+
+    - name: Resolve final WikiJS provider pk
+      set_fact:
+        _wikijs_provider_pk: "{{ created_wikijs_provider.json.pk if not _wikijs_provider_exists else _existing_wikijs_provider_pk }}"
+
+    - name: Check if WikiJS application already exists
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/?slug=wikijs"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_wikijs_app
+
+    - name: Create WikiJS application in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "WikiJS"
+          slug: "wikijs"
+          provider: "{{ _wikijs_provider_pk }}"
+          open_in_new_tab: true
+        status_code: 201
+      when: existing_wikijs_app.json.pagination.count == 0
+
+    # ── Assign WikiJS provider to the embedded outpost ───────────────────────
+
+    - name: Get embedded outpost
+      uri:
+        url: "http://localhost:9000/api/v3/outposts/instances/?managed=goauthentik.io/outposts/embedded"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: embedded_outpost
+
+    - name: Add WikiJS provider to embedded outpost
+      uri:
+        url: "http://localhost:9000/api/v3/outposts/instances/{{ embedded_outpost.json.results[0].pk }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          providers: "{{ (embedded_outpost.json.results[0].providers + [_wikijs_provider_pk | int]) | unique }}"
+      when:
+        - embedded_outpost.json.results | length > 0
+        - (_wikijs_provider_pk | int) not in embedded_outpost.json.results[0].providers
