@@ -45,7 +45,7 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
     device = "hostpci0"
     id     = var.gpu_pci_id
     pcie   = true
-    rombar = true
+    rombar = false
     xvga   = false
   }
 
