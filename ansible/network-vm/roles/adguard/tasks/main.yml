@@ -54,6 +54,24 @@
   when: adguard_status.status == 302 and adguard_username != '' and adguard_password != ''
   no_log: true
 
+- name: Add AdGuard DNS rewrites
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
+    method: POST
+    body_format: json
+    body:
+      domain: "{{ item.domain }}"
+      answer: "{{ item.answer }}"
+    url_username: "{{ adguard_username }}"
+    url_password: "{{ adguard_password }}"
+    force_basic_auth: yes
+    status_code: [200]
+  loop: "{{ adguard_dns_rewrites | default([]) }}"
+  no_log: true
+  when:
+    - adguard_username != ''
+    - adguard_dns_rewrites | default([]) | length > 0
+
 - name: Verify AdGuard Home is healthy
   uri:
     url: "http://127.0.0.1:{{ adguard_port }}/control/status"
