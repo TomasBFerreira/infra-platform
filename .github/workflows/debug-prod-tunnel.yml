@@ -1,0 +1,26 @@
+name: Debug prod tunnel config
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: [self-hosted, prod]
+    steps:
+      - name: Check cloudflared tunnel config on prod network-vm
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nwkey && chmod 600 /tmp/nwkey
+          echo "=== cloudflared service unit ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "systemctl cat cloudflared 2>/dev/null | grep ExecStart"
+          echo "=== cloudflared config ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "cat /etc/cloudflared/config.yml 2>/dev/null || echo 'no config.yml'"
+          echo "=== tunnel logs (last 10 lines) ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "journalctl -u cloudflared -n 10 --no-pager | grep -v '^--'"
+          rm -f /tmp/nwkey
