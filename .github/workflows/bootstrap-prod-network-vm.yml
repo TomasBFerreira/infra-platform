@@ -1,0 +1,104 @@
+name: Bootstrap prod network-vm (Ansible)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bootstrap:
+    runs-on: [self-hosted, prod]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      TARGET_IP: "192.168.10.55"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync infra-platform to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
+      - name: Pull latest traefik-gitops (canonical Traefik config source)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -d /app/traefik-gitops/.git ]; then
+            git -C /app/traefik-gitops pull --rebase origin main
+          else
+            gh repo clone TomasBFerreira/traefik-gitops /app/traefik-gitops
+          fi
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install -r /app/infra-platform/ansible/requirements.yml
+          pip3 install hvac --quiet --break-system-packages
+
+      - name: Fetch SSH private key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/network_vm_key
+          chmod 600 /tmp/network_vm_key
+
+      - name: Fetch secrets from prod Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_PROD_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_PROD_TOKEN }}
+        run: |
+          TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+          WG_PRIVATE_KEY=$(vault kv get -field=private_key secret/wireguard 2>/dev/null || echo "")
+          WG_PEER_PUBLIC_KEY=$(vault kv get -field=peer_public_key secret/wireguard 2>/dev/null || echo "")
+          WG_ENDPOINT=$(vault kv get -field=endpoint secret/wireguard 2>/dev/null || echo "")
+          WG_ADDRESS=$(vault kv get -field=address secret/wireguard 2>/dev/null || echo "")
+          WG_DNS=$(vault kv get -field=dns secret/wireguard 2>/dev/null || echo "")
+          ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
+          ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
+          CF_TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel 2>/dev/null || echo "")
+
+          echo "::add-mask::$TS_AUTHKEY"
+          echo "::add-mask::$WG_PRIVATE_KEY"
+          echo "::add-mask::$WG_PEER_PUBLIC_KEY"
+          echo "::add-mask::$ADGUARD_PASS"
+          echo "::add-mask::$CF_TUNNEL_TOKEN"
+
+          echo "TS_AUTHKEY=$TS_AUTHKEY"         >> $GITHUB_ENV
+          echo "WG_PRIVATE_KEY=$WG_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "WG_PEER_PUBLIC_KEY=$WG_PEER_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "WG_ENDPOINT=$WG_ENDPOINT"       >> $GITHUB_ENV
+          echo "WG_ADDRESS=$WG_ADDRESS"         >> $GITHUB_ENV
+          echo "WG_DNS=$WG_DNS"                 >> $GITHUB_ENV
+          echo "ADGUARD_USER=$ADGUARD_USER"     >> $GITHUB_ENV
+          echo "ADGUARD_PASS=$ADGUARD_PASS"     >> $GITHUB_ENV
+          echo "CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN" >> $GITHUB_ENV
+
+      - name: Run Ansible playbook against prod network-vm
+        working-directory: /app/infra-platform
+        run: |
+          ssh-keygen -R "$TARGET_IP" || true
+          ansible-playbook \
+            -i "${TARGET_IP}," \
+            -v \
+            -e "ansible_host=${TARGET_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -i /tmp/network_vm_key'" \
+            -e "tailscale_hostname=prod-network-vm-blue" \
+            -e "tailscale_authkey=$TS_AUTHKEY" \
+            -e "tailscale_advertise_tags=tag:container,tag:prod,tag:subnet-router" \
+            -e "wg_private_key=$WG_PRIVATE_KEY" \
+            -e "wg_peer_public_key=$WG_PEER_PUBLIC_KEY" \
+            -e "wg_endpoint=$WG_ENDPOINT" \
+            -e "wg_address=$WG_ADDRESS" \
+            -e "wg_dns=$WG_DNS" \
+            -e "adguard_username=$ADGUARD_USER" \
+            -e "adguard_password=$ADGUARD_PASS" \
+            -e "cloudflare_tunnel_token=$CF_TUNNEL_TOKEN" \
+            ansible/network-vm/network-vm_setup.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/network_vm_key
