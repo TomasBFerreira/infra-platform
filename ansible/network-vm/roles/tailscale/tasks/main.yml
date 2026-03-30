@@ -87,3 +87,4 @@
   delay: 3
   until: ts_online.rc == 0
   changed_when: false
+  when: not (tailscale_skip_auth | default(false))
