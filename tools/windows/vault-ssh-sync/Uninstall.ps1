@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Removes Vault SSH Key Sync — scheduled task and config.
+    Removes Vault SSH Key Sync  -  scheduled task and config.
 #>
 
 $AppName  = "VaultSshSync"

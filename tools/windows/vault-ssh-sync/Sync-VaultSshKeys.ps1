@@ -34,14 +34,14 @@ function Write-Log {
 }
 
 # ---------------------------------------------------------------------------
-# Windows Toast notification (Windows 10/11 — fails silently on older OS)
+# Windows Toast notification (Windows 10/11  -  fails silently on older OS)
 # ---------------------------------------------------------------------------
 function Show-Toast {
     param([string]$Title, [string]$Message, [string]$AppId = $AppName)
     try {
         # Use ScriptBlock.Create to defer parsing of the WinRT ContentType syntax.
         # PowerShell 7 (Core) cannot parse [Type, Assembly, ContentType = WindowsRuntime]
-        # at script-load time — deferring to runtime means PS 7 only hits a runtime error,
+        # at script-load time  -  deferring to runtime means PS 7 only hits a runtime error,
         # which the outer catch already swallows, so toasts are silently skipped on PS 7.
         [scriptblock]::Create('
             $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
@@ -60,12 +60,12 @@ function Show-Toast {
         $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
         [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppId).Show($toast)
     } catch {
-        # Toast not available — silently skip
+        # Toast not available  -  silently skip
     }
 }
 
 # ---------------------------------------------------------------------------
-# DPAPI helpers — encrypt/decrypt token bound to current Windows user account
+# DPAPI helpers  -  encrypt/decrypt token bound to current Windows user account
 # ---------------------------------------------------------------------------
 function Protect-Token([string]$PlainText) {
     Add-Type -AssemblyName System.Security
@@ -106,8 +106,8 @@ Write-Log "--- Vault SSH key sync started ---"
 
 # Load config
 if (-not (Test-Path $ConfigFile)) {
-    Write-Log "Config not found at $ConfigFile — run Install.ps1 first." "ERROR"
-    Show-Toast "Vault SSH Sync — Error" "Config missing. Run Install.ps1 to set up."
+    Write-Log "Config not found at $ConfigFile  -  run Install.ps1 first." "ERROR"
+    Show-Toast "Vault SSH Sync  -  Error" "Config missing. Run Install.ps1 to set up."
     exit 1
 }
 
@@ -116,8 +116,8 @@ $config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
 $vaultAddr = $config.vault_address.TrimEnd('/')
 if (-not $config.PSObject.Properties['vault_token_dpapi'] -or
     [string]::IsNullOrWhiteSpace($config.vault_token_dpapi)) {
-    Write-Log "Vault token not stored in config — run Install.ps1 to reconfigure." "ERROR"
-    Show-Toast "Vault SSH Sync — Error" "No vault token found. Run Install.ps1."
+    Write-Log "Vault token not stored in config  -  run Install.ps1 to reconfigure." "ERROR"
+    Show-Toast "Vault SSH Sync  -  Error" "No vault token found. Run Install.ps1."
     exit 1
 }
 
@@ -125,7 +125,7 @@ try {
     $token = Unprotect-Token $config.vault_token_dpapi
 } catch {
     Write-Log "Failed to decrypt vault token (DPAPI): $_" "ERROR"
-    Show-Toast "Vault SSH Sync — Error" "Could not decrypt vault token. Re-run Install.ps1."
+    Show-Toast "Vault SSH Sync  -  Error" "Could not decrypt vault token. Re-run Install.ps1."
     exit 1
 }
 
@@ -144,13 +144,13 @@ try {
 } catch {
     $msg = "Failed to list Vault secrets: $_"
     Write-Log $msg "ERROR"
-    Show-Toast "Vault SSH Sync — Error" "Could not reach vault at $vaultAddr"
+    Show-Toast "Vault SSH Sync  -  Error" "Could not reach vault at $vaultAddr"
     exit 1
 }
 
 $keyNames = $listResp.data.keys
 if (-not $keyNames -or $keyNames.Count -eq 0) {
-    Write-Log "No keys found under secret/ssh_keys/ — nothing to sync." "WARN"
+    Write-Log "No keys found under secret/ssh_keys/  -  nothing to sync." "WARN"
     exit 0
 }
 
@@ -205,7 +205,7 @@ if ($errors  -gt 0) { $summary += ", $errors failed" }
 Write-Log "Done. $summary"
 
 if ($errors -gt 0) {
-    Show-Toast "Vault SSH Sync — Warning" "$summary — check $LogFile"
+    Show-Toast "Vault SSH Sync  -  Warning" "$summary  -  check $LogFile"
 } else {
     Show-Toast "Vault SSH Sync" "$summary to $sshDir"
 }

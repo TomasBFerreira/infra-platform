@@ -24,7 +24,7 @@ $SyncScript = Join-Path $ScriptDir "Sync-VaultSshKeys.ps1"
 
 Write-Host ""
 Write-Host "=====================================" -ForegroundColor Cyan
-Write-Host "  Vault SSH Key Sync — Setup" -ForegroundColor Cyan
+Write-Host "  Vault SSH Key Sync  -  Setup" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -54,7 +54,7 @@ $vaultAddr = $vaultAddr.TrimEnd('/')
 Write-Host ""
 Write-Host "Vault token  (use your bootstrap root token, or a read-only token" -ForegroundColor Yellow
 Write-Host "             scoped to 'secret/data/ssh_keys/*')" -ForegroundColor Yellow
-Write-Host "The token is encrypted with Windows DPAPI — only your account can read it."
+Write-Host "The token is encrypted with Windows DPAPI  -  only your account can read it."
 $tokenSecure = Read-Host "  Token" -AsSecureString
 $token = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($tokenSecure))
@@ -146,7 +146,7 @@ Register-ScheduledTask `
     -Principal $principal `
     -Force | Out-Null
 
-Write-Host "Task registered — will run at logon and every 30 min." -ForegroundColor Green
+Write-Host "Task registered  -  will run at logon and every 30 min." -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
 # Run initial sync now
