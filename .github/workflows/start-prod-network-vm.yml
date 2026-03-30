@@ -35,16 +35,16 @@ jobs:
             echo "LXC 155 is stopped — starting..."
             ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "pct start 155"
 
-          else
+          if echo "$STATUS" | grep -q "notfound"; then
             echo "LXC 155 does not exist — provisioning from scratch..."
-            # Check template exists
+            # Check template exists, download if needed
             ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
               "ls /var/lib/vz/template/cache/debian-12-standard_12.12-1_amd64.tar.zst 2>/dev/null \
                || pveam download local debian-12-standard_12.12-1_amd64.tar.zst"
 
-            # Create the LXC (matches terraform/network-vm/main.tf spec)
-            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 bash << ENDSSH
-              pct create 155 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
+            # Create the LXC — matches terraform/network-vm/main.tf spec
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+              "pct create 155 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
                 --hostname network-vm-blue \
                 --cores 2 \
                 --memory 2048 \
@@ -54,11 +54,10 @@ jobs:
                 --features nesting=1 \
                 --onboot 1 \
                 --startup order=2,up=30 \
-                --ssh-public-keys <(echo "$SSH_PUBKEY")
-              echo "LXC 155 created"
-              pct start 155
-              echo "LXC 155 started"
-ENDSSH
+                --ssh-public-keys /dev/stdin" <<< "$SSH_PUBKEY"
+            echo "LXC 155 created"
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "pct start 155"
+            echo "LXC 155 started"
           fi
 
           echo "=== Waiting for SSH on 192.168.10.55 ==="
