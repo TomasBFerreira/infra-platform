@@ -83,7 +83,7 @@ jobs:
           echo "Auth flow: $AUTH_FLOW"
           echo "Invalidation flow: $INVALIDATION_FLOW"
 
-      - name: Create WikiJS Proxy Provider (if missing)
+      - name: Create or fix WikiJS Proxy Provider
         if: steps.check-sso.outputs.skip != 'true'
         run: |
           EXISTING=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/proxy/?name=WikiJS" \
@@ -92,7 +92,19 @@ jobs:
 
           if [ "$COUNT" -gt 0 ]; then
             PROVIDER_PK=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
-            echo "WikiJS Proxy Provider already exists (pk=$PROVIDER_PK) — skipping creation"
+            CURRENT_HOST=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['external_host'])")
+            echo "WikiJS Proxy Provider exists (pk=$PROVIDER_PK), external_host='$CURRENT_HOST'"
+
+            if [ "$CURRENT_HOST" != "$EXTERNAL_HOST" ]; then
+              echo "external_host mismatch — patching to '$EXTERNAL_HOST'"
+              curl -sf -X PATCH "http://${SSO_IP}:9000/api/v3/providers/proxy/${PROVIDER_PK}/" \
+                -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"external_host\": \"$EXTERNAL_HOST\"}" \
+                | python3 -c "import sys,json; r=json.load(sys.stdin); print('Patched external_host →', r['external_host'])"
+            else
+              echo "external_host is correct — no patch needed"
+            fi
           else
             RESP=$(curl -sf -X POST "http://${SSO_IP}:9000/api/v3/providers/proxy/" \
               -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
