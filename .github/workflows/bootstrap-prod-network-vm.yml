@@ -76,6 +76,24 @@ jobs:
           echo "ADGUARD_PASS=$ADGUARD_PASS"     >> $GITHUB_ENV
           echo "CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN" >> $GITHUB_ENV
 
+      - name: Enable TUN device passthrough on LXC 155
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+            "grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/155.conf \
+               || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/155.conf; \
+             grep -q 'lxc.mount.entry.*tun' /etc/pve/lxc/155.conf \
+               || echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >> /etc/pve/lxc/155.conf; \
+             grep -q 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start' /etc/pve/lxc/155.conf \
+               || echo 'lxc.sysctl.net.ipv4.ip_unprivileged_port_start = 0' >> /etc/pve/lxc/155.conf; \
+             pct reboot 155"
+          echo "TUN configured, waiting for reboot..."
+          sleep 15
+          timeout 90 bash -c "until nc -zw3 192.168.10.55 22; do sleep 5; echo 'waiting...'; done"
+          echo "SSH is back"
+
       - name: Run Ansible playbook against prod network-vm
         working-directory: /app/infra-platform
         run: |
