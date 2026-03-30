@@ -1,0 +1,41 @@
+name: Start prod network-vm (LXC 155)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  start:
+    runs-on: self-hosted
+    steps:
+      - name: Start LXC 155 on betsy via SSH
+        env:
+          PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
+        run: |
+          PVE_USER_SHORT=$(echo "${{ secrets.PVE_USER }}" | cut -d'@' -f1)
+          echo "=== Checking LXC 155 status on betsy ==="
+          STATUS=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+            "pct status 155 2>/dev/null || echo 'unknown'")
+          echo "LXC 155 status: $STATUS"
+
+          if echo "$STATUS" | grep -q "running"; then
+            echo "LXC 155 is already running"
+          else
+            echo "Starting LXC 155..."
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+              "pct start 155"
+            echo "Start command sent — waiting for SSH to become available..."
+            for i in $(seq 1 30); do
+              sleep 5
+              if nc -zw3 192.168.10.55 22 2>/dev/null; then
+                echo "SSH reachable after ${i}x5s"
+                break
+              fi
+              echo "  attempt $i/30 — not yet reachable on 192.168.10.55:22"
+            done
+          fi
+
+      - name: Verify SSH reachable
+        run: |
+          nc -zw5 192.168.10.55 22 \
+            && echo "SUCCESS: prod network-vm (192.168.10.55) is up" \
+            || (echo "ERROR: 192.168.10.55 still unreachable after start" && exit 1)
