@@ -67,3 +67,21 @@ variable "gpu_pci_id" {
   type        = string
   default     = "0000:26:00"
 }
+
+variable "vm_cores" {
+  description = "Number of vCPU cores"
+  type        = number
+  default     = 6
+}
+
+variable "vm_memory_mb" {
+  description = "RAM in MiB"
+  type        = number
+  default     = 16384
+}
+
+variable "vm_disk_gb" {
+  description = "Disk size in GiB"
+  type        = number
+  default     = 50
+}

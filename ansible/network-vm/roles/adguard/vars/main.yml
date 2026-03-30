@@ -1,2 +1,4 @@
 adguard_port: 3000
 adguard_data_path: /opt/adguard
+# Overridden per-env by the pipeline via /tmp/network_vm_extra_vars.yml
+adguard_dns_rewrites: []

@@ -59,21 +59,21 @@ IP last-octet = VMID last 2 digits (e.g. VMID 245 → .45). Exception: github-ru
 
 ## Cloudflare Tunnels
 
-Two tunnels exist — one for prod, one for dev. All external traffic enters via Cloudflare, terminating at the appropriate network-vm.
+Only **prod** uses a public Cloudflare tunnel. Dev and QA are **Tailscale-only** — the cloudflared service is installed on their network-vms but kept stopped/disabled.
 
-| Tunnel | Handles | Points at |
-|--------|---------|-----------|
-| Prod tunnel (`6eff4426-...`) | `*.databaes.net` (non-dev subdomains) | prod network-vm Traefik |
-| Dev tunnel (`80b044ef-...`) | `*-dev.databaes.net` subdomains | dev network-vm Traefik |
+| Tunnel | Handles | Points at | Status |
+|--------|---------|-----------|--------|
+| Prod tunnel (`6eff4426-...`) | `*.databaes.net` (non-dev/qa subdomains) | prod network-vm Traefik | Active |
+| Dev tunnel (`80b044ef-...`) | `*-dev.databaes.net` subdomains | dev network-vm Traefik | Disabled (Tailscale-only) |
 
-DNS is managed automatically: adding a router to `services.yml` in `traefik-gitops` triggers `sync-dns.yml` which creates the Cloudflare CNAME. Domains matching `*-dev.*` get the dev tunnel CNAME; all others get the prod tunnel CNAME.
+DNS is managed automatically: adding a router to `services.yml` in `traefik-gitops` triggers `sync-dns.yml` which creates a Cloudflare CNAME for prod services only. Dev and QA domains are skipped — they resolve via AdGuard split-horizon DNS over Tailscale.
 
 ### Tunnel Token Storage
 
 | Token | Stored in |
 |-------|-----------|
 | Prod tunnel | `secret/cloudflare-tunnel` in prod env vault (seeded from bootstrap vault) |
-| Dev tunnel | `CLOUDFLARE_DEV_TUNNEL_TOKEN` GitHub secret (infra-platform repo) |
+| Dev tunnel | `CLOUDFLARE_DEV_TUNNEL_TOKEN` GitHub secret (kept for reference, service is disabled) |
 
 ## Traefik
 
@@ -94,15 +94,38 @@ Traefik runs inside Docker on the network-vm (all four containers use `network_m
 
 ### Adding a New Service
 
+**Prod service (public):**
 1. Add a router + service to `services.yml` in `traefik-gitops`
 2. Commit and push to `main`
-3. `deploy.yml` SCPs the config to the active dev network-vm (Traefik hot-reloads)
+3. `deploy.yml` SCPs the config to the active prod network-vm (Traefik hot-reloads)
 4. `sync-dns.yml` creates the Cloudflare CNAME automatically
-5. To deploy to prod, re-run `Deploy Traefik Config` with `deploy_prod: true`
+
+**Dev service (Tailscale-only):**
+1. Add a router + service to `services.yml` in `traefik-gitops`
+2. Add the domain to `adguard_dns_rewrites` in the `Build Ansible vars file` step of `network-vm_pipeline_self_hosted.yml`
+3. Commit and push to `main`
+4. `deploy.yml` deploys the Traefik config to dev (no CNAME created — `sync-dns.yml` skips dev domains)
+5. Redeploy the dev network-vm pipeline to apply the new AdGuard rewrite
 
 ## AdGuard Home (DNS)
 
 AdGuard runs on the network-vm and serves as the internal DNS resolver for the homelab. Credentials are seeded from the bootstrap vault (`secret/adguard`) at deploy time.
+
+### Split-Horizon DNS for Dev/QA (Tailscale access)
+
+Dev and QA network-vms have DNS rewrites configured in AdGuard so that their service domains resolve to the local Traefik IP. This enables domain-based access from Tailscale clients without a public tunnel.
+
+**How it works:**
+1. Dev network-vm AdGuard has rewrites: `auth-dev.databaes.net`, `wikijs-dev.databaes.net`, etc. → dev network-vm IP
+2. Tailscale split DNS is configured to use dev AdGuard (Tailscale IP) as the nameserver for `databaes.net`
+3. Tailscale clients resolve dev domains → internal IP → Traefik routes correctly
+4. Prod domains not in the rewrite list are forwarded upstream by AdGuard → Cloudflare resolves them publicly as normal
+
+**Manual Tailscale admin step (one-time, already done):**
+In the Tailscale admin console → DNS → add nameserver for domain `databaes.net` pointing to the Tailscale IP of the dev network-vm's AdGuard instance.
+
+**Adding a new dev service:**
+When a new dev route is added to `traefik-gitops/config/dynamic/services.yml`, also add its domain to the `adguard_dns_rewrites` list in the `Build Ansible vars file` step of `.github/workflows/network-vm_pipeline_self_hosted.yml`, then redeploy the network-vm.
 
 ## WireGuard
 

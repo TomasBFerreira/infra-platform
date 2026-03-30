@@ -346,6 +346,37 @@ jobs:
           echo "ADGUARD_PASS=$ADGUARD_PASS" >> $GITHUB_ENV
           echo "CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN" >> $GITHUB_ENV
 
+      - name: Build Ansible vars file
+        run: |
+          if [ "$ENV" = "dev" ]; then
+            cat > /tmp/network_vm_extra_vars.yml << YAML
+cloudflare_tunnel_enabled: false
+adguard_dns_rewrites:
+  - { domain: "auth-dev.databaes.net",                    answer: "${STAGING_IP}" }
+  - { domain: "databaes-status-api-dev.databaes.net",     answer: "${STAGING_IP}" }
+  - { domain: "dev.databaes.net",                         answer: "${STAGING_IP}" }
+  - { domain: "kumadev.databaes.net",                     answer: "${STAGING_IP}" }
+  - { domain: "overseerr-dev.databaes.net",               answer: "${STAGING_IP}" }
+  - { domain: "prowlarr-dev.databaes.net",                answer: "${STAGING_IP}" }
+  - { domain: "radarr-dev.databaes.net",                  answer: "${STAGING_IP}" }
+  - { domain: "rancher-dev.databaes.net",                 answer: "${STAGING_IP}" }
+  - { domain: "semaphore-dev.databaes.net",               answer: "${STAGING_IP}" }
+  - { domain: "sonarr-dev.databaes.net",                  answer: "${STAGING_IP}" }
+  - { domain: "vault-dev.databaes.net",                   answer: "${STAGING_IP}" }
+  - { domain: "wikijs-dev.databaes.net",                  answer: "${STAGING_IP}" }
+YAML
+          elif [ "$ENV" = "qa" ]; then
+            cat > /tmp/network_vm_extra_vars.yml << YAML
+cloudflare_tunnel_enabled: false
+adguard_dns_rewrites: []
+YAML
+          else
+            cat > /tmp/network_vm_extra_vars.yml << YAML
+cloudflare_tunnel_enabled: true
+adguard_dns_rewrites: []
+YAML
+          fi
+
       - name: Run Ansible playbook
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -370,6 +401,7 @@ jobs:
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
             -e "cloudflare_tunnel_token=$CF_TUNNEL_TOKEN" \
+            -e "@/tmp/network_vm_extra_vars.yml" \
             ansible/network-vm/network-vm_setup.yml
 
   flip-active:

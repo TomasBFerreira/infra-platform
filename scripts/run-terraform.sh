@@ -36,7 +36,7 @@ run_terraform() {
             if [ "$USE_DIRECT_TERRAFORM" = "true" ]; then
                 terraform "$cmd" "$@"
             else
-                $DOCKER_COMPOSE_CMD run --rm -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid -e TF_VAR_network_bridge -e TF_VAR_gateway terraform "$cmd" "$@"
+                $DOCKER_COMPOSE_CMD run --rm -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid -e TF_VAR_network_bridge -e TF_VAR_gateway -e TF_VAR_vm_cores -e TF_VAR_vm_memory_mb -e TF_VAR_vm_disk_gb terraform "$cmd" "$@"
             fi
             ;;
         "help"|"-h"|"--help")
@@ -66,7 +66,7 @@ run_terraform_with_chdir() {
             if [ "$USE_DIRECT_TERRAFORM" = "true" ]; then
                 (cd "$PROJECT_ROOT/$chdir" && terraform "$cmd" "$@")
             else
-                $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid -e TF_VAR_network_bridge -e TF_VAR_gateway terraform "$cmd" "$@"
+                $DOCKER_COMPOSE_CMD run --rm -w "/workspace/$chdir" -e TF_VAR_proxmox_api_url -e TF_VAR_proxmox_user -e TF_VAR_proxmox_password -e TF_VAR_vault_token -e TF_VAR_vault_address -e VAULT_ADDR -e TF_VAR_pve_api -e TF_VAR_pve_user -e TF_VAR_pve_pass -e TF_VAR_ssh_user -e TF_VAR_vmid -e TF_VAR_ip_address -e TF_VAR_vm_hostname -e TF_VAR_target_node -e TF_VAR_template_vmid -e TF_VAR_network_bridge -e TF_VAR_gateway -e TF_VAR_vm_cores -e TF_VAR_vm_memory_mb -e TF_VAR_vm_disk_gb terraform "$cmd" "$@"
             fi
             ;;
         "help"|"-h"|"--help")

@@ -38,10 +38,10 @@
     line: 'TimeoutStartSec=90'
   when: cloudflare_tunnel_token | default('') | length > 0
 
-- name: Ensure cloudflared service is running
+- name: Ensure cloudflared service state
   systemd:
     name: cloudflared
-    enabled: yes
-    state: started
+    enabled: "{{ cloudflare_tunnel_enabled | default(true) | bool }}"
+    state: "{{ 'started' if cloudflare_tunnel_enabled | default(true) | bool else 'stopped' }}"
     daemon_reload: yes
   when: cloudflare_tunnel_token | default('') | length > 0
