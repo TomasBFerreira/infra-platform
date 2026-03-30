@@ -35,7 +35,7 @@ jobs:
             echo "LXC 155 is stopped — starting..."
             ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "pct start 155"
 
-          if echo "$STATUS" | grep -q "notfound"; then
+          elif echo "$STATUS" | grep -q "notfound"; then
             echo "LXC 155 does not exist — provisioning from scratch..."
             # Check template exists, download if needed
             ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
