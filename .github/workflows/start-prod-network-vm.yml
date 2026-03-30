@@ -7,35 +7,77 @@ jobs:
   start:
     runs-on: self-hosted
     steps:
-      - name: Start LXC 155 on betsy via SSH
+      - name: Fetch SSH public key from Vault
         env:
-          PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
-          PVE_USER_SHORT=$(echo "${{ secrets.PVE_USER }}" | cut -d'@' -f1)
+          vault kv get -field=public_key secret/ssh_keys/network_vm_worker \
+            > /tmp/nw_pubkey
+          echo "SSH public key fetched ($(wc -c < /tmp/nw_pubkey) bytes)"
+
+      - name: Start or provision LXC 155 on betsy
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          SSH_PUBKEY=$(cat /tmp/nw_pubkey)
+
           echo "=== Checking LXC 155 status on betsy ==="
           STATUS=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
-            "pct status 155 2>/dev/null || echo 'unknown'")
-          echo "LXC 155 status: $STATUS"
+            "pct status 155 2>/dev/null || echo 'notfound'")
+          echo "LXC 155: $STATUS"
 
           if echo "$STATUS" | grep -q "running"; then
-            echo "LXC 155 is already running"
+            echo "LXC 155 is already running — nothing to do"
+
+          elif echo "$STATUS" | grep -q "stopped"; then
+            echo "LXC 155 is stopped — starting..."
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "pct start 155"
+
           else
-            echo "Starting LXC 155..."
+            echo "LXC 155 does not exist — provisioning from scratch..."
+            # Check template exists
             ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
-              "pct start 155"
-            echo "Start command sent — waiting for SSH to become available..."
-            for i in $(seq 1 30); do
-              sleep 5
-              if nc -zw3 192.168.10.55 22 2>/dev/null; then
-                echo "SSH reachable after ${i}x5s"
-                break
-              fi
-              echo "  attempt $i/30 — not yet reachable on 192.168.10.55:22"
-            done
+              "ls /var/lib/vz/template/cache/debian-12-standard_12.12-1_amd64.tar.zst 2>/dev/null \
+               || pveam download local debian-12-standard_12.12-1_amd64.tar.zst"
+
+            # Create the LXC (matches terraform/network-vm/main.tf spec)
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 bash << ENDSSH
+              pct create 155 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
+                --hostname network-vm-blue \
+                --cores 2 \
+                --memory 2048 \
+                --rootfs local-lvm:25 \
+                --net0 name=eth0,bridge=vmbr10,ip=192.168.10.55/24,gw=192.168.10.1 \
+                --unprivileged 1 \
+                --features nesting=1 \
+                --onboot 1 \
+                --startup order=2,up=30 \
+                --ssh-public-keys <(echo "$SSH_PUBKEY")
+              echo "LXC 155 created"
+              pct start 155
+              echo "LXC 155 started"
+ENDSSH
           fi
+
+          echo "=== Waiting for SSH on 192.168.10.55 ==="
+          for i in $(seq 1 30); do
+            sleep 5
+            if nc -zw3 192.168.10.55 22 2>/dev/null; then
+              echo "SSH reachable after ${i}x5s"
+              break
+            fi
+            echo "  attempt $i/30 — not yet reachable"
+          done
 
       - name: Verify SSH reachable
         run: |
           nc -zw5 192.168.10.55 22 \
             && echo "SUCCESS: prod network-vm (192.168.10.55) is up" \
-            || (echo "ERROR: 192.168.10.55 still unreachable after start" && exit 1)
+            || (echo "ERROR: 192.168.10.55 still unreachable" && exit 1)
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/nw_pubkey
+
