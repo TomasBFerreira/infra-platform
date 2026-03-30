@@ -117,6 +117,7 @@ jobs:
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
             -e "cloudflare_tunnel_token=$CF_TUNNEL_TOKEN" \
+            -e "tailscale_skip_auth=true" \
             ansible/network-vm/network-vm_setup.yml
 
       - name: Cleanup
