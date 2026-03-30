@@ -1,0 +1,31 @@
+name: Test prod network-vm SSH
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - name: Fetch SSH key
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nw_key
+          chmod 600 /tmp/nw_key
+
+      - name: Test SSH to prod network-vm
+        run: |
+          echo "=== Testing TCP connectivity to 192.168.10.55:22 ==="
+          nc -zw5 192.168.10.55 22 && echo "TCP:OPEN" || echo "TCP:CLOSED/TIMEOUT"
+          echo
+          echo "=== Attempting SSH ==="
+          ssh -i /tmp/nw_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+            root@192.168.10.55 'hostname && hostname -I && systemctl is-active cloudflared && docker ps --format "{{.Names}} {{.Status}}"' \
+            && echo "SSH:SUCCESS" || echo "SSH:FAILED"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/nw_key
