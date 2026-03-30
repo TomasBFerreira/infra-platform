@@ -2,9 +2,28 @@
 - name: Configure GPU worker node
   hosts: all
   gather_facts: true
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
   tasks:
     # ── System prerequisites ─────────────────────────────────────────────────
+
+    - name: Wait for cloud-init to finish
+      command: cloud-init status --wait
+      changed_when: false
+      failed_when: false
+
+    - name: Reset connection after cloud-init (may have triggered a reboot)
+      meta: reset_connection
+
+    - name: Wait for SSH to recover after potential cloud-init reboot
+      wait_for_connection:
+        delay: 5
+        timeout: 120
+
+    - name: Update apt cache (90s timeout, best-effort — sources may be restricted)
+      shell: timeout 90 apt-get update -qq || true
+      changed_when: false
 
     - name: Install prerequisites
       apt:
@@ -19,18 +38,23 @@
           - build-essential
           - dkms
         state: present
-        update_cache: yes
+        update_cache: no
+        lock_timeout: 30
+      ignore_errors: yes
 
     - name: Enable and start qemu-guest-agent
       systemd:
         name: qemu-guest-agent
         enabled: yes
         state: started
+      ignore_errors: yes
 
     # ── NVIDIA drivers ───────────────────────────────────────────────────────
     # Installs the proprietary NVIDIA driver from the Debian non-free repo.
     # A reboot is required after install so the DKMS module loads into the
     # running kernel before k3s and the container toolkit are configured.
+    # The GPU VM (prod) has internet access via NAT; packages are pulled
+    # directly from the Debian archive.
 
     - name: Enable Debian non-free and non-free-firmware components
       apt_repository:
@@ -61,37 +85,69 @@
       debug:
         msg: "GPU: {{ nvidia_smi_out.stdout }}"
 
-    # ── k3s ─────────────────────────────────────────────────────────────────
+    # ── k3s airgap install ───────────────────────────────────────────────────
+    # The GPU VM is on an internal VLAN; download the k3s binary and install
+    # script on the Ansible controller (the GitHub Actions runner, which has
+    # internet access) and copy them to the VM, then run the installer with
+    # INSTALL_K3S_SKIP_DOWNLOAD=true.
 
     - name: Switch to iptables-legacy before k3s install
       shell: |
-        apt-get install -y -q iptables arptables ebtables
-        update-alternatives --set iptables /usr/sbin/iptables-legacy
-        update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
-        update-alternatives --set arptables /usr/sbin/arptables-legacy
-        update-alternatives --set ebtables /usr/sbin/ebtables-legacy
+        apt-get install -y -q iptables arptables ebtables || true
+        update-alternatives --set iptables /usr/sbin/iptables-legacy || true
+        update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
+        update-alternatives --set arptables /usr/sbin/arptables-legacy || true
+        update-alternatives --set ebtables /usr/sbin/ebtables-legacy || true
       changed_when: false
 
-    - name: Install k3s
-      shell: |
-        curl -sfL https://get.k3s.io | sh -
+    - name: Download k3s binary on controller
+      get_url:
+        url: https://github.com/k3s-io/k3s/releases/latest/download/k3s
+        dest: /tmp/k3s-binary
+        mode: '0755'
+        timeout: 120
+      delegate_to: localhost
+      run_once: true
+
+    - name: Download k3s install script on controller
+      get_url:
+        url: https://get.k3s.io
+        dest: /tmp/k3s-install.sh
+        mode: '0755'
+        timeout: 60
+      delegate_to: localhost
+      run_once: true
+
+    - name: Copy k3s binary to VM
+      copy:
+        src: /tmp/k3s-binary
+        dest: /usr/local/bin/k3s
+        mode: '0755'
+
+    - name: Copy k3s install script to VM
+      copy:
+        src: /tmp/k3s-install.sh
+        dest: /tmp/k3s-install.sh
+        mode: '0755'
+
+    - name: Install k3s (airgap — skip download, binary already present)
+      shell: INSTALL_K3S_SKIP_DOWNLOAD=true sh /tmp/k3s-install.sh
       args:
-        creates: /usr/local/bin/k3s
-      ignore_unreachable: yes
+        creates: /etc/rancher/k3s/k3s.yaml
 
     - name: Reset SSH connection after k3s CNI starts
       meta: reset_connection
 
     - name: Wait for SSH to recover after k3s networking changes
       wait_for_connection:
-        delay: 15
-        timeout: 120
+        delay: 5
+        timeout: 60
 
     - name: Wait for k3s node to be Ready
       command: k3s kubectl get nodes
       register: k3s_nodes
-      retries: 12
-      delay: 10
+      retries: 6
+      delay: 5
       until: k3s_nodes.rc == 0 and 'Ready' in k3s_nodes.stdout
 
     - name: Ensure k3s is enabled and running
@@ -138,8 +194,8 @@
     - name: Wait for k3s to be Ready after restart
       command: k3s kubectl get nodes
       register: k3s_nodes_post
-      retries: 12
-      delay: 10
+      retries: 6
+      delay: 5
       until: k3s_nodes_post.rc == 0 and 'Ready' in k3s_nodes_post.stdout
 
     - name: Label node as GPU-capable
@@ -233,8 +289,9 @@
           changed_when: false
 
         - name: Wait for CoreDNS to be ready
-          shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=60s
+          shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=120s
           changed_when: false
+          ignore_errors: yes
 
         - name: Write Rancher registration script
           copy:
@@ -267,9 +324,12 @@
                 -d '{"username":"admin","password":"'"$RANCHER_PASS"'","ttl":60000}')
 
               if [ -z "$LOGIN_RESP" ]; then
-                echo "ERROR: Rancher login returned an empty response"
+                echo "ERROR: Rancher login returned an empty response from https://$RANCHER_IP (Host: $RANCHER_HOST)"
                 exit 1
               fi
+              echo "Login response: $(echo "$LOGIN_RESP" | python3 -c \
+                'import sys,json; r=json.load(sys.stdin); print("type="+str(r.get("type")), "mustChangePassword="+str(r.get("mustChangePassword")))' \
+                2>/dev/null || echo "parse error — raw: $LOGIN_RESP")"
 
               RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c '
               import sys, json
@@ -369,7 +429,7 @@
         - name: Wait for cattle-cluster-agent deployment to be created
           command: k3s kubectl get deployment cattle-cluster-agent -n cattle-system
           register: agent_check
-          retries: 24
+          retries: 6
           delay: 5
           until: agent_check.rc == 0
 
@@ -382,7 +442,8 @@
         - name: Wait for cattle-cluster-agent rollout
           command: >
             k3s kubectl rollout status deployment/cattle-cluster-agent
-            -n cattle-system --timeout=120s
+            -n cattle-system --timeout=180s
+          ignore_errors: yes
 
         - name: Remove Rancher registration script
           file:

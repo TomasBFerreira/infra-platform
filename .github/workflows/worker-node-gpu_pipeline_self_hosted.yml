@@ -264,7 +264,8 @@ jobs:
         run: |
           echo "Waiting for SSH on ${IP_ADDRESS}..."
           timeout 180 bash -c "until nc -z ${IP_ADDRESS} 22; do sleep 5; done"
-          echo "SSH is up"
+          echo "SSH is up — sleeping 5s to let cloud-init settle"
+          sleep 5
 
       - name: Run Ansible playbook
         run: |
