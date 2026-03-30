@@ -1,0 +1,159 @@
+name: Configure WikiJS SSO
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: string
+
+jobs:
+  configure:
+    runs-on: self-hosted
+    steps:
+      - name: Check SSO is deployed — skip if not
+        id: check-sso
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ inputs.environment }}"
+          if ! vault kv get secret/sso/${ENV}/active-slot > /dev/null 2>&1; then
+            echo "SSO not yet deployed for ${ENV} — skipping WikiJS SSO configuration"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch SSH key and resolve SSO IP
+        if: steps.check-sso.outputs.skip != 'true'
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_key
+          chmod 600 /tmp/sso_key
+
+          SSO_IP=$(vault kv get -field=ip secret/sso/${{ inputs.environment }}/active-slot)
+          echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
+
+          case "${{ inputs.environment }}" in
+            dev)  EXTERNAL_HOST="https://wikijs-dev.databaes.net" ;;
+            prod) EXTERNAL_HOST="https://wikijs.databaes.net"     ;;
+          esac
+          echo "EXTERNAL_HOST=$EXTERNAL_HOST" >> $GITHUB_ENV
+
+      - name: Get fresh Authentik API token
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          FRESH_TOKEN=$(ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
+
+          if [ -z "$FRESH_TOKEN" ]; then
+            echo "Could not get fresh token from Authentik — aborting"
+            exit 1
+          fi
+          echo "::add-mask::$FRESH_TOKEN"
+          echo "AUTHENTIK_TOKEN=$FRESH_TOKEN" >> $GITHUB_ENV
+
+      - name: Resolve auth and invalidation flows
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          AUTH_FLOW=$(curl -sf "http://${SSO_IP}:9000/api/v3/flows/instances/?designation=authorization" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+
+          INVALIDATION_FLOW=$(curl -sf "http://${SSO_IP}:9000/api/v3/flows/instances/?designation=invalidation" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+
+          echo "AUTH_FLOW=$AUTH_FLOW" >> $GITHUB_ENV
+          echo "INVALIDATION_FLOW=$INVALIDATION_FLOW" >> $GITHUB_ENV
+          echo "Auth flow: $AUTH_FLOW"
+          echo "Invalidation flow: $INVALIDATION_FLOW"
+
+      - name: Create WikiJS Proxy Provider (if missing)
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          EXISTING=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/proxy/?name=WikiJS" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          COUNT=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
+
+          if [ "$COUNT" -gt 0 ]; then
+            PROVIDER_PK=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+            echo "WikiJS Proxy Provider already exists (pk=$PROVIDER_PK) — skipping creation"
+          else
+            RESP=$(curl -sf -X POST "http://${SSO_IP}:9000/api/v3/providers/proxy/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"name\": \"WikiJS\",
+                \"authorization_flow\": \"$AUTH_FLOW\",
+                \"invalidation_flow\": \"$INVALIDATION_FLOW\",
+                \"mode\": \"forward_single\",
+                \"external_host\": \"$EXTERNAL_HOST\"
+              }")
+            PROVIDER_PK=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['pk'])")
+            echo "Created WikiJS Proxy Provider (pk=$PROVIDER_PK)"
+          fi
+
+          echo "PROVIDER_PK=$PROVIDER_PK" >> $GITHUB_ENV
+
+      - name: Create WikiJS Application (if missing)
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          EXISTING=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?slug=wikijs" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          COUNT=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
+
+          if [ "$COUNT" -gt 0 ]; then
+            echo "WikiJS Application already exists — skipping creation"
+          else
+            curl -sf -X POST "http://${SSO_IP}:9000/api/v3/core/applications/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"name\": \"WikiJS\",
+                \"slug\": \"wikijs\",
+                \"provider\": $PROVIDER_PK,
+                \"open_in_new_tab\": true
+              }" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Created WikiJS Application (slug='+r['slug']+')')"
+          fi
+
+      - name: Assign WikiJS Provider to embedded outpost
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          OUTPOST=$(curl -sf "http://${SSO_IP}:9000/api/v3/outposts/instances/?managed=goauthentik.io/outposts/embedded" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          OUTPOST_PK=$(echo "$OUTPOST" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+          CURRENT_PROVIDERS=$(echo "$OUTPOST" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['providers'])")
+
+          ALREADY_ASSIGNED=$(echo "$OUTPOST" | python3 -c \
+            "import sys,json; providers=json.load(sys.stdin)['results'][0]['providers']; print('true' if $PROVIDER_PK in providers else 'false')")
+
+          if [ "$ALREADY_ASSIGNED" = "true" ]; then
+            echo "WikiJS Provider already assigned to embedded outpost — skipping"
+          else
+            UPDATED_PROVIDERS=$(echo "$OUTPOST" | python3 -c \
+              "import sys,json; providers=json.load(sys.stdin)['results'][0]['providers']; providers.append($PROVIDER_PK); print(providers)")
+            curl -sf -X PATCH "http://${SSO_IP}:9000/api/v3/outposts/instances/${OUTPOST_PK}/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"providers\": $UPDATED_PROVIDERS}" \
+              | python3 -c "import sys,json; r=json.load(sys.stdin); print('Outpost updated — providers:', r['providers'])"
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/sso_key
