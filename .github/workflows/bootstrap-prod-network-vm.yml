@@ -25,10 +25,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/TomasBFerreira/traefik-gitops.git"
           if [ -d /app/traefik-gitops/.git ]; then
+            git -C /app/traefik-gitops remote set-url origin "$REPO_URL"
             git -C /app/traefik-gitops pull --rebase origin main
           else
-            gh repo clone TomasBFerreira/traefik-gitops /app/traefik-gitops
+            git clone "$REPO_URL" /app/traefik-gitops
           fi
 
       - name: Install Ansible collections
