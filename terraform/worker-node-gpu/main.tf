@@ -16,20 +16,20 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
   }
 
   cpu {
-    cores   = 6
+    cores   = var.vm_cores
     sockets = 1
     # "host" exposes all host CPU features — needed for NVENC/NVDEC instruction sets.
     type    = "host"
   }
 
   memory {
-    dedicated = 16384
+    dedicated = var.vm_memory_mb
   }
 
   disk {
     datastore_id = "local-lvm"
     interface    = "scsi0"
-    size         = 50
+    size         = var.vm_disk_gb
     iothread     = true
     file_format  = "raw"
   }
