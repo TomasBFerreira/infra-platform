@@ -38,6 +38,7 @@ All keys stored in the bootstrap vault under `secret/ssh_keys/`:
 
 | Key name | Used by |
 |---|---|
+| `github_runner_proxmox_access` | Proxmox API / hypervisor access |
 | `github_runner_worker` | GitHub runner LXCs |
 | `vault_ct_worker` | Vault CT LXCs |
 | `semaphore_worker` | Semaphore LXC |
