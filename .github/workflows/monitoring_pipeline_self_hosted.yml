@@ -126,9 +126,27 @@ jobs:
     needs: resolve-slots
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
       PVE_USER: ${{ secrets.PVE_USER }}
       PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
     steps:
+      - name: Seed monitoring_worker SSH key in Vault if missing
+        run: |
+          if vault kv get secret/ssh_keys/monitoring_worker > /dev/null 2>&1; then
+            echo "Secret secret/ssh_keys/monitoring_worker already exists — skipping"
+          else
+            echo "Generating new ED25519 SSH keypair for monitoring_worker..."
+            ssh-keygen -t ed25519 -C "monitoring_worker" -f /tmp/monitoring_worker_key -N ""
+            PRIVATE_KEY=$(cat /tmp/monitoring_worker_key)
+            PUBLIC_KEY=$(cat /tmp/monitoring_worker_key.pub)
+            vault kv put secret/ssh_keys/monitoring_worker \
+              private_key="${PRIVATE_KEY}" \
+              public_key="${PUBLIC_KEY}"
+            rm -f /tmp/monitoring_worker_key /tmp/monitoring_worker_key.pub
+            echo "Seeded secret/ssh_keys/monitoring_worker in Vault"
+          fi
+
       - name: Create NFS monitoring directories and export on betsy
         run: |
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
