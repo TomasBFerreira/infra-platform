@@ -1,0 +1,83 @@
+name: Probe benedict connectivity
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - name: Fetch SSH keys
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_key
+          chmod 600 /tmp/worker_key
+          # vault-ct key for jumping via dev vault LXC
+          vault kv get -field=private_key secret/ssh_keys/vault_ct_worker 2>/dev/null \
+            | awk 'NF > 0' > /tmp/vault_key || echo "vault_ct key not found"
+          chmod 600 /tmp/vault_key 2>/dev/null || true
+
+      - name: Direct reachability checks from management runner
+        run: |
+          echo "=== Ping benedict (192.168.50.4) ==="
+          ping -c3 -W2 192.168.50.4 && echo "REACHABLE" || echo "UNREACHABLE"
+
+          echo ""
+          echo "=== Ping dev github-runner (192.168.20.101) ==="
+          ping -c3 -W2 192.168.20.101 && echo "REACHABLE" || echo "UNREACHABLE"
+
+          echo ""
+          echo "=== Ping dev worker node (192.168.20.11) ==="
+          ping -c3 -W2 192.168.20.11 && echo "REACHABLE" || echo "UNREACHABLE"
+
+          echo ""
+          echo "=== Ping dev network-vm (192.168.20.55) ==="
+          ping -c3 -W2 192.168.20.55 && echo "REACHABLE" || echo "UNREACHABLE"
+
+          echo ""
+          echo "=== Ping dev vault (192.168.20.45) ==="
+          ping -c3 -W2 192.168.20.45 && echo "REACHABLE" || echo "UNREACHABLE"
+
+      - name: Try SSH into benedict directly
+        run: |
+          echo "=== SSH direct to benedict (192.168.50.4) ==="
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i /tmp/worker_key \
+            root@192.168.50.4 "echo 'SSH OK'; uptime; pvecm status" \
+            && echo "SSH DIRECT: SUCCESS" || echo "SSH DIRECT: FAILED"
+
+      - name: Try hopping via dev vault LXC (192.168.20.45)
+        run: |
+          echo "=== Hop via dev vault (192.168.20.45) → benedict (192.168.50.4) ==="
+          # Check if vault LXC is reachable first
+          if ! ping -c1 -W2 192.168.20.45 &>/dev/null; then
+            echo "Dev vault LXC unreachable — skipping hop"
+            exit 0
+          fi
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=no -i /tmp/vault_key root@192.168.20.45" \
+            -i /tmp/worker_key root@192.168.50.4 \
+            "echo 'SSH via vault hop OK'; uptime; pvecm status" \
+            && echo "SSH HOP: SUCCESS" || echo "SSH HOP: FAILED"
+
+      - name: Try hopping via dev network-vm (192.168.20.55)
+        run: |
+          echo "=== Hop via dev network-vm (192.168.20.55) → benedict (192.168.50.4) ==="
+          if ! ping -c1 -W2 192.168.20.55 &>/dev/null; then
+            echo "Dev network-vm unreachable — skipping hop"
+            exit 0
+          fi
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker 2>/dev/null \
+            | awk 'NF > 0' > /tmp/netvm_key || echo "network_vm key not found"
+          chmod 600 /tmp/netvm_key 2>/dev/null || true
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=no -i /tmp/netvm_key root@192.168.20.55" \
+            -i /tmp/worker_key root@192.168.50.4 \
+            "echo 'SSH via netvm hop OK'; uptime; pvecm status" \
+            && echo "SSH HOP: SUCCESS" || echo "SSH HOP: FAILED"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/worker_key /tmp/vault_key /tmp/netvm_key
