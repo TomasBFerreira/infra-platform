@@ -74,19 +74,19 @@ jobs:
             benedict)
               VMID_BASE=210; ENV=dev; ENV_SUBNET=20
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
-              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
+              GATEWAY="192.168.20.55"; NETWORK_BRIDGE="vmbr20"
               RANCHER_IP="192.168.20.2"; RANCHER_HOSTNAME="rancher-dev.databaes.net"
               ;;
             betsy)
               VMID_BASE=110; ENV=prod; ENV_SUBNET=10
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
-              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
+              GATEWAY="192.168.10.55"; NETWORK_BRIDGE="vmbr10"
               RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
               ;;
             vladimir)
               VMID_BASE=310; ENV=qa; ENV_SUBNET=30
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
-              GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
+              GATEWAY="192.168.30.55"; NETWORK_BRIDGE="vmbr30"
               RANCHER_IP="192.168.30.2"; RANCHER_HOSTNAME="rancher-qa.databaes.net"
               ;;
             *)
@@ -277,6 +277,7 @@ jobs:
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "vm_hostname=${VM_HOSTNAME}" \
             -e "rancher_ip=${RANCHER_IP}" \
+            -e "network_vm_gateway=${{ needs.resolve-node.outputs.gateway }}" \
             -e "rancher_hostname=${{ needs.resolve-node.outputs.rancher_hostname }}" \
             ${RANCHER_BOOTSTRAP_PASSWORD:+-e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}"} \
             ${RANCHER_RBAC_VARS_FILE:+-e "@${RANCHER_RBAC_VARS_FILE}"} \

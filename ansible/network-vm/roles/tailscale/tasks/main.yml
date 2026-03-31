@@ -43,6 +43,12 @@
     msg: "/dev/net/tun is missing. Enable tun device passthrough in the Proxmox LXC config (features: nesting=1)."
   when: not tun_stat.stat.exists
 
+- name: Install iptables-persistent (for NAT rules across reboots)
+  apt:
+    name: iptables-persistent
+    state: present
+    update_cache: no
+
 - name: Enable and start tailscaled
   systemd:
     name: tailscaled
@@ -88,3 +94,21 @@
   until: ts_online.rc == 0
   changed_when: false
   when: not (tailscale_skip_auth | default(false))
+
+- name: Add NAT masquerade rules for internal subnets via tailscale0
+  iptables:
+    table: nat
+    chain: POSTROUTING
+    out_interface: tailscale0
+    source: "{{ item }}"
+    jump: MASQUERADE
+    state: present
+  loop:
+    - 192.168.10.0/24
+    - 192.168.20.0/24
+    - 192.168.30.0/24
+    - 192.168.50.0/24
+
+- name: Persist NAT rules across reboots
+  command: netfilter-persistent save
+  changed_when: true

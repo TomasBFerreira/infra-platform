@@ -6,6 +6,59 @@
     PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
   tasks:
+    # ── Default gateway (route via network-vm → Tailscale → internet) ──────────
+    # Cloud-init sets the gateway at VM creation time from the Terraform variable.
+    # This task ensures existing nodes are updated without re-provisioning.
+    # network_vm_gateway is passed as -e from the pipeline (same as the gateway var).
+
+    - name: Update default route to use network-vm as gateway
+      shell: |
+        CURRENT_GW=$(ip route show default | awk '/default/ {print $3; exit}')
+        if [ "${CURRENT_GW}" != "{{ network_vm_gateway }}" ]; then
+          ip route replace default via {{ network_vm_gateway }}
+          echo "Updated default gateway from ${CURRENT_GW} to {{ network_vm_gateway }}"
+        else
+          echo "Default gateway already {{ network_vm_gateway }}"
+        fi
+      changed_when: "'Updated' in gateway_result.stdout"
+      register: gateway_result
+      when: network_vm_gateway is defined
+
+    - name: Make default gateway persistent in netplan
+      shell: |
+        for f in /etc/netplan/*.yaml /etc/netplan/*.yml; do
+          [ -f "$f" ] || continue
+          if grep -q "gateway4\|routes:" "$f"; then
+            python3 -c "
+        import yaml, sys, re
+        with open('$f') as fh:
+            cfg = yaml.safe_load(fh)
+        # Walk the structure and replace any gateway4 values or default route via entries
+        def fix_gw(obj):
+            if isinstance(obj, dict):
+                if 'gateway4' in obj:
+                    obj['gateway4'] = '{{ network_vm_gateway }}'
+                if 'routes' in obj and isinstance(obj['routes'], list):
+                    for r in obj['routes']:
+                        if isinstance(r, dict) and r.get('to') in ('default', '0.0.0.0/0'):
+                            r['via'] = '{{ network_vm_gateway }}'
+                for v in obj.values():
+                    fix_gw(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    fix_gw(v)
+        fix_gw(cfg)
+        with open('$f', 'w') as fh:
+            yaml.dump(cfg, fh, default_flow_style=False)
+        print('Patched $f')
+        "
+          fi
+        done
+        netplan apply 2>/dev/null || true
+      changed_when: false
+      when: network_vm_gateway is defined
+      ignore_errors: yes
+
     # ── System prerequisites ─────────────────────────────────────────────────
 
     - name: Wait for cloud-init to finish
