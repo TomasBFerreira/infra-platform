@@ -275,7 +275,7 @@ jobs:
           if [ -d /app/traefik-gitops/.git ]; then
             git -C /app/traefik-gitops pull --rebase origin main
           else
-            gh repo clone TomasBFerreira/traefik-gitops /app/traefik-gitops
+            git clone "https://x-access-token:${GH_TOKEN}@github.com/TomasBFerreira/traefik-gitops" /app/traefik-gitops
           fi
 
       - name: Install Ansible collections
