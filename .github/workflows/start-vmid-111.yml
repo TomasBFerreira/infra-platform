@@ -37,7 +37,10 @@ jobs:
 
           elif echo "$VM_STATUS" | grep -q "stopped"; then
             echo "VM 111 is stopped — starting..."
-            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "qm start 111"
+            # Force quorum to 1 in case other cluster nodes are offline,
+            # then start the VM.
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+              "pvecm expected 1 2>/dev/null || true; qm start 111"
             echo "VM 111 started"
 
           else
