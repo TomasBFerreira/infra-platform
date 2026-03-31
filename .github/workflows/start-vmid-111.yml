@@ -37,6 +37,15 @@ jobs:
 
           elif echo "$VM_STATUS" | grep -q "stopped"; then
             echo "VM 111 is stopped — starting..."
+            # Stop VMID 999 (test GPU VM) if running, to free the PCI passthrough device.
+            VM999_STATUS=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+              "qm status 999 2>/dev/null || echo 'notfound'")
+            echo "VM 999 status: $VM999_STATUS"
+            if echo "$VM999_STATUS" | grep -q "running"; then
+              echo "Stopping VM 999 to release GPU passthrough..."
+              ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "qm stop 999"
+              sleep 5
+            fi
             # Force quorum to 1 in case other cluster nodes are offline,
             # then start the VM.
             ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
