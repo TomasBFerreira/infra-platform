@@ -47,6 +47,37 @@ jobs:
           docker logs traefik --tail 20 2>&1
           EOF
 
+      - name: Check Tailscale routing status
+        run: |
+          ssh -i /tmp/network_vm_key -o StrictHostKeyChecking=no root@"$ACTIVE_IP" bash <<'EOF'
+          echo "=== Tailscale status ==="
+          tailscale status
+
+          echo ""
+          echo "=== Advertised vs accepted routes ==="
+          tailscale status --json | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+s=d.get('Self',{})
+print('Host:', s.get('HostName'))
+print('IPs:', s.get('TailscaleIPs'))
+print('PrimaryRoutes:', s.get('PrimaryRoutes'))
+print('AdvertisedRoutes:', s.get('AdvertisedRoutes'))
+"
+
+          echo ""
+          echo "=== UFW forward policy ==="
+          grep DEFAULT_FORWARD_POLICY /etc/default/ufw
+
+          echo ""
+          echo "=== IP forwarding ==="
+          cat /proc/sys/net/ipv4/ip_forward
+
+          echo ""
+          echo "=== Ping betsy (192.168.50.2) ==="
+          ping -c3 -W2 192.168.50.2 && echo "BETSY: REACHABLE" || echo "BETSY: UNREACHABLE"
+          EOF
+
       - name: Cleanup
         if: always()
         run: rm -f /tmp/network_vm_key

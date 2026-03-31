@@ -52,6 +52,12 @@
     dest: /opt/traefik/config/traefik.yml
     mode: '0644'
 
+- name: Copy OTel Collector sidecar config
+  copy:
+    src: otelcol-lxc.yml
+    dest: /opt/traefik/config/otelcol-lxc.yml
+    mode: '0644'
+
 - name: Copy Traefik dynamic config from traefik-gitops (canonical source)
   # The runner always has traefik-gitops at /app/traefik-gitops. The pipeline
   # pulls latest before running Ansible so this is always up-to-date.
@@ -65,6 +71,14 @@
     src: docker-compose.yml
     dest: /opt/traefik/docker-compose.yml
     mode: '0644'
+
+- name: Write .env for docker-compose (OTel + deploy env)
+  copy:
+    dest: /opt/traefik/.env
+    mode: '0640'
+    content: |
+      OTEL_COLLECTOR_ENDPOINT={{ otel_collector_endpoint | default('') }}
+      DEPLOY_ENV={{ deploy_env | default('dev') }}
 
 - name: Deploy Traefik
   command: docker compose up -d
