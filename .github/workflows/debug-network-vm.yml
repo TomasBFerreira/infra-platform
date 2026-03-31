@@ -55,15 +55,7 @@ jobs:
 
           echo ""
           echo "=== Advertised vs accepted routes ==="
-          tailscale status --json | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-s=d.get('Self',{})
-print('Host:', s.get('HostName'))
-print('IPs:', s.get('TailscaleIPs'))
-print('PrimaryRoutes:', s.get('PrimaryRoutes'))
-print('AdvertisedRoutes:', s.get('AdvertisedRoutes'))
-"
+          tailscale status --json | python3 -c "import json,sys; d=json.load(sys.stdin); s=d.get('Self',{}); print('Host:', s.get('HostName')); print('IPs:', s.get('TailscaleIPs')); print('PrimaryRoutes:', s.get('PrimaryRoutes')); print('AdvertisedRoutes:', s.get('AdvertisedRoutes'))"
 
           echo ""
           echo "=== UFW forward policy ==="
