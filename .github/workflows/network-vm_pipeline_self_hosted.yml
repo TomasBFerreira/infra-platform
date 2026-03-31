@@ -272,11 +272,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          printf 'machine github.com\nlogin x-access-token\npassword %s\n' "${GH_TOKEN}" > ~/.netrc
+          chmod 600 ~/.netrc
           if [ -d /app/traefik-gitops/.git ]; then
             git -C /app/traefik-gitops pull --rebase origin main
           else
-            git clone "https://x-access-token:${GH_TOKEN}@github.com/TomasBFerreira/traefik-gitops" /app/traefik-gitops
+            git clone https://github.com/TomasBFerreira/traefik-gitops /app/traefik-gitops
           fi
+          rm -f ~/.netrc
 
       - name: Install Ansible collections
         run: |
