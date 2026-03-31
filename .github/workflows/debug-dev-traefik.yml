@@ -1,0 +1,38 @@
+name: Debug dev Traefik
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: [self-hosted, dev]
+    steps:
+      - name: Check Traefik on dev network-vm
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nwkey && chmod 600 /tmp/nwkey
+
+          echo "=== Docker containers ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
+
+          echo "=== Test localhost:80 with Host: databaes.net ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -sI -H 'Host: databaes.net' http://localhost:80/ 2>&1 | head -5"
+
+          echo "=== Test prod k3s landing page reachability from dev ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -sI --connect-timeout 5 http://192.168.10.12:30080/ 2>&1 | head -5"
+
+          echo "=== services.yml on dev network-vm ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "grep -A2 'databaes-landing-page\|Host.*databaes.net' /opt/traefik/config/dynamic/services.yml 2>/dev/null || echo 'file not found or no match'"
+
+          echo "=== Traefik routes for databaes.net ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -m json.tool 2>/dev/null | grep -B1 -A3 'databaes\.net' | head -30 || echo 'dashboard not available'"
+
+          rm -f /tmp/nwkey
