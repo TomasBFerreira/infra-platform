@@ -156,10 +156,9 @@
     # ── Docker Compose stack ─────────────────────────────────────────────────
 
     - name: Deploy monitoring docker compose stack
-      community.docker.docker_compose_v2:
-        project_src: "{{ monitoring_dir }}/repo"
-        state: present
-        pull: always
+      command: docker compose pull && docker compose up -d
+      args:
+        chdir: "{{ monitoring_dir }}/repo"
       become_user: appadm
       environment:
         HOME: /home/appadm
