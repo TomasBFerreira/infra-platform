@@ -4,4 +4,5 @@ firewall_allowed_ports:
   - 80
   - 443
   - 3000
+  - 41641   # Tailscale UDP (direct WireGuard connections — falls back to DERP relay if blocked)
   - 51820
