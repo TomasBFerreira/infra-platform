@@ -10,17 +10,49 @@
     deploy_env: "{{ monitoring_env | default('dev') }}"
 
   tasks:
-    # ── Docker ──────────────────────────────────────────────────────────────
+    # ── System prerequisites ─────────────────────────────────────────────────
 
-    - name: Install Docker prerequisites
+    - name: Install system prerequisites
       apt:
         name:
           - ca-certificates
           - curl
           - gnupg
           - python3-pip
+          - nfs-common      # required to mount NFS shares
         state: present
         update_cache: yes
+
+    # ── NFS mount for persistent monitoring data ──────────────────────────────
+    # All backend data (Prometheus, Loki, Tempo, Grafana) is stored on the
+    # shared NFS server so it survives blue/green LXC recreation.
+
+    - name: Create NFS mount point
+      file:
+        path: /mnt/monitoring-data
+        state: directory
+        mode: '0755'
+
+    - name: Mount monitoring NFS share
+      mount:
+        path: /mnt/monitoring-data
+        src: 192.168.50.2:/mnt/nfs-shared-data/monitoring
+        fstype: nfs
+        opts: defaults,_netdev,soft,timeo=30,retrans=3
+        state: mounted
+
+    - name: Create per-service data subdirectories on NFS
+      file:
+        path: "/mnt/monitoring-data/{{ item }}"
+        state: directory
+        mode: '0777'
+      loop:
+        - grafana
+        - prometheus
+        - loki
+        - tempo
+
+    # ── Docker ──────────────────────────────────────────────────────────────
 
     # ── Standard users ───────────────────────────────────────────────────────
     # appadm  — service/app owner

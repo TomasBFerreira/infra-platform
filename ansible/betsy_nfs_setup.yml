@@ -1,0 +1,63 @@
+---
+# Sets up NFS exports on betsy (192.168.50.2) for the monitoring stack.
+# Run once per environment before provisioning monitoring-lxc.
+# Usage:
+#   ansible-playbook -i <betsy-ip>, -u root ansible/betsy_nfs_setup.yml
+#
+# Prerequisites: betsy must have nfs-kernel-server installed and /mnt/nfs-shared-data mounted.
+
+- name: Configure NFS exports on betsy for monitoring data
+  hosts: all
+  gather_facts: false
+  become: yes
+
+  vars:
+    nfs_base: /mnt/nfs-shared-data/monitoring
+    # All homelab subnets — covers dev/qa/prod monitoring-lxc addresses
+    nfs_allowed_network: 192.168.0.0/16
+    nfs_export_opts: "rw,sync,no_subtree_check,no_root_squash"
+    monitoring_subdirs:
+      - grafana
+      - prometheus
+      - loki
+      - tempo
+
+  tasks:
+    - name: Ensure nfs-kernel-server is installed
+      apt:
+        name: nfs-kernel-server
+        state: present
+        update_cache: yes
+
+    - name: Create monitoring NFS base directory
+      file:
+        path: "{{ nfs_base }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create per-service subdirectories
+      file:
+        path: "{{ nfs_base }}/{{ item }}"
+        state: directory
+        # Wide open so each container (grafana:472, prometheus:65534, loki/tempo:10001)
+        # can initialise its own data without uid mapping on the NFS server.
+        mode: '0777'
+      loop: "{{ monitoring_subdirs }}"
+
+    - name: Add monitoring NFS export to /etc/exports
+      lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_base }} {{ nfs_allowed_network }}({{ nfs_export_opts }})"
+        regexp: "^{{ nfs_base | regex_escape() }}\\s"
+        state: present
+      notify: reload exports
+
+    - name: Ensure NFS server is enabled and started
+      systemd:
+        name: nfs-kernel-server
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: reload exports
+      command: exportfs -ra
