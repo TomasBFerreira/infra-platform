@@ -31,4 +31,16 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -m json.tool 2>/dev/null | grep -A2 'databaes.net\|rule' | head -20 || echo 'dashboard not available'"
 
+          echo "=== cloudflared systemd status ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "systemctl status cloudflared --no-pager 2>&1 | head -20"
+
+          echo "=== cloudflared config ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "cat /etc/cloudflared/config.yml 2>/dev/null || echo 'no config.yml'; ls /etc/cloudflared/ 2>/dev/null"
+
+          echo "=== cloudflared tunnel status (last 20 lines of journal) ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "journalctl -u cloudflared -n 20 --no-pager 2>&1"
+
           rm -f /tmp/nwkey
