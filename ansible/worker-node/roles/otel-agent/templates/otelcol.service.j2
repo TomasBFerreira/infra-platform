@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenTelemetry Collector (host metrics)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=otelcol
+Group=otelcol
+ExecStart=/usr/local/bin/otelcol --config=/etc/otelcol/config.yaml
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=otelcol
+
+# Allow reading /proc for process metrics
+AmbientCapabilities=CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_SYS_PTRACE
+
+# Resource limits — small footprint
+MemoryMax=256M
+CPUQuota=20%
+
+[Install]
+WantedBy=multi-user.target

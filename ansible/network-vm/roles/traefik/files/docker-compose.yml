@@ -8,6 +8,9 @@ services:
     network_mode: host
     environment:
       - TZ=Europe/London
+      # Set to active monitoring-lxc IP:4317 to enable OTel metrics + tracing.
+      # Populated by Ansible from Vault: secret/monitoring/<env>/active-slot
+      - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/traefik/config/traefik.yml:/traefik.yml:ro
@@ -18,3 +21,21 @@ services:
       - "traefik.http.routers.traefik.rule=Host(`traefik.databaes.net`)"
       - "traefik.http.routers.traefik.service=api@internal"
       - "traefik.http.routers.traefik.entrypoints=web"
+
+  # OTel Collector sidecar — collects Docker container stats, host metrics, and Traefik logs.
+  # Forwards all telemetry to the central monitoring-lxc via OTLP gRPC.
+  # Disabled automatically if OTEL_COLLECTOR_ENDPOINT is not set (see otelcol-lxc.yml).
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    container_name: otelcol
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/otelcol-lxc.yml"]
+    environment:
+      - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-localhost:4317}
+      - DEPLOY_ENV=${DEPLOY_ENV:-dev}
+    volumes:
+      - /opt/traefik/config/otelcol-lxc.yml:/etc/otelcol/otelcol-lxc.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /opt/traefik/data/logs:/var/log/traefik:ro
+    network_mode: host

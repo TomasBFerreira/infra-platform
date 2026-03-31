@@ -1,0 +1,98 @@
+---
+# Deploy OpenTelemetry Collector as a systemd service on k3s worker VMs (Phase 4).
+# Collects host metrics (CPU, memory, disk, network, processes) and ships to monitoring-lxc.
+#
+# Required variables:
+#   otel_collector_endpoint  — OTLP gRPC endpoint, e.g. "192.168.20.95:4317"
+#   deploy_env               — Environment name (dev/qa/prod)
+#
+# Optional variables:
+#   otelcol_version          — otelcol-contrib version (default: "0.120.0")
+
+- name: Set otelcol version default
+  set_fact:
+    otelcol_version: "{{ otelcol_version | default('0.120.0') }}"
+
+- name: Create otelcol system user
+  user:
+    name: otelcol
+    system: yes
+    shell: /sbin/nologin
+    home: /var/lib/otelcol
+    create_home: yes
+    state: present
+
+- name: Create otelcol config directory
+  file:
+    path: /etc/otelcol
+    state: directory
+    owner: otelcol
+    group: otelcol
+    mode: '0750'
+
+- name: Check if otelcol binary is already installed at correct version
+  shell: /usr/local/bin/otelcol --version 2>&1 | grep -c "{{ otelcol_version }}" || true
+  register: otelcol_version_check
+  changed_when: false
+
+- name: Download otelcol-contrib binary
+  get_url:
+    url: "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v{{ otelcol_version }}/otelcol-contrib_{{ otelcol_version }}_linux_amd64.tar.gz"
+    dest: /tmp/otelcol-contrib.tar.gz
+    mode: '0644'
+    timeout: 60
+  when: otelcol_version_check.stdout == "0"
+
+- name: Extract otelcol binary
+  unarchive:
+    src: /tmp/otelcol-contrib.tar.gz
+    dest: /tmp/
+    remote_src: yes
+  when: otelcol_version_check.stdout == "0"
+
+- name: Install otelcol binary
+  copy:
+    src: /tmp/otelcol-contrib
+    dest: /usr/local/bin/otelcol
+    owner: root
+    group: root
+    mode: '0755'
+    remote_src: yes
+  when: otelcol_version_check.stdout == "0"
+  notify: restart otelcol
+
+- name: Clean up download artifacts
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/otelcol-contrib.tar.gz
+    - /tmp/otelcol-contrib
+  when: otelcol_version_check.stdout == "0"
+
+- name: Deploy otelcol config
+  template:
+    src: otelcol-vm.yml.j2
+    dest: /etc/otelcol/config.yaml
+    owner: otelcol
+    group: otelcol
+    mode: '0640'
+  notify: restart otelcol
+
+- name: Deploy otelcol systemd unit
+  template:
+    src: otelcol.service.j2
+    dest: /etc/systemd/system/otelcol.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart otelcol
+
+- name: Enable and start otelcol service
+  systemd:
+    name: otelcol
+    enabled: yes
+    state: started
+    daemon_reload: yes

@@ -348,6 +348,9 @@ jobs:
           echo "ADGUARD_USER=$ADGUARD_USER" >> $GITHUB_ENV
           echo "ADGUARD_PASS=$ADGUARD_PASS" >> $GITHUB_ENV
           echo "CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN" >> $GITHUB_ENV
+          # Resolve monitoring-lxc endpoint for OTel sidecar (optional — ok if not deployed yet)
+          OTEL_ENDPOINT=$(vault kv get -field=collector_endpoint secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+          echo "OTEL_ENDPOINT=$OTEL_ENDPOINT" >> $GITHUB_ENV
 
       - name: Run Ansible playbook
         env:
@@ -373,6 +376,8 @@ jobs:
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
             -e "cloudflare_tunnel_token=$CF_TUNNEL_TOKEN" \
+            -e "otel_collector_endpoint=$OTEL_ENDPOINT" \
+            -e "deploy_env=${ENV}" \
             ansible/network-vm/network-vm_setup.yml
 
   flip-active:

@@ -1,0 +1,80 @@
+# OTel Collector config for k3s worker VMs
+# Deployed by Ansible role: infra-platform/ansible/worker-node/roles/otel-agent/
+# Config path on VM: /etc/otelcol/config.yaml
+
+receivers:
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+          system.cpu.logical.count:
+            enabled: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      disk: {}
+      filesystem:
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+        exclude_mount_points:
+          mount_points: [/dev, /proc, /sys, /run/lock]
+          match_type: strict
+        exclude_fs_types:
+          fs_types: [tmpfs, devtmpfs, devfs, overlay, aufs, squashfs]
+          match_type: strict
+      network: {}
+      load: {}
+      processes: {}
+      process:
+        mute_process_name_error: true
+        mute_process_exe_error: true
+        mute_process_io_error: true
+
+processors:
+  batch:
+    send_batch_size: 1000
+    timeout: 10s
+
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 128
+    spike_limit_mib: 32
+
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 5s
+    override: false
+
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "{{ deploy_env }}"
+        action: upsert
+      - key: service.tier
+        value: vm
+        action: insert
+      - key: service.name
+        value: "worker-node-{{ ansible_hostname }}"
+        action: upsert
+
+exporters:
+  otlp:
+    endpoint: "{{ otel_collector_endpoint }}"
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 10s
+      max_elapsed_time: 300s
+
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [memory_limiter, resourcedetection, resource, batch]
+      exporters: [otlp]
