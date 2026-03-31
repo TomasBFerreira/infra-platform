@@ -1,0 +1,112 @@
+# OTel Collector sidecar config for LXC-based Docker services
+# Deploy alongside existing docker-compose stacks on: network-vm, vault-ct, sso, torrent, semaphore
+# Requires: docker socket mount at /var/run/docker.sock, /var/lib/docker/containers mounted read-only
+
+receivers:
+  # Docker container metrics (CPU, memory, network, I/O per container)
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 30s
+    timeout: 10s
+
+  # Container logs from Docker JSON log driver
+  filelog/docker:
+    include:
+      - /var/lib/docker/containers/*/*.log
+    start_at: end
+    include_file_path: true
+    include_file_name: false
+    operators:
+      - type: json_parser
+        id: parse-docker-log
+        timestamp:
+          parse_from: attributes.time
+          layout: "%Y-%m-%dT%H:%M:%S.%fZ"
+      - type: move
+        from: attributes.log
+        to: body
+      - type: move
+        from: attributes.stream
+        to: attributes["log.iostream"]
+      - type: regex_parser
+        id: extract-container-id
+        parse_from: attributes["log.file.path"]
+        regex: '/var/lib/docker/containers/(?P<container_id>[a-f0-9]{64})/.*\.log'
+      - type: truncate_labels
+        max_length: 12
+        labels:
+          - container_id
+
+  # LXC host hardware and OS metrics
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      disk: {}
+      filesystem:
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+      network: {}
+      load: {}
+      processes: {}
+      process:
+        include:
+          names: [dockerd, containerd, vault, authentik-server, qbittorrent, traefik]
+        mute_process_name_error: true
+        mute_process_exe_error: true
+        mute_process_io_error: true
+
+processors:
+  batch:
+    send_batch_size: 1000
+    timeout: 10s
+
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 128
+    spike_limit_mib: 32
+
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 5s
+    override: false
+
+  # Add LXC-specific resource attributes
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "${DEPLOY_ENV}"
+        action: upsert
+      - key: service.tier
+        value: lxc
+        action: insert
+
+exporters:
+  otlp:
+    endpoint: "${OTEL_COLLECTOR_ENDPOINT}"  # e.g. 192.168.20.95:4317
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 120s
+
+service:
+  pipelines:
+    metrics:
+      receivers: [docker_stats, hostmetrics]
+      processors: [memory_limiter, resourcedetection, resource, batch]
+      exporters: [otlp]
+
+    logs:
+      receivers: [filelog/docker]
+      processors: [memory_limiter, resourcedetection, resource, batch]
+      exporters: [otlp]

@@ -54,7 +54,7 @@
 
 - name: Copy OTel Collector sidecar config
   copy:
-    src: /app/otel-monitoring/config/otelcol/otelcol-lxc.yml
+    src: otelcol-lxc.yml
     dest: /opt/traefik/config/otelcol-lxc.yml
     mode: '0644'
 
