@@ -1,0 +1,58 @@
+name: Start VMID 111 on betsy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  start:
+    runs-on: self-hosted
+    steps:
+      - name: Start VMID 111 on betsy
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+
+          echo "=== Checking VMID 111 on betsy ==="
+
+          # Try as LXC first, then as QEMU VM
+          LXC_STATUS=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+            "pct status 111 2>/dev/null || echo 'notfound'")
+          VM_STATUS=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+            "qm status 111 2>/dev/null || echo 'notfound'")
+
+          echo "LXC status: $LXC_STATUS"
+          echo "VM  status: $VM_STATUS"
+
+          if echo "$LXC_STATUS" | grep -q "running"; then
+            echo "LXC 111 is already running — nothing to do"
+
+          elif echo "$LXC_STATUS" | grep -q "stopped"; then
+            echo "LXC 111 is stopped — starting..."
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "pct start 111"
+            echo "LXC 111 started"
+
+          elif echo "$VM_STATUS" | grep -q "running"; then
+            echo "VM 111 is already running — nothing to do"
+
+          elif echo "$VM_STATUS" | grep -q "stopped"; then
+            echo "VM 111 is stopped — starting..."
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "qm start 111"
+            echo "VM 111 started"
+
+          else
+            echo "ERROR: VMID 111 not found on betsy as either LXC or VM"
+            exit 1
+          fi
+
+          echo "=== Waiting for 192.168.50.111 to become reachable ==="
+          for i in $(seq 1 24); do
+            sleep 5
+            if ping -c1 -W2 192.168.50.111 &>/dev/null; then
+              echo "192.168.50.111 is reachable after ${i}x5s"
+              exit 0
+            fi
+            echo "  attempt $i/24 — not yet reachable"
+          done
+          echo "WARNING: 192.168.50.111 did not respond to ping within 2 minutes"
+          exit 1
