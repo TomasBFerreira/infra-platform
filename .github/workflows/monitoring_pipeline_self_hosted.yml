@@ -122,8 +122,52 @@ jobs:
           echo "gateway=$GATEWAY"               >> "$GITHUB_OUTPUT"
           echo "network_bridge=$NETWORK_BRIDGE" >> "$GITHUB_OUTPUT"
 
-  terraform-staging:
+  setup-betsy-nfs:
     needs: resolve-slots
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+      PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+    steps:
+      - name: Create NFS monitoring directories and export on betsy
+        run: |
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          NFS_BASE="/mnt/nfs-shared-data/monitoring"
+
+          echo "Setting up NFS monitoring directories on betsy (${PVE_HOST})..."
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} bash -s <<'REMOTE'
+            set -e
+            NFS_BASE="/mnt/nfs-shared-data/monitoring"
+
+            # Create per-service subdirs (mode 0777 so any container UID can write)
+            for dir in grafana prometheus loki tempo; do
+              mkdir -p "${NFS_BASE}/${dir}"
+              chmod 0777 "${NFS_BASE}/${dir}"
+            done
+            echo "Directories created: $(ls -la ${NFS_BASE})"
+
+            # Idempotently add the NFS export
+            EXPORT_LINE="${NFS_BASE} 192.168.0.0/16(rw,sync,no_subtree_check,no_root_squash)"
+            if ! grep -qF "${NFS_BASE}" /etc/exports; then
+              echo "${EXPORT_LINE}" >> /etc/exports
+              echo "Added NFS export: ${EXPORT_LINE}"
+            else
+              echo "NFS export already present"
+            fi
+
+            # Ensure nfs-kernel-server is installed and running
+            if ! command -v exportfs &>/dev/null; then
+              apt-get install -y -q nfs-kernel-server
+            fi
+            systemctl is-active nfs-kernel-server || systemctl start nfs-kernel-server
+            exportfs -ra
+            echo "NFS exports reloaded"
+            exportfs -v | grep monitoring || true
+          REMOTE
+
+  terraform-staging:
+    needs: [resolve-slots, setup-betsy-nfs]
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:          ${{ needs.resolve-slots.outputs.environment }}
