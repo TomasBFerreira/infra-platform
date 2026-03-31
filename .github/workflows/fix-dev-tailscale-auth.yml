@@ -1,0 +1,82 @@
+name: Fix dev Tailscale auth
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: [self-hosted, dev]
+    steps:
+      - name: Resolve active network-vm slot
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          VAULT_ADDR_NORM="${VAULT_ADDR}"
+          [[ "${VAULT_ADDR_NORM}" != http://* && "${VAULT_ADDR_NORM}" != https://* ]] \
+            && VAULT_ADDR_NORM="http://${VAULT_ADDR_NORM}"
+          echo "VAULT_ADDR=${VAULT_ADDR_NORM}" >> $GITHUB_ENV
+          ACTIVE_VMID=$(vault kv get -field=vmid secret/network-vm/dev/active-slot)
+          ACTIVE_IP=$(vault kv get -field=ip secret/network-vm/dev/active-slot)
+          echo "ACTIVE_VMID=${ACTIVE_VMID}" >> $GITHUB_ENV
+          echo "ACTIVE_IP=${ACTIVE_IP}" >> $GITHUB_ENV
+          echo "Active network-vm: VMID=${ACTIVE_VMID}, IP=${ACTIVE_IP}"
+
+      - name: Fetch Tailscale auth key from dev vault
+        env:
+          VAULT_ADDR_DEV: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN_DEV: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          VAULT_DEV="${VAULT_ADDR_DEV}"
+          [[ "${VAULT_DEV}" != http://* && "${VAULT_DEV}" != https://* ]] \
+            && VAULT_DEV="http://${VAULT_DEV}"
+          TS_KEY=$(VAULT_ADDR="${VAULT_DEV}" VAULT_TOKEN="${VAULT_TOKEN_DEV}" \
+            vault kv get -field=authkey secret/tailscale)
+          echo "::add-mask::${TS_KEY}"
+          echo "TS_AUTHKEY=${TS_KEY}" >> $GITHUB_ENV
+          echo "Tailscale auth key fetched"
+
+      - name: Check current Tailscale state
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+            "pct exec ${ACTIVE_VMID} -- tailscale status 2>&1" || true
+
+      - name: Re-authenticate Tailscale
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          # Re-run tailscale up with the current auth key and all required flags.
+          # --force-reauth ensures it re-authenticates even if already logged in.
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+            "pct exec ${ACTIVE_VMID} -- tailscale up \
+              --authkey=${TS_AUTHKEY} \
+              --advertise-routes=192.168.10.0/24,192.168.20.0/24,192.168.30.0/24,192.168.50.0/24 \
+              --advertise-exit-node \
+              --advertise-tags=tag:container,tag:dev,tag:subnet-router \
+              --hostname=dev-network-vm-green \
+              --force-reauth \
+              2>&1"
+
+      - name: Verify Tailscale came back up
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          for i in $(seq 1 10); do
+            STATE=$(ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+              "pct exec ${ACTIVE_VMID} -- tailscale status --json 2>/dev/null \
+               | python3 -c 'import sys,json; print(json.load(sys.stdin).get(\"BackendState\",\"unknown\"))'" 2>/dev/null || echo "error")
+            echo "Attempt ${i}: BackendState=${STATE}"
+            if [ "${STATE}" = "Running" ]; then
+              echo "Tailscale is up and running"
+              break
+            fi
+            sleep 5
+          done
+          # Final status
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+            "pct exec ${ACTIVE_VMID} -- tailscale status 2>&1" || true
