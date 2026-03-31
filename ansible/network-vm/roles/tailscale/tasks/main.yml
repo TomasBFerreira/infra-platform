@@ -95,11 +95,33 @@
   changed_when: false
   when: not (tailscale_skip_auth | default(false))
 
-- name: Add NAT masquerade rules for internal subnets via tailscale0
+- name: Allow forwarded traffic from internal subnets (FORWARD chain)
+  iptables:
+    chain: FORWARD
+    source: "{{ item }}"
+    jump: ACCEPT
+    action: insert
+    rule_num: 1
+    state: present
+  loop:
+    - 192.168.10.0/24
+    - 192.168.20.0/24
+    - 192.168.30.0/24
+    - 192.168.50.0/24
+
+- name: Allow established/related return traffic through FORWARD chain
+  iptables:
+    chain: FORWARD
+    ctstate: ESTABLISHED,RELATED
+    jump: ACCEPT
+    action: insert
+    rule_num: 1
+    state: present
+
+- name: Add NAT masquerade rules for internal subnets
   iptables:
     table: nat
     chain: POSTROUTING
-    out_interface: tailscale0
     source: "{{ item }}"
     jump: MASQUERADE
     state: present
@@ -109,6 +131,6 @@
     - 192.168.30.0/24
     - 192.168.50.0/24
 
-- name: Persist NAT rules across reboots
-  command: netfilter-persistent save
+- name: Persist iptables rules across reboots
+  shell: iptables-save > /etc/iptables/rules.v4
   changed_when: true

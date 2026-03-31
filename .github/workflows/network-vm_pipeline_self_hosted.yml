@@ -390,6 +390,49 @@ jobs:
             vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
             ip="${{ needs.resolve-slots.outputs.staging_ip }}"
 
+      - name: Update VLAN gateway on runner and other VMs to new network-vm
+        run: |
+          NEW_IP="${{ needs.resolve-slots.outputs.staging_ip }}"
+          echo "Updating default gateway to new network-vm: $NEW_IP"
+
+          # Update the runner's own live route first
+          ip route replace default via "$NEW_IP" || true
+
+          # Persist in /etc/network/interfaces (ifupdown-managed hosts)
+          if [ -f /etc/network/interfaces ]; then
+            sed -i "s/gateway 192\.168\.[0-9]*\.[0-9]*/gateway ${NEW_IP}/" /etc/network/interfaces || true
+            echo "Persisted gateway $NEW_IP in /etc/network/interfaces"
+          fi
+
+          # Persist in netplan (cloud-init / VM hosts)
+          for f in /etc/netplan/*.yaml; do
+            [ -f "$f" ] || continue
+            python3 - "$f" "$NEW_IP" <<'PYEOF'
+          import sys, yaml
+          path, new_gw = sys.argv[1], sys.argv[2]
+          with open(path) as fh:
+              cfg = yaml.safe_load(fh)
+          def patch(obj):
+              if isinstance(obj, dict):
+                  if 'gateway4' in obj:
+                      obj['gateway4'] = new_gw
+                  if 'routes' in obj and isinstance(obj['routes'], list):
+                      for r in obj['routes']:
+                          if isinstance(r, dict) and r.get('to') in ('default', '0.0.0.0/0'):
+                              r['via'] = new_gw
+                  for v in obj.values():
+                      patch(v)
+              elif isinstance(obj, list):
+                  for v in obj:
+                      patch(v)
+          patch(cfg)
+          with open(path, 'w') as fh:
+              yaml.dump(cfg, fh, default_flow_style=False)
+          print(f"Patched {path}")
+          PYEOF
+            netplan apply 2>/dev/null || true
+          done
+
   teardown-old-active:
     needs: [resolve-slots, flip-active]
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'

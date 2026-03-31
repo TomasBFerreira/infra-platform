@@ -57,6 +57,9 @@ jobs:
     steps:
       - name: Resolve node parameters
         id: resolve
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           NODE_NUM="${{ github.event.inputs.node_number }}"
           TARGET_NODE="${{ github.event.inputs.target_node }}"
@@ -94,6 +97,15 @@ jobs:
               exit 1
               ;;
           esac
+
+          # Resolve active network-vm IP from Vault (overrides static default if available)
+          VAULT_NVM_IP=$(vault kv get -field=ip secret/network-vm/$ENV/active-slot 2>/dev/null || echo "")
+          if [ -n "$VAULT_NVM_IP" ]; then
+            echo "Resolved active network-vm IP from Vault: $VAULT_NVM_IP (was: $GATEWAY)"
+            GATEWAY="$VAULT_NVM_IP"
+          else
+            echo "Could not resolve network-vm IP from Vault, using default: $GATEWAY"
+          fi
 
           VMID=$((VMID_BASE + NODE_NUM))
           VMID_SUFFIX=$((VMID % 100))
