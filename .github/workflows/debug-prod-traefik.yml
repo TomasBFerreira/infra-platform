@@ -1,0 +1,34 @@
+name: Debug prod Traefik
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: [self-hosted, prod]
+    steps:
+      - name: Check Traefik on prod network-vm
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nwkey && chmod 600 /tmp/nwkey
+
+          echo "=== Docker containers ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
+
+          echo "=== Test localhost:80 ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -sI -H 'Host: databaes.net' http://localhost:80/ 2>&1 | head -5"
+
+          echo "=== Test k3s landing page ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -sI http://192.168.10.12:30080/ 2>&1 | head -5"
+
+          echo "=== Traefik routes ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -m json.tool 2>/dev/null | grep -A2 'databaes.net\|rule' | head -20 || echo 'dashboard not available'"
+
+          rm -f /tmp/nwkey
