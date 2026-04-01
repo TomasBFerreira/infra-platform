@@ -55,6 +55,7 @@
           - python3-venv
           - python3-full
           - ansible
+          - rsync
         state: present
 
     # ── Vault CLI ────────────────────────────────────────────────────────────
