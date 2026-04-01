@@ -158,7 +158,7 @@
     # ── Docker Compose stack ─────────────────────────────────────────────────
 
     - name: Deploy monitoring docker compose stack
-      command: docker compose pull && docker compose up -d
+      shell: docker compose pull && docker compose up -d
       args:
         chdir: "{{ monitoring_dir }}/repo"
       become_user: appadm
