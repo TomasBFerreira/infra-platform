@@ -96,20 +96,24 @@ jobs:
             echo "No adguard creds in Vault"
           fi
 
-          echo "=== acme.json raw content (first 2000 bytes) ==="
+          echo "=== ALL ACME/cert errors in Traefik docker logs ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "cat /opt/traefik/data/acme/acme.json 2>/dev/null | head -c 2000 || echo 'no acme.json'"
+            "docker logs traefik 2>&1 | grep -iE 'acme|ACME|certif|letsencrypt|challenge|cloudflare|level=error|ERR ' | head -60 || echo 'no matches'"
 
-          echo "=== Traefik logs tail (last 80 lines) ==="
+          echo "=== Traefik log files on disk ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "docker logs traefik 2>&1 | tail -80"
+            "ls -la /opt/traefik/data/logs/ && cat /opt/traefik/data/logs/*.log 2>/dev/null | grep -iE 'acme|cert|error' | tail -30 || echo 'no log files or no matches'"
 
-          echo "=== CF env inside Traefik container ==="
+          echo "=== Port 443 listener check ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "docker exec traefik env | grep -E 'CF_|CLOUDFLARE|ACME' | sed 's/=.*/=[REDACTED]/'"
+            "ss -tlnp | grep ':443' || echo 'nothing on 443'"
 
-          echo "=== Traefik certresolvers via API ==="
+          echo "=== Trigger ACME + wait 15s + check logs ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "curl -s http://localhost:8080/api/overview | python3 -m json.tool 2>/dev/null || echo 'API not available'"
+            "curl -sk --resolve 'grafana-dev.databaes.net:443:127.0.0.1' https://grafana-dev.databaes.net/ -o /dev/null -w 'HTTPS %{http_code} cert=%{ssl_verify_result}\n' && sleep 15 && docker logs traefik 2>&1 | grep -iE 'acme|certif|letsencrypt|challenge|cloudflare|error' | tail -30"
+
+          echo "=== OpenSSL cert details served on 443 ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "echo Q | openssl s_client -connect 127.0.0.1:443 -servername grafana-dev.databaes.net 2>&1 | grep -E 'subject|issuer|notAfter|Verify|error' | head -10"
 
           rm -f /tmp/nwkey
