@@ -22,6 +22,7 @@
           - nfs-common      # required to mount NFS shares
           - sudo            # required for become_user tasks
           - git             # required to clone repositories
+          - rsync           # required by deploy.yml to sync files via SSH
         state: present
         update_cache: yes
 
