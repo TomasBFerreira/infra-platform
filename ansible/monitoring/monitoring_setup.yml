@@ -163,8 +163,8 @@
 
     # ── Docker Compose stack ─────────────────────────────────────────────────
 
-    - name: Deploy monitoring docker compose stack
-      shell: docker compose pull && docker compose up -d
+    - name: Pre-warm Docker image cache (pull without starting stack)
+      shell: docker compose pull
       args:
         chdir: "{{ monitoring_dir }}/repo"
       become_user: appadm
