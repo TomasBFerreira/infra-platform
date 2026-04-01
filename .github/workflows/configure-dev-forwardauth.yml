@@ -91,30 +91,41 @@ jobs:
       - name: Create Dev Forward Auth Application (if missing)
         if: steps.check-sso.outputs.skip != 'true'
         run: |
+          # Check by slug first
           EXISTING=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?slug=dev-forward-auth" \
             -H "Authorization: Bearer $AUTHENTIK_TOKEN")
           COUNT=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
 
           if [ "$COUNT" -gt 0 ]; then
-            echo "Dev Forward Auth Application already exists — skipping"
+            echo "Dev Forward Auth Application already exists (by slug) — skipping"
           else
-            RESP=$(curl -s -w "\n%{http_code}" -X POST "http://${SSO_IP}:9000/api/v3/core/applications/" \
-              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"name\": \"Dev Forward Auth\",
-                \"slug\": \"dev-forward-auth\",
-                \"provider\": $PROVIDER_PK,
-                \"open_in_new_tab\": false
-              }")
-            HTTP_CODE=$(echo "$RESP" | tail -1)
-            BODY=$(echo "$RESP" | head -n -1)
-            echo "HTTP $HTTP_CODE: $BODY"
-            if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
-              echo "ERROR: Application creation failed"
-              exit 1
+            # Check if any Application is already bound to this Provider
+            BY_PROVIDER=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?provider=$PROVIDER_PK" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+            PCOUNT=$(echo "$BY_PROVIDER" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
+
+            if [ "$PCOUNT" -gt 0 ]; then
+              APP_SLUG=$(echo "$BY_PROVIDER" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['slug'])")
+              echo "Application already bound to provider (slug=$APP_SLUG) — skipping creation"
+            else
+              RESP=$(curl -s -w "\n%{http_code}" -X POST "http://${SSO_IP}:9000/api/v3/core/applications/" \
+                -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{
+                  \"name\": \"Dev Forward Auth\",
+                  \"slug\": \"dev-forward-auth\",
+                  \"provider\": $PROVIDER_PK,
+                  \"open_in_new_tab\": false
+                }")
+              HTTP_CODE=$(echo "$RESP" | tail -1)
+              BODY=$(echo "$RESP" | head -n -1)
+              echo "HTTP $HTTP_CODE: $BODY"
+              if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+                echo "ERROR: Application creation failed"
+                exit 1
+              fi
+              echo "$BODY" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Created Dev Forward Auth Application (slug='+r['slug']+')')"
             fi
-            echo "$BODY" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Created Dev Forward Auth Application (slug='+r['slug']+')')"
           fi
 
       - name: Assign provider to embedded outpost
