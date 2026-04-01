@@ -96,20 +96,20 @@ jobs:
             echo "No adguard creds in Vault"
           fi
 
-          echo "=== Traefik startup logs (first 50 lines) ==="
+          echo "=== acme.json raw content (first 2000 bytes) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "docker logs traefik 2>&1 | head -50"
+            "cat /opt/traefik/data/acme/acme.json 2>/dev/null | head -c 2000 || echo 'no acme.json'"
 
-          echo "=== Traefik API overview (certresolvers) ==="
+          echo "=== Traefik logs tail (last 80 lines) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "curl -s http://localhost:8080/api/overview | python3 -m json.tool 2>/dev/null | grep -A5 'certResolvers\|letsencrypt\|acme' || echo 'no certresolver in API'"
+            "docker logs traefik 2>&1 | tail -80"
 
-          echo "=== acme dir + acme.json status ==="
+          echo "=== CF env inside Traefik container ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "ls -la /opt/traefik/data/acme/ 2>&1; test -f /opt/traefik/data/acme/acme.json && echo 'acme.json EXISTS' || echo 'acme.json does NOT exist yet'"
+            "docker exec traefik env | grep -E 'CF_|CLOUDFLARE|ACME' | sed 's/=.*/=[REDACTED]/'"
 
-          echo "=== /traefik.yml inside container ==="
+          echo "=== Traefik certresolvers via API ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "docker exec traefik cat /traefik.yml 2>/dev/null || echo 'no /traefik.yml in container'"
+            "curl -s http://localhost:8080/api/overview | python3 -m json.tool 2>/dev/null || echo 'API not available'"
 
           rm -f /tmp/nwkey
