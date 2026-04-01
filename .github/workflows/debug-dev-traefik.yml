@@ -43,16 +43,19 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "curl -sI --connect-timeout 5 http://192.168.20.96:3000/api/health 2>&1 | head -10"
 
-          echo "=== grafana-dev-router in services.yml ==="
+          echo "=== All files in /opt/traefik/config/dynamic/ ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "grep -A8 'grafana-dev' /opt/traefik/config/dynamic/services.yml"
+            "ls -la /opt/traefik/config/dynamic/"
 
-          echo "=== Grafana admin password (from monitoring LXC .env) ==="
+          echo "=== grafana-dev + authentik refs across ALL dynamic config files ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "ssh -o StrictHostKeyChecking=no root@192.168.20.96 'grep GRAFANA_ADMIN_PASSWORD /opt/monitoring/.env 2>/dev/null || echo not found'"
+            "grep -rn 'grafana-dev\|authentik' /opt/traefik/config/dynamic/"
 
           echo "=== ACME cert status ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "cat /opt/traefik/data/acme/acme.json 2>/dev/null | python3 -c \"import json,sys; d=json.load(sys.stdin); certs=d.get('letsencrypt',{}).get('Certificates',[]); [print(c['domain']['main'], c.get('domain',{}).get('sans',[])) for c in certs]\" 2>/dev/null || echo 'no acme.json or no certs yet'"
+
+          echo "=== Grafana password from Vault ==="
+          vault kv get -field=grafana_admin_password secret/monitoring/dev/grafana_admin_password 2>/dev/null || echo "not found in vault"
 
           rm -f /tmp/nwkey
