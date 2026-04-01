@@ -57,6 +57,7 @@
     src: traefik.yml
     dest: /opt/traefik/config/traefik.yml
     mode: '0644'
+  register: traefik_static_config
 
 - name: Copy OTel Collector sidecar config
   copy:
@@ -98,3 +99,9 @@
   command: docker compose up -d
   args:
     chdir: /opt/traefik
+
+- name: Restart Traefik if static config changed (required to pick up certresolver/entrypoints)
+  command: docker compose restart traefik
+  args:
+    chdir: /opt/traefik
+  when: traefik_static_config.changed
