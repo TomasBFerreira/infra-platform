@@ -53,14 +53,20 @@ jobs:
           chmod 600 /tmp/network_vm_key
 
       - name: Fetch secrets from Vault
+        env:
+          VAULT_BOOTSTRAP_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
           ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
           OTEL_ENDPOINT=$(vault kv get -field=collector_endpoint secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+          # CF DNS token lives at a path the DEV token may not access — use bootstrap token
+          CF_DNS_TOKEN=$(VAULT_TOKEN="$VAULT_BOOTSTRAP_TOKEN" vault kv get -field=dns_api_token secret/cloudflare 2>/dev/null || echo "")
           echo "::add-mask::$ADGUARD_PASS"
+          echo "::add-mask::$CF_DNS_TOKEN"
           echo "ADGUARD_USER=$ADGUARD_USER" >> $GITHUB_ENV
           echo "ADGUARD_PASS=$ADGUARD_PASS" >> $GITHUB_ENV
           echo "OTEL_ENDPOINT=$OTEL_ENDPOINT" >> $GITHUB_ENV
+          echo "CF_DNS_TOKEN=$CF_DNS_TOKEN" >> $GITHUB_ENV
 
       - name: Run Ansible (traefik + adguard roles only)
         run: |
@@ -76,6 +82,7 @@ jobs:
             -e "adguard_dev_rewrite_ip=${ACTIVE_IP}" \
             -e "otel_collector_endpoint=$OTEL_ENDPOINT" \
             -e "deploy_env=${ENV}" \
+            -e "cf_dns_api_token=$CF_DNS_TOKEN" \
             ansible/network-vm/update-services.yml
 
       - name: Restart Traefik to apply static config changes

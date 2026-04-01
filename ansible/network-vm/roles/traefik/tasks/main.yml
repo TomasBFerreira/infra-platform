@@ -93,8 +93,8 @@
     content: |
       OTEL_COLLECTOR_ENDPOINT={{ otel_collector_endpoint | default('') }}
       DEPLOY_ENV={{ deploy_env | default('dev') }}
-      CLOUDFLARE_DNS_API_TOKEN={{ cf_dns_token_result.stdout | default('') }}
-      CLOUDFLARE_ZONE_API_TOKEN={{ cf_dns_token_result.stdout | default('') }}
+      CLOUDFLARE_DNS_API_TOKEN={{ cf_dns_api_token | default(cf_dns_token_result.stdout) | default('') }}
+      CLOUDFLARE_ZONE_API_TOKEN={{ cf_dns_api_token | default(cf_dns_token_result.stdout) | default('') }}
 
 - name: Deploy Traefik
   command: docker compose up -d
