@@ -12,8 +12,10 @@ services:
       # Populated by Ansible from Vault: secret/monitoring/<env>/active-slot
       - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-}
       # Cloudflare DNS API token for Let's Encrypt DNS-01 wildcard cert (*.databaes.net).
-      # Needs Zone:DNS:Edit permission. Populated by Ansible from Vault: secret/cloudflare/dns_api_token
-      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+      # Needs Zone:Zone:Read + Zone:DNS:Edit permission. Populated by Ansible from Vault.
+      # LEGO (Traefik's ACME lib) requires CLOUDFLARE_ prefix; ZONE_API_TOKEN can be same token.
+      - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN}
+      - CLOUDFLARE_ZONE_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/traefik/config/traefik.yml:/etc/traefik/traefik.yml:ro
