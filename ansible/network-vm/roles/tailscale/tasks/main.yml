@@ -81,6 +81,7 @@
     --authkey={{ tailscale_authkey }}
     --reset
     --advertise-routes={{ tailscale_subnet_routes }}
+    --advertise-exit-node
     --hostname={{ tailscale_hostname }}
   register: ts_up_result
   when: not (tailscale_connected | default(false)) and not (tailscale_skip_auth | default(false))
@@ -96,6 +97,7 @@
     timeout 90
     tailscale up
     --advertise-routes={{ tailscale_subnet_routes }}
+    --advertise-exit-node
   when: (tailscale_connected | default(false)) and not (tailscale_skip_auth | default(false))
   changed_when: false
 
