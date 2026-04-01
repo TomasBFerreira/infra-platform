@@ -55,12 +55,16 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "cat /opt/traefik/data/acme/acme.json 2>/dev/null | python3 -c \"import json,sys; d=json.load(sys.stdin); certs=d.get('letsencrypt',{}).get('Certificates',[]); [print(c['domain']['main'], c.get('domain',{}).get('sans',[])) for c in certs]\" 2>/dev/null || echo 'no acme.json or no certs yet'"
 
-          echo "=== Push current services.yml to inactive slot (.56) ==="
-          scp -i /tmp/nwkey -o StrictHostKeyChecking=no \
-            /opt/traefik/config/dynamic/services.yml \
-            root@192.168.20.56:/opt/traefik/config/dynamic/services.yml 2>/dev/null && \
-            ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.56 \
-              "docker restart traefik 2>/dev/null || systemctl restart traefik 2>/dev/null; echo 'done'" || \
-            echo "Could not reach .56 (may be offline)"
+          echo "=== Traefik runtime: grafana-dev-router details ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -s http://localhost:8080/api/http/routers/grafana-dev-router@file 2>/dev/null | python3 -m json.tool 2>/dev/null || echo 'not found in API'"
+
+          echo "=== Traefik HTTPS test for grafana-dev ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -skI -H 'Host: grafana-dev.databaes.net' https://localhost:443/ 2>&1 | head -15"
+
+          echo "=== Cloudflare tunnel status ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "systemctl status cloudflared --no-pager -l 2>&1 | head -15 || echo 'cloudflared not running'"
 
           rm -f /tmp/nwkey
