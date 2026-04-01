@@ -85,16 +85,10 @@
   register: ts_up_result
   when: not (tailscale_connected | default(false)) and not (tailscale_skip_auth | default(false))
   no_log: true
-  ignore_errors: true
-
-- name: Debug Tailscale auth failure
-  debug:
-    msg: "tailscale up rc={{ ts_up_result.rc }} stdout={{ ts_up_result.stdout | default('') }} stderr={{ ts_up_result.stderr | default('') }}"
-  when: ts_up_result is defined and (ts_up_result.rc | default(0)) != 0
 
 - name: Fail if Tailscale auth failed
   fail:
-    msg: "tailscale up failed — see debug output above (rc={{ ts_up_result.rc }})"
+    msg: "tailscale up failed (rc={{ ts_up_result.rc }}) — check tailscale auth key validity and ACL policy"
   when: ts_up_result is defined and (ts_up_result.rc | default(0)) != 0
 
 - name: Update Tailscale advertised routes (already connected node)
