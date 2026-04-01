@@ -104,7 +104,13 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "ls -la /opt/traefik/data/logs/ && cat /opt/traefik/data/logs/*.log 2>/dev/null | grep -iE 'acme|cert|error' | tail -30 || echo 'no log files or no matches'"
 
-          echo "=== Port 443 listener check ==="
+          echo "=== .env file on server (redacted values) ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "cat /opt/traefik/.env | sed 's/=.*/=[REDACTED]/'"
+
+          echo "=== CF env inside Traefik container ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "docker exec traefik env | grep -E 'CF_|CLOUDFLARE' | sed 's/=.*/=[REDACTED]/'""
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "ss -tlnp | grep ':443' || echo 'nothing on 443'"
 
