@@ -36,7 +36,7 @@
     - name: Mount monitoring NFS share
       mount:
         path: /mnt/monitoring-data
-        src: 192.168.50.2:/mnt/nfs-shared-data/monitoring
+        src: "{{ nfs_server }}:/mnt/nfs-shared-data/monitoring"
         fstype: nfs
         opts: defaults,_netdev,soft,timeo=30,retrans=3
         state: mounted

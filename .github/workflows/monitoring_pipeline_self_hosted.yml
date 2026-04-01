@@ -284,6 +284,7 @@ jobs:
       STAGING_IP:   ${{ needs.resolve-slots.outputs.staging_ip }}
       STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
       ENV:          ${{ needs.resolve-slots.outputs.environment }}
+      PVE_API:      ${{ needs.resolve-slots.outputs.pve_api_url }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -328,6 +329,7 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
+          NFS_SERVER=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           ssh-keygen -R "${STAGING_IP}" || true
           ansible-playbook \
             -i "${STAGING_IP}," \
@@ -339,6 +341,7 @@ jobs:
             -e "monitoring_env=${ENV}" \
             -e "grafana_admin_password=${GRAFANA_ADMIN_PASSWORD}" \
             -e "gh_pat=${GH_PAT}" \
+            -e "nfs_server=${NFS_SERVER}" \
             ansible/monitoring/monitoring_setup.yml
 
   flip-active:
