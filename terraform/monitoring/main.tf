@@ -22,11 +22,10 @@ resource "proxmox_lxc" "monitoring" {
     gw     = var.gateway
   }
 
-  unprivileged = true
+  unprivileged = false
 
   features {
     nesting = true
-    mount   = "nfs"
   }
 
   ssh_public_keys = data.vault_generic_secret.ssh_key.data["public_key"]
