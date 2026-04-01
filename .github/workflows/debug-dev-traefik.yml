@@ -55,7 +55,12 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "cat /opt/traefik/data/acme/acme.json 2>/dev/null | python3 -c \"import json,sys; d=json.load(sys.stdin); certs=d.get('letsencrypt',{}).get('Certificates',[]); [print(c['domain']['main'], c.get('domain',{}).get('sans',[])) for c in certs]\" 2>/dev/null || echo 'no acme.json or no certs yet'"
 
-          echo "=== Grafana password from Vault ==="
-          vault kv get -field=grafana_admin_password secret/monitoring/dev/grafana_admin_password 2>/dev/null || echo "not found in vault"
+          echo "=== Push current services.yml to inactive slot (.56) ==="
+          scp -i /tmp/nwkey -o StrictHostKeyChecking=no \
+            /opt/traefik/config/dynamic/services.yml \
+            root@192.168.20.56:/opt/traefik/config/dynamic/services.yml 2>/dev/null && \
+            ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.56 \
+              "docker restart traefik 2>/dev/null || systemctl restart traefik 2>/dev/null; echo 'done'" || \
+            echo "Could not reach .56 (may be offline)"
 
           rm -f /tmp/nwkey
