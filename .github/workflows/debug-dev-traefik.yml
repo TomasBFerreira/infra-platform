@@ -104,15 +104,15 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "ls -la /opt/traefik/data/logs/ && cat /opt/traefik/data/logs/*.log 2>/dev/null | grep -iE 'acme|cert|error' | tail -30 || echo 'no log files or no matches'"
 
-          echo "=== .env file on server (redacted values) ==="
+          echo "=== .env file on server (value lengths) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "cat /opt/traefik/.env | sed 's/=.*/=[REDACTED]/'"
+            "awk -F= '{print \$1, length(\$2), \"chars\"}' /opt/traefik/.env"
 
-          echo "=== CF env inside Traefik container ==="
+          echo "=== CF env inside Traefik container (value lengths) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "docker exec traefik env | grep -E 'CF_|CLOUDFLARE' | sed 's/=.*/=[REDACTED]/'""
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "ss -tlnp | grep ':443' || echo 'nothing on 443'"
+            "docker exec traefik env | grep -E 'CF_|CLOUDFLARE' | awk -F= '{print \$1, length(\$2), \"chars\"}'"
+
+          echo "=== Port 443 listener check ==="
 
           echo "=== Trigger ACME + wait 15s + check logs ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
