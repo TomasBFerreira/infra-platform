@@ -1,0 +1,81 @@
+name: Update Network-VM Services (no reprovision)
+
+# Applies traefik + adguard Ansible roles to the ACTIVE network-vm slot
+# without running Terraform or the full blue/green pipeline.
+# Use this after config-only changes (traefik.yml, services.yml, ACME token, etc.)
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options: [dev, prod, qa]
+        default: dev
+
+jobs:
+  update-services:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENV: ${{ inputs.environment }}
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout traefik-gitops (so Ansible can copy services.yml)
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ ! -d /app/traefik-gitops ]; then
+            git clone https://x-access-token:${GH_PAT}@github.com/TomasBFerreira/traefik-gitops /app/traefik-gitops
+          else
+            git -C /app/traefik-gitops pull --ff-only
+          fi
+
+      - name: Resolve active network-vm IP from Vault
+        run: |
+          ACTIVE_IP=$(vault kv get -field=ip secret/network-vm/${ENV}/active-slot)
+          echo "ACTIVE_IP=${ACTIVE_IP}" >> $GITHUB_ENV
+          echo "Active network-vm IP: ${ACTIVE_IP}"
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install -r ansible/requirements.yml
+          pip3 install hvac --quiet --break-system-packages
+
+      - name: Fetch SSH key from Vault
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/network_vm_key
+          chmod 600 /tmp/network_vm_key
+
+      - name: Fetch secrets from Vault
+        run: |
+          ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
+          ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
+          OTEL_ENDPOINT=$(vault kv get -field=collector_endpoint secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+          echo "::add-mask::$ADGUARD_PASS"
+          echo "ADGUARD_USER=$ADGUARD_USER" >> $GITHUB_ENV
+          echo "ADGUARD_PASS=$ADGUARD_PASS" >> $GITHUB_ENV
+          echo "OTEL_ENDPOINT=$OTEL_ENDPOINT" >> $GITHUB_ENV
+
+      - name: Run Ansible (traefik + adguard roles only)
+        run: |
+          ssh-keygen -R "${ACTIVE_IP}" || true
+          ansible-playbook \
+            -i "${ACTIVE_IP}," \
+            -v \
+            -e "ansible_host=${ACTIVE_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -i /tmp/network_vm_key'" \
+            -e "adguard_username=$ADGUARD_USER" \
+            -e "adguard_password=$ADGUARD_PASS" \
+            -e "adguard_dev_rewrite_ip=${ACTIVE_IP}" \
+            -e "otel_collector_endpoint=$OTEL_ENDPOINT" \
+            -e "deploy_env=${ENV}" \
+            ansible/network-vm/update-services.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/network_vm_key

@@ -81,6 +81,8 @@
 - name: Read Cloudflare DNS API token from Vault
   command: vault kv get -field=dns_api_token secret/cloudflare
   register: cf_dns_token_result
+  # Allow failure — ACME cert won't issue until the token is stored, but Traefik still starts fine.
+  failed_when: false
   no_log: true
 
 - name: Write .env for docker-compose (OTel + deploy env + CF DNS token)
@@ -90,7 +92,7 @@
     content: |
       OTEL_COLLECTOR_ENDPOINT={{ otel_collector_endpoint | default('') }}
       DEPLOY_ENV={{ deploy_env | default('dev') }}
-      CF_DNS_API_TOKEN={{ cf_dns_token_result.stdout }}
+      CF_DNS_API_TOKEN={{ cf_dns_token_result.stdout | default('') }}
 
 - name: Deploy Traefik
   command: docker compose up -d
