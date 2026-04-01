@@ -78,6 +78,14 @@ jobs:
             -e "deploy_env=${ENV}" \
             ansible/network-vm/update-services.yml
 
+      - name: Update Tailscale routes and exit node advertisement
+        env:
+          SUBNETS: "192.168.10.0/24,192.168.20.0/24,192.168.30.0/24,192.168.50.0/24"
+        run: |
+          ssh -i /tmp/network_vm_key -o StrictHostKeyChecking=no root@${ACTIVE_IP} \
+            "tailscale up --advertise-routes=${SUBNETS} --advertise-exit-node || true"
+          echo "Tailscale routes + exit node updated"
+
       - name: Cleanup
         if: always()
         run: rm -f /tmp/network_vm_key
