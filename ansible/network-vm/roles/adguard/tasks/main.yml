@@ -29,12 +29,15 @@
   uri:
     url: "http://127.0.0.1:{{ adguard_port }}/control/status"
     method: GET
-    status_code: [200, 302]
+    # 200 = running, no auth required (dev/test mode)
+    # 302 = first-run setup wizard redirect
+    # 401 = already configured, auth required — also means healthy
+    status_code: [200, 302, 401]
     follow_redirects: none
   register: adguard_status
   retries: 10
   delay: 3
-  until: adguard_status.status in [200, 302]
+  until: adguard_status.status in [200, 302, 401]
 
 - name: Run AdGuard Home initial setup
   uri:
