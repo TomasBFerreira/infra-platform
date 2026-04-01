@@ -1,2 +1,21 @@
 adguard_port: 3000
 adguard_data_path: /opt/adguard
+
+# All dev hostnames that should resolve via AdGuard to the dev network-vm.
+# Tailscale peers using AdGuard as their nameserver will resolve these internally
+# without them ever appearing in public Cloudflare DNS.
+adguard_dev_rewrites:
+  - domain: auth-dev.databaes.net
+  - domain: grafana-dev.databaes.net
+  - domain: nextcloud-dev.databaes.net
+  - domain: wikijs-dev.databaes.net
+  - domain: semaphore-dev.databaes.net
+  - domain: rancher-dev.databaes.net
+  - domain: vault-dev.databaes.net
+  - domain: kumadev.databaes.net
+  - domain: databaes-status-api-dev.databaes.net
+  - domain: overseerr-dev.databaes.net
+  - domain: prowlarr-dev.databaes.net
+  - domain: radarr-dev.databaes.net
+  - domain: sonarr-dev.databaes.net
+  - domain: dev.databaes.net

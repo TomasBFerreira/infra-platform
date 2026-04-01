@@ -11,11 +11,15 @@ services:
       # Set to active monitoring-lxc IP:4317 to enable OTel metrics + tracing.
       # Populated by Ansible from Vault: secret/monitoring/<env>/active-slot
       - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-}
+      # Cloudflare DNS API token for Let's Encrypt DNS-01 wildcard cert (*.databaes.net).
+      # Needs Zone:DNS:Edit permission. Populated by Ansible from Vault: secret/cloudflare/dns_api_token
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/traefik/config/traefik.yml:/traefik.yml:ro
       - /opt/traefik/config/dynamic:/etc/traefik/dynamic:ro
       - /opt/traefik/data/logs:/var/log/traefik
+      - /opt/traefik/data/acme:/data/acme
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.traefik.rule=Host(`traefik.databaes.net`)"

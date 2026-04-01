@@ -46,6 +46,12 @@
     - /opt/traefik/config/dynamic
     - /opt/traefik/data/logs
 
+- name: Create ACME cert storage directory (mode 0700 — Traefik requires strict permissions)
+  file:
+    path: /opt/traefik/data/acme
+    state: directory
+    mode: '0700'
+
 - name: Copy Traefik main config
   copy:
     src: traefik.yml
@@ -72,13 +78,19 @@
     dest: /opt/traefik/docker-compose.yml
     mode: '0644'
 
-- name: Write .env for docker-compose (OTel + deploy env)
+- name: Read Cloudflare DNS API token from Vault
+  command: vault kv get -field=dns_api_token secret/cloudflare
+  register: cf_dns_token_result
+  no_log: true
+
+- name: Write .env for docker-compose (OTel + deploy env + CF DNS token)
   copy:
     dest: /opt/traefik/.env
     mode: '0640'
     content: |
       OTEL_COLLECTOR_ENDPOINT={{ otel_collector_endpoint | default('') }}
       DEPLOY_ENV={{ deploy_env | default('dev') }}
+      CF_DNS_API_TOKEN={{ cf_dns_token_result.stdout }}
 
 - name: Deploy Traefik
   command: docker compose up -d

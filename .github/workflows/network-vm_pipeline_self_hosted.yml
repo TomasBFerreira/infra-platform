@@ -375,6 +375,7 @@ jobs:
             -e "wg_dns=$WG_DNS" \
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
+            -e "adguard_dev_rewrite_ip=${STAGING_IP}" \
             -e "cloudflare_tunnel_token=$CF_TUNNEL_TOKEN" \
             -e "otel_collector_endpoint=$OTEL_ENDPOINT" \
             -e "deploy_env=${ENV}" \
