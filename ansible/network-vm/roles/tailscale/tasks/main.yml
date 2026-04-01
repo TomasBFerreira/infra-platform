@@ -74,17 +74,25 @@
     fail_msg: "Tailscale auth key could not be retrieved from Vault at secret/data/tailscale:authkey"
   when: not (tailscale_skip_auth | default(false))
 
-- name: Authenticate and configure Tailscale as subnet router and exit node
+- name: Authenticate and configure Tailscale as subnet router
   command: >
     timeout 90
     tailscale up
     --authkey={{ tailscale_authkey }}
+    --reset
     --advertise-routes={{ tailscale_subnet_routes }}
-    --advertise-exit-node
     --advertise-tags={{ tailscale_advertise_tags }}
     --hostname={{ tailscale_hostname }}
   when: not (tailscale_connected | default(false)) and not (tailscale_skip_auth | default(false))
   no_log: true
+
+- name: Update Tailscale advertised routes (already connected node)
+  command: >
+    timeout 90
+    tailscale up
+    --advertise-routes={{ tailscale_subnet_routes }}
+  when: (tailscale_connected | default(false)) and not (tailscale_skip_auth | default(false))
+  changed_when: false
 
 - name: Wait for Tailscale to come online
   command: tailscale status
