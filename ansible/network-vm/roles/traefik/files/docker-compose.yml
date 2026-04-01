@@ -16,7 +16,7 @@ services:
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/traefik/config/traefik.yml:/traefik.yml:ro
+      - /opt/traefik/config/traefik.yml:/etc/traefik/traefik.yml:ro
       - /opt/traefik/config/dynamic:/etc/traefik/dynamic:ro
       - /opt/traefik/data/logs:/var/log/traefik
       - /opt/traefik/data/acme:/data/acme
