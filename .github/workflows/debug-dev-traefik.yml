@@ -67,8 +67,17 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "cloudflared tunnel info 2>/dev/null | head -30 || cat /etc/cloudflared/config.yml 2>/dev/null || cat /root/.cloudflared/config.yml 2>/dev/null || echo 'no local config found'"
 
-          echo "=== cloudflared tunnel route list ==="
+          echo "=== Traefik ACME logs ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "cloudflared tunnel route list 2>&1 | head -30 || echo 'failed'"
+            "docker logs traefik 2>&1 | grep -i 'acme\|cert\|letsencrypt\|challenge\|cloudflare\|error' | tail -30 || journalctl -u traefik -n 30 --no-pager 2>/dev/null | grep -i 'acme\|cert\|error'"
+
+          echo "=== CF_DNS_API_TOKEN set in Traefik env ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "grep CF_DNS_API_TOKEN /opt/traefik/.env | sed 's/=.*/=[REDACTED]/'"
+
+          echo "=== grafana-dev.databaes.net public DNS ==="
+          dig +short grafana-dev.databaes.net @1.1.1.1 || echo "no record (expected)"
+
+          rm -f /tmp/nwkey
 
           rm -f /tmp/nwkey
