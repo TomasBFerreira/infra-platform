@@ -35,4 +35,16 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -m json.tool 2>/dev/null | grep -B1 -A3 'databaes\.net' | head -30 || echo 'dashboard not available'"
 
+          echo "=== Test grafana-dev Host via Traefik ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -sI -H 'Host: grafana-dev.databaes.net' http://localhost:80/ 2>&1 | head -10"
+
+          echo "=== Grafana direct on 192.168.20.96:3000 ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -sI --connect-timeout 5 http://192.168.20.96:3000/api/health 2>&1 | head -10"
+
+          echo "=== grafana-dev-router in services.yml ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "grep -A8 'grafana-dev' /opt/traefik/config/dynamic/services.yml"
+
           rm -f /tmp/nwkey
