@@ -20,6 +20,8 @@
           - gnupg
           - python3-pip
           - nfs-common      # required to mount NFS shares
+          - sudo            # required for become_user tasks
+          - git             # required to clone repositories
         state: present
         update_cache: yes
 
