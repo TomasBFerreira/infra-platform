@@ -12,6 +12,7 @@ on:
           - adguard
           - wireguard
           - cloudflare-tunnel
+          - cloudflare-dns
           - ssh-key
           - qbittorrent
       # ssh-key
@@ -50,6 +51,10 @@ on:
         required: false
       wg_dns:
         description: '[wireguard] DNS (optional, e.g. 1.1.1.1)'
+        required: false
+      # cloudflare-dns
+      cf_dns_api_token:
+        description: '[cloudflare-dns] Zone:DNS:Edit API token for ACME DNS-01 challenge'
         required: false
       # cloudflare-tunnel
       cf_tunnel_token:
@@ -100,6 +105,10 @@ jobs:
             cloudflare-tunnel)
               vault kv put secret/cloudflare-tunnel \
                 token="${{ github.event.inputs.cf_tunnel_token }}"
+              ;;
+            cloudflare-dns)
+              vault kv put secret/cloudflare \
+                dns_api_token="${{ github.event.inputs.cf_dns_api_token }}"
               ;;
             qbittorrent)
               vault kv put secret/qbittorrent \
