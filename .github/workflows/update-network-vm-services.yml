@@ -30,8 +30,10 @@ jobs:
           if [ ! -d /app/traefik-gitops ]; then
             git clone https://x-access-token:${GH_PAT}@github.com/TomasBFerreira/traefik-gitops /app/traefik-gitops
           else
+            git -C /app/traefik-gitops remote set-url origin https://x-access-token:${GH_PAT}@github.com/TomasBFerreira/traefik-gitops
             git -C /app/traefik-gitops pull --ff-only
           fi
+          git -C /app/traefik-gitops remote set-url origin https://github.com/TomasBFerreira/traefik-gitops
 
       - name: Resolve active network-vm IP from Vault
         run: |
