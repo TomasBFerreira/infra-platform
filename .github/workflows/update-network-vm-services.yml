@@ -78,6 +78,11 @@ jobs:
             -e "deploy_env=${ENV}" \
             ansible/network-vm/update-services.yml
 
+      - name: Restart Traefik to apply static config changes
+        run: |
+          ssh -i /tmp/network_vm_key -o StrictHostKeyChecking=no root@${ACTIVE_IP} \
+            "cd /opt/traefik && docker compose restart traefik && echo 'Traefik restarted OK'"
+
       - name: Update Tailscale routes and exit node advertisement
         env:
           SUBNETS: "192.168.10.0/24,192.168.20.0/24,192.168.30.0/24,192.168.50.0/24"
