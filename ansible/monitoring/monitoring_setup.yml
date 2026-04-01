@@ -106,6 +106,12 @@
         enabled: yes
         state: started
 
+    - name: Add appadm to docker group
+      user:
+        name: appadm
+        groups: docker
+        append: yes
+
     # ── Monitoring directory structure ───────────────────────────────────────
 
     - name: Create monitoring base directory
