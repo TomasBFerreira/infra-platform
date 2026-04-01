@@ -78,6 +78,22 @@ jobs:
           echo "=== grafana-dev.databaes.net public DNS ==="
           dig +short grafana-dev.databaes.net @1.1.1.1 || echo "no record (expected)"
 
-          rm -f /tmp/nwkey
+          echo "=== Traefik static config (traefik.yml) on server ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "cat /opt/traefik/config/traefik.yml"
+
+          echo "=== Trigger ACME cert via SNI-correct HTTPS request ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -sk --resolve 'grafana-dev.databaes.net:443:127.0.0.1' https://grafana-dev.databaes.net/ -o /dev/null -w 'HTTP %{http_code} cert=%{ssl_verify_result}' && echo ''"
+
+          echo "=== AdGuard DNS rewrites (check grafana-dev) ==="
+          ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
+          ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
+          if [ -n "$ADGUARD_USER" ]; then
+            ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+              "curl -s -u '${ADGUARD_USER}:${ADGUARD_PASS}' http://127.0.0.1:3000/control/rewrite/list | python3 -c \"import json,sys; [print(r['domain'],'->',r['answer']) for r in json.load(sys.stdin)]\" 2>/dev/null | grep -i 'dev\|grafana' | head -20"
+          else
+            echo "No adguard creds in Vault"
+          fi
 
           rm -f /tmp/nwkey
