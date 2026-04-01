@@ -1,4 +1,4 @@
-name: Check and fix Cloudflare wildcard DNS
+name: Check Cloudflare DNS records
 
 on:
   workflow_dispatch:
