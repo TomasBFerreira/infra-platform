@@ -1,0 +1,151 @@
+name: Configure Dev Forward Auth (Authentik domain-level SSO)
+
+# Creates a forward_domain Proxy Provider in dev Authentik so ALL
+# *-dev.databaes.net services protected by the authentik-dev Traefik
+# middleware get SSO without needing individual per-service providers.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  configure:
+    runs-on: [self-hosted, dev]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+
+    steps:
+      - name: Check SSO is deployed
+        id: check-sso
+        run: |
+          if ! vault kv get secret/sso/dev/active-slot > /dev/null 2>&1; then
+            echo "Dev SSO not yet deployed — skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch SSH key and resolve SSO IP
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_key
+          chmod 600 /tmp/sso_key
+          SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
+          echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
+
+      - name: Get fresh Authentik API token
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          FRESH_TOKEN=$(ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
+          if [ -z "$FRESH_TOKEN" ]; then
+            echo "Could not get fresh token from Authentik — aborting"
+            exit 1
+          fi
+          echo "::add-mask::$FRESH_TOKEN"
+          echo "AUTHENTIK_TOKEN=$FRESH_TOKEN" >> $GITHUB_ENV
+
+      - name: Resolve auth and invalidation flows
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          AUTH_FLOW=$(curl -sf "http://${SSO_IP}:9000/api/v3/flows/instances/?designation=authorization" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+          INVALIDATION_FLOW=$(curl -sf "http://${SSO_IP}:9000/api/v3/flows/instances/?designation=invalidation" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+          echo "AUTH_FLOW=$AUTH_FLOW" >> $GITHUB_ENV
+          echo "INVALIDATION_FLOW=$INVALIDATION_FLOW" >> $GITHUB_ENV
+
+      - name: Create or update Dev Forward Auth Proxy Provider (domain-level)
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          EXISTING=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/proxy/?name=Dev+Forward+Auth" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          COUNT=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
+
+          if [ "$COUNT" -gt 0 ]; then
+            PROVIDER_PK=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+            echo "Dev Forward Auth Provider already exists (pk=$PROVIDER_PK)"
+          else
+            RESP=$(curl -sf -X POST "http://${SSO_IP}:9000/api/v3/providers/proxy/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"name\": \"Dev Forward Auth\",
+                \"authorization_flow\": \"$AUTH_FLOW\",
+                \"invalidation_flow\": \"$INVALIDATION_FLOW\",
+                \"mode\": \"forward_domain\",
+                \"external_host\": \"https://auth-dev.databaes.net\",
+                \"cookie_domain\": \"databaes.net\"
+              }")
+            PROVIDER_PK=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['pk'])")
+            echo "Created Dev Forward Auth Provider (pk=$PROVIDER_PK)"
+          fi
+
+          echo "PROVIDER_PK=$PROVIDER_PK" >> $GITHUB_ENV
+
+      - name: Create Dev Forward Auth Application (if missing)
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          EXISTING=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?slug=dev-forward-auth" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          COUNT=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
+
+          if [ "$COUNT" -gt 0 ]; then
+            echo "Dev Forward Auth Application already exists — skipping"
+          else
+            curl -sf -X POST "http://${SSO_IP}:9000/api/v3/core/applications/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"name\": \"Dev Forward Auth\",
+                \"slug\": \"dev-forward-auth\",
+                \"provider\": $PROVIDER_PK,
+                \"open_in_new_tab\": false
+              }" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Created Dev Forward Auth Application (slug='+r['slug']+')')"
+          fi
+
+      - name: Assign provider to embedded outpost
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          OUTPOST=$(curl -sf "http://${SSO_IP}:9000/api/v3/outposts/instances/?managed=goauthentik.io/outposts/embedded" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          OUTPOST_PK=$(echo "$OUTPOST" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+
+          ALREADY=$(echo "$OUTPOST" | python3 -c \
+            "import sys,json; providers=json.load(sys.stdin)['results'][0]['providers']; print('true' if $PROVIDER_PK in providers else 'false')")
+
+          if [ "$ALREADY" = "true" ]; then
+            echo "Dev Forward Auth already assigned to embedded outpost — done"
+          else
+            UPDATED=$(echo "$OUTPOST" | python3 -c \
+              "import sys,json; p=json.load(sys.stdin)['results'][0]['providers']; p.append($PROVIDER_PK); print(p)")
+            curl -sf -X PATCH "http://${SSO_IP}:9000/api/v3/outposts/instances/${OUTPOST_PK}/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"providers\": $UPDATED}" \
+              | python3 -c "import sys,json; r=json.load(sys.stdin); print('Outpost updated — providers:', r['providers'])"
+          fi
+
+      - name: Verify embedded outpost is reachable on port 9300
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+            "http://${SSO_IP}:9300/outpost.goauthentik.io/auth/traefik" \
+            -H "X-Forwarded-Host: grafana-dev.databaes.net" || echo "000")
+          echo "Outpost health check: HTTP $HTTP"
+          # 401 = outpost running and responding (unauthenticated request)
+          # 200 = already authenticated
+          if [ "$HTTP" = "000" ]; then
+            echo "WARNING: Embedded outpost not reachable on port 9300 — check Authentik LXC"
+            exit 1
+          fi
+          echo "Embedded outpost is reachable (HTTP $HTTP)"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/sso_key
