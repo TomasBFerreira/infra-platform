@@ -63,8 +63,12 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
             "curl -skI -H 'Host: grafana-dev.databaes.net' https://localhost:443/ 2>&1 | head -15"
 
-          echo "=== Cloudflare tunnel status ==="
+          echo "=== Cloudflare tunnel ingress rules ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
-            "systemctl status cloudflared --no-pager -l 2>&1 | head -15 || echo 'cloudflared not running'"
+            "cloudflared tunnel info 2>/dev/null | head -30 || cat /etc/cloudflared/config.yml 2>/dev/null || cat /root/.cloudflared/config.yml 2>/dev/null || echo 'no local config found'"
+
+          echo "=== cloudflared tunnel route list ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "cloudflared tunnel route list 2>&1 | head -30 || echo 'failed'"
 
           rm -f /tmp/nwkey
