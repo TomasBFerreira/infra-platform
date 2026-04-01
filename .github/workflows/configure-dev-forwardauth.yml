@@ -98,7 +98,7 @@ jobs:
           if [ "$COUNT" -gt 0 ]; then
             echo "Dev Forward Auth Application already exists — skipping"
           else
-            curl -sf -X POST "http://${SSO_IP}:9000/api/v3/core/applications/" \
+            RESP=$(curl -s -w "\n%{http_code}" -X POST "http://${SSO_IP}:9000/api/v3/core/applications/" \
               -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
               -H "Content-Type: application/json" \
               -d "{
@@ -106,7 +106,15 @@ jobs:
                 \"slug\": \"dev-forward-auth\",
                 \"provider\": $PROVIDER_PK,
                 \"open_in_new_tab\": false
-              }" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Created Dev Forward Auth Application (slug='+r['slug']+')')"
+              }")
+            HTTP_CODE=$(echo "$RESP" | tail -1)
+            BODY=$(echo "$RESP" | head -n -1)
+            echo "HTTP $HTTP_CODE: $BODY"
+            if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+              echo "ERROR: Application creation failed"
+              exit 1
+            fi
+            echo "$BODY" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Created Dev Forward Auth Application (slug='+r['slug']+')')"
           fi
 
       - name: Assign provider to embedded outpost
