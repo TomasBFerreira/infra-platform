@@ -49,8 +49,9 @@ jobs:
       - name: Fetch SSH key from Vault
         run: |
           vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
-            | awk 'NF > 0' > /tmp/network_vm_key
-          chmod 600 /tmp/network_vm_key
+            | awk 'NF > 0' > /tmp/network_vm_key_${GITHUB_RUN_ID}
+          chmod 600 /tmp/network_vm_key_${GITHUB_RUN_ID}
+          echo "SSH_KEY_PATH=/tmp/network_vm_key_${GITHUB_RUN_ID}" >> $GITHUB_ENV
 
       - name: Fetch secrets from Vault
         env:
@@ -76,7 +77,7 @@ jobs:
             -v \
             -e "ansible_host=${ACTIVE_IP}" \
             -e "ansible_user=root" \
-            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -i /tmp/network_vm_key'" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -i ${SSH_KEY_PATH}'" \
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
             -e "adguard_dev_rewrite_ip=${ACTIVE_IP}" \
@@ -87,17 +88,17 @@ jobs:
 
       - name: Restart Traefik to apply static config changes
         run: |
-          ssh -i /tmp/network_vm_key -o StrictHostKeyChecking=no root@${ACTIVE_IP} \
+          ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no root@${ACTIVE_IP} \
             "cd /opt/traefik && docker compose restart traefik && echo 'Traefik restarted OK'"
 
       - name: Update Tailscale routes and exit node advertisement
         env:
           SUBNETS: "192.168.10.0/24,192.168.20.0/24,192.168.30.0/24,192.168.50.0/24"
         run: |
-          ssh -i /tmp/network_vm_key -o StrictHostKeyChecking=no root@${ACTIVE_IP} \
+          ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no root@${ACTIVE_IP} \
             "tailscale up --advertise-routes=${SUBNETS} --advertise-exit-node || true"
           echo "Tailscale routes + exit node updated"
 
       - name: Cleanup
         if: always()
-        run: rm -f /tmp/network_vm_key
+        run: rm -f ${SSH_KEY_PATH} /tmp/network_vm_key_* 2>/dev/null || true
