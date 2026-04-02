@@ -1,0 +1,42 @@
+name: Test devops-portal connectivity
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: [self-hosted, dev]
+    steps:
+      - name: Test devops-portal via Traefik and direct
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nvmkey && chmod 600 /tmp/nvmkey
+
+          echo "=== Direct backend health (bypass Traefik) ==="
+          curl -sf --max-time 10 http://192.168.20.11:30085/api/health \
+            && echo " — OK" || echo " — FAILED"
+
+          echo "=== HTTPS via Traefik (SNI-correct) ==="
+          curl -sk --max-time 20 \
+            --resolve devops-portal-dev.databaes.net:443:192.168.20.55 \
+            https://devops-portal-dev.databaes.net/api/health \
+            -o /dev/null -w "HTTP %{http_code}\n"
+
+          echo "=== TLS cert served for devops-portal-dev ==="
+          echo Q | openssl s_client -connect 192.168.20.55:443 \
+            -servername devops-portal-dev.databaes.net 2>&1 \
+            | grep -E "subject|issuer|notAfter|CN=|verify" | head -8
+
+          echo "=== AdGuard DNS rewrite resolves? ==="
+          ssh -i /tmp/nvmkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "curl -s http://127.0.0.1:3000/control/rewrite/list 2>/dev/null \
+             | python3 -c \"import json,sys; [print(r['domain'],'->', r['answer']) for r in json.load(sys.stdin) if 'devops-portal' in r['domain']]\" 2>/dev/null || echo 'adguard not reachable'"
+
+          echo "=== Traefik recent errors for devops-portal ==="
+          ssh -i /tmp/nvmkey -o StrictHostKeyChecking=no root@192.168.20.55 \
+            "docker logs traefik 2>&1 | grep -i 'devops-portal\|acme.*devops' | tail -10"
+
+          rm -f /tmp/nvmkey
