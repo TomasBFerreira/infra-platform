@@ -47,19 +47,34 @@ jobs:
           curl -s -o /dev/null -w "wikijs (192.168.20.11:3000): %{http_code}\n" --connect-timeout 5 http://192.168.20.11:3000/ || echo "wikijs: unreachable/timeout"
 
           echo ""
+          echo "=== Traefik API routers (dev) ==="
+          curl -s http://localhost:8080/api/http/routers | python3 -c "
+import json, sys
+routers = json.load(sys.stdin)
+for r in sorted(routers, key=lambda x: x.get('name','')):
+    if 'dev' in r.get('name','').lower():
+        print(r.get('name'), '|', r.get('entryPoints','?'), '|', r.get('status','?'))
+" 2>/dev/null || echo "API unavailable"
+
+          echo ""
           echo "=== Traefik ForwardAuth tests ==="
-          curl -sI -H 'Host: vault-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -5
-          curl -sI -H 'Host: rancher-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -5
-          curl -sI -H 'Host: wikijs-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -5
+          curl -sI -H 'Host: vault-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -3
+          curl -sI -H 'Host: rancher-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -3
+          curl -sI -H 'Host: wikijs-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -3
+          curl -skI -H 'Host: vault-dev.databaes.net' --connect-timeout 5 https://localhost:443/ 2>&1 | head -3
+
+          echo ""
+          echo "=== services.yml stats on server ==="
+          sha1sum /opt/traefik/config/dynamic/services.yml
+          grep -c "websecure" /opt/traefik/config/dynamic/services.yml || echo "0 websecure"
+
+          echo ""
+          echo "=== Traefik error logs ==="
+          docker logs traefik 2>&1 | grep -iE "error|warn|level=error|level=warn" | tail -10
 
           echo ""
           echo "=== cloudflared status ==="
           systemctl is-active cloudflared
-          journalctl -u cloudflared -n 5 --no-pager
-
-          echo ""
-          echo "=== Traefik logs (last 20) ==="
-          docker logs traefik --tail 20 2>&1
           EOF
 
       - name: Check Tailscale routing status
