@@ -433,15 +433,90 @@ jobs:
         if: always()
         run: rm -f /tmp/sso_backup_key
 
+  update-traefik:
+    # After flipping the active slot, update the Traefik forwardAuth address and
+    # the outpost load-balancer in traefik-gitops to point to the new active IP,
+    # then apply via Update Network-VM Services. Without this step, Traefik keeps
+    # calling the old (now torn-down) slot's IP, breaking SSO for all dev services.
+    needs: [resolve-slots, flip-active]
+    if: always() && needs.flip-active.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      ENV:        ${{ needs.resolve-slots.outputs.environment }}
+      NEW_IP:     ${{ needs.resolve-slots.outputs.staging_ip }}
+      GH_TOKEN:   ${{ secrets.GH_PAT }}
+    steps:
+      - name: Checkout traefik-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: TomasBFerreira/traefik-gitops
+          token: ${{ secrets.GH_PAT }}
+          path: traefik-gitops
+
+      - name: Update forwardAuth and outpost service IPs
+        working-directory: traefik-gitops
+        run: |
+          python3 - <<'EOF'
+          import yaml, os, re
+
+          path = "config/dynamic/services.yml"
+          with open(path) as f:
+              cfg = yaml.safe_load(f) or {}
+
+          env     = os.environ["ENV"]
+          new_ip  = os.environ["NEW_IP"]
+          mw_key  = f"authentik-{env}"
+          svc_key = f"auth-{env}-outpost-service"
+
+          # Update forwardAuth address to new active IP
+          mw = cfg.get("http", {}).get("middlewares", {}).get(mw_key, {})
+          fa = mw.get("forwardAuth", {})
+          old_addr = fa.get("address", "")
+          if old_addr:
+              new_addr = re.sub(r"https?://[^/]+", f"http://{new_ip}:9300", old_addr)
+              fa["address"] = new_addr
+              print(f"forwardAuth: {old_addr} → {new_addr}")
+
+          # Update outpost load-balancer servers to new active IP only
+          svc = cfg.get("http", {}).get("services", {}).get(svc_key, {})
+          lb  = svc.get("loadBalancer", {})
+          old_servers = lb.get("servers", [])
+          lb["servers"] = [{"url": f"http://{new_ip}:9300"}]
+          print(f"outpost servers: {old_servers} → {lb['servers']}")
+
+          with open(path, "w") as f:
+              yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+          EOF
+
+      - name: Push update to traefik-gitops
+        working-directory: traefik-gitops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add config/dynamic/services.yml
+          if git diff --staged --quiet; then
+            echo "No Traefik config changes needed"
+          else
+            git commit -m "chore: update SSO forwardAuth to active slot ${{ needs.resolve-slots.outputs.staging_slot }} (${{ needs.resolve-slots.outputs.staging_ip }})"
+            git push
+          fi
+
+      - name: Apply Traefik config via Update Network-VM Services
+        run: |
+          gh workflow run "Update Network-VM Services (no reprovision)" \
+            --repo TomasBFerreira/infra-platform \
+            --field environment=${{ needs.resolve-slots.outputs.environment }}
+
   teardown-old-active:
-    needs: [resolve-slots, flip-active, backup-db, configure-vault-oidc, configure-bootstrap-vault-oidc]
+    needs: [resolve-slots, flip-active, backup-db, configure-vault-oidc, configure-bootstrap-vault-oidc, update-traefik]
     if: >-
       always() &&
       needs.resolve-slots.outputs.first_run == 'false' &&
       needs.flip-active.result == 'success' &&
       (needs.backup-db.result == 'success' || needs.backup-db.result == 'failure') &&
       (needs.configure-vault-oidc.result == 'success' || needs.configure-vault-oidc.result == 'failure') &&
-      (needs.configure-bootstrap-vault-oidc.result == 'success' || needs.configure-bootstrap-vault-oidc.result == 'failure')
+      (needs.configure-bootstrap-vault-oidc.result == 'success' || needs.configure-bootstrap-vault-oidc.result == 'failure') &&
+      (needs.update-traefik.result == 'success' || needs.update-traefik.result == 'failure')
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:         ${{ needs.resolve-slots.outputs.environment }}
