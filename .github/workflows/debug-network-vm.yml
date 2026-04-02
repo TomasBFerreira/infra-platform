@@ -38,6 +38,21 @@ jobs:
           curl -s -o /dev/null -w "dev-green: %{http_code}\n" http://192.168.20.46:8200/v1/sys/health || echo "dev-green: unreachable"
 
           echo ""
+          echo "=== Rancher reachability from this host ==="
+          curl -sk -o /dev/null -w "rancher (192.168.20.2:443): %{http_code}\n" --connect-timeout 5 https://192.168.20.2/ || echo "rancher: unreachable/timeout"
+          curl -sk -o /dev/null -w "rancher v3 ping: %{http_code}\n" --connect-timeout 5 https://192.168.20.2/v3 || echo "rancher v3: unreachable/timeout"
+
+          echo ""
+          echo "=== WikiJS backend from this host ==="
+          curl -s -o /dev/null -w "wikijs (192.168.20.11:3000): %{http_code}\n" --connect-timeout 5 http://192.168.20.11:3000/ || echo "wikijs: unreachable/timeout"
+
+          echo ""
+          echo "=== Traefik ForwardAuth tests ==="
+          curl -sI -H 'Host: vault-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -5
+          curl -sI -H 'Host: rancher-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -5
+          curl -sI -H 'Host: wikijs-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -5
+
+          echo ""
           echo "=== cloudflared status ==="
           systemctl is-active cloudflared
           journalctl -u cloudflared -n 5 --no-pager
