@@ -14,6 +14,7 @@ adguard_dev_rewrites:
   - domain: vault-dev.databaes.net
   - domain: kumadev.databaes.net
   - domain: databaes-status-api-dev.databaes.net
+  - domain: devops-portal-dev.databaes.net
   - domain: overseerr-dev.databaes.net
   - domain: prowlarr-dev.databaes.net
   - domain: radarr-dev.databaes.net
