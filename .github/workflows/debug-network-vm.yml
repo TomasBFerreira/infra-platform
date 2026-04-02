@@ -48,18 +48,11 @@ jobs:
 
           echo ""
           echo "=== Traefik API routers (dev) ==="
-          curl -s http://localhost:8080/api/http/routers | python3 -c "
-import json, sys
-routers = json.load(sys.stdin)
-for r in sorted(routers, key=lambda x: x.get('name','')):
-    if 'dev' in r.get('name','').lower():
-        print(r.get('name'), '|', r.get('entryPoints','?'), '|', r.get('status','?'))
-" 2>/dev/null || echo "API unavailable"
+          curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -c "import json,sys; [print(r.get('name'),'|',r.get('entryPoints'),'|',r.get('status')) for r in json.load(sys.stdin) if 'dev' in r.get('name','').lower()]" || echo "API unavailable"
 
           echo ""
           echo "=== Traefik ForwardAuth tests ==="
           curl -sI -H 'Host: vault-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -3
-          curl -sI -H 'Host: rancher-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -3
           curl -sI -H 'Host: wikijs-dev.databaes.net' --connect-timeout 5 http://localhost:80/ 2>&1 | head -3
           curl -skI -H 'Host: vault-dev.databaes.net' --connect-timeout 5 https://localhost:443/ 2>&1 | head -3
 
@@ -70,7 +63,7 @@ for r in sorted(routers, key=lambda x: x.get('name','')):
 
           echo ""
           echo "=== Traefik error logs ==="
-          docker logs traefik 2>&1 | grep -iE "error|warn|level=error|level=warn" | tail -10
+          docker logs traefik 2>&1 | grep -iE "error|warn|level=error" | tail -10
 
           echo ""
           echo "=== cloudflared status ==="
