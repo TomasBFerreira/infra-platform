@@ -63,12 +63,13 @@ jobs:
       - name: Create or update Dev Forward Auth Proxy Provider (domain-level)
         if: steps.check-sso.outputs.skip != 'true'
         run: |
-          EXISTING=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/proxy/?name=Dev+Forward+Auth" \
+          # Fetch all proxy providers and filter in Python — Authentik's ?name= filter is not exact-match
+          ALL_PROVIDERS=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/proxy/?page_size=100" \
             -H "Authorization: Bearer $AUTHENTIK_TOKEN")
-          COUNT=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
+          PROVIDER_PK=$(echo "$ALL_PROVIDERS" | python3 -c \
+            "import sys,json; r=json.load(sys.stdin); m=[p for p in r['results'] if p['name']=='Dev Forward Auth' and p['mode']=='forward_domain']; print(m[0]['pk'] if m else '0')")
 
-          if [ "$COUNT" -gt 0 ]; then
-            PROVIDER_PK=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+          if [ "$PROVIDER_PK" != "0" ]; then
             echo "Dev Forward Auth Provider already exists (pk=$PROVIDER_PK)"
           else
             RESP=$(curl -sf -X POST "http://${SSO_IP}:9000/api/v3/providers/proxy/" \
@@ -91,18 +92,20 @@ jobs:
       - name: Create Dev Forward Auth Application (if missing)
         if: steps.check-sso.outputs.skip != 'true'
         run: |
-          # Check by slug first
-          EXISTING=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?slug=dev-forward-auth" \
+          # Fetch all applications and filter in Python — Authentik's ?slug= filter is not reliable
+          ALL_APPS=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?page_size=100" \
             -H "Authorization: Bearer $AUTHENTIK_TOKEN")
-          COUNT=$(echo "$EXISTING" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
+          SLUG_MATCH=$(echo "$ALL_APPS" | python3 -c \
+            "import sys,json; r=json.load(sys.stdin); m=[a for a in r['results'] if a['slug']=='dev-forward-auth']; print(m[0]['slug'] if m else '0')")
 
-          if [ "$COUNT" -gt 0 ]; then
+          if [ "$SLUG_MATCH" != "0" ]; then
             echo "Dev Forward Auth Application already exists (by slug) — skipping"
           else
-            # Check if any Application is already bound to this Provider
-            BY_PROVIDER=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?provider=$PROVIDER_PK" \
+            # Check if any Application is already bound to this Provider (exact provider match)
+            BY_PROVIDER=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?page_size=100" \
               -H "Authorization: Bearer $AUTHENTIK_TOKEN")
-            PCOUNT=$(echo "$BY_PROVIDER" | python3 -c "import sys,json; print(json.load(sys.stdin)['pagination']['count'])")
+            PCOUNT=$(echo "$BY_PROVIDER" | python3 -c \
+              "import sys,json; r=json.load(sys.stdin); m=[a for a in r['results'] if a.get('provider')==$PROVIDER_PK]; print(len(m))")
 
             if [ "$PCOUNT" -gt 0 ]; then
               APP_SLUG=$(echo "$BY_PROVIDER" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['slug'])")
@@ -153,17 +156,24 @@ jobs:
       - name: Verify embedded outpost is reachable on port 9300
         if: steps.check-sso.outputs.skip != 'true'
         run: |
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+          # Give Authentik a moment to reload the outpost config
+          sleep 5
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
             "http://${SSO_IP}:9300/outpost.goauthentik.io/auth/traefik" \
-            -H "X-Forwarded-Host: grafana-dev.databaes.net" || echo "000")
+            -H "X-Forwarded-Host: grafana-dev.databaes.net" \
+            -H "X-Forwarded-Proto: https" || echo "000")
           echo "Outpost health check: HTTP $HTTP"
-          # 401 = outpost running and responding (unauthenticated request)
+          # 302/401 = outpost running and responding (unauthenticated request redirects to login)
           # 200 = already authenticated
+          # 404 = outpost has no matching provider for this domain (config not loaded yet)
           if [ "$HTTP" = "000" ]; then
-            echo "WARNING: Embedded outpost not reachable on port 9300 — check Authentik LXC"
+            echo "ERROR: Embedded outpost not reachable on port 9300"
+            exit 1
+          elif [ "$HTTP" = "404" ]; then
+            echo "ERROR: Outpost returned 404 — provider config not loaded. Check Authentik logs."
             exit 1
           fi
-          echo "Embedded outpost is reachable (HTTP $HTTP)"
+          echo "Embedded outpost is working correctly (HTTP $HTTP)"
 
       - name: Cleanup
         if: always()
