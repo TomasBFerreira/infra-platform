@@ -153,27 +153,32 @@ jobs:
               | python3 -c "import sys,json; r=json.load(sys.stdin); print('Outpost updated — providers:', r['providers'])"
           fi
 
-      - name: Verify embedded outpost is reachable on port 9300
+      - name: Verify ForwardAuth via Authentik main server (port 9000)
         if: steps.check-sso.outputs.skip != 'true'
         run: |
-          # Give Authentik a moment to reload the outpost config
+          # forward_domain mode must be tested via port 9000 (main Authentik server),
+          # not port 9300 (embedded outpost listener which only handles forward_single).
+          # Traefik's authentik-dev middleware now points to port 9000.
           sleep 5
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-            "http://${SSO_IP}:9300/outpost.goauthentik.io/auth/traefik" \
-            -H "X-Forwarded-Host: grafana-dev.databaes.net" \
+            "http://${SSO_IP}:9000/outpost.goauthentik.io/auth/traefik" \
+            -H "X-Forwarded-Host: devops-portal-dev.databaes.net" \
             -H "X-Forwarded-Proto: https" || echo "000")
-          echo "Outpost health check: HTTP $HTTP"
-          # 302/401 = outpost running and responding (unauthenticated request redirects to login)
+          echo "ForwardAuth health check (port 9000): HTTP $HTTP"
+          # 302 = unauthenticated redirect to login (expected)
           # 200 = already authenticated
-          # 404 = outpost has no matching provider for this domain (config not loaded yet)
+          # 401 = outpost responded but rejected (acceptable)
+          # 000 = connection failed
+          # 404 = no matching provider for this domain
           if [ "$HTTP" = "000" ]; then
-            echo "ERROR: Embedded outpost not reachable on port 9300"
+            echo "ERROR: Authentik not reachable on port 9000"
             exit 1
           elif [ "$HTTP" = "404" ]; then
-            echo "ERROR: Outpost returned 404 — provider config not loaded. Check Authentik logs."
+            echo "ERROR: ForwardAuth returned 404 — no matching provider for devops-portal-dev.databaes.net"
+            echo "Expected: forward_domain provider with cookie_domain=databaes.net should catch this"
             exit 1
           fi
-          echo "Embedded outpost is working correctly (HTTP $HTTP)"
+          echo "ForwardAuth is working correctly (HTTP $HTTP)"
 
       - name: Cleanup
         if: always()
