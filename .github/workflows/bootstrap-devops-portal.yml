@@ -1,0 +1,61 @@
+name: Bootstrap devops-portal secrets
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bootstrap:
+    runs-on: [self-hosted, dev]
+    steps:
+      - name: Copy secrets to devops-portal
+        run: |
+          apt-get install -y -q python3-nacl 2>/dev/null || true
+          python3 - <<'PYEOF'
+          import os, base64, json
+          import urllib.request
+          from nacl import encoding, public
+
+          gh_token = os.environ["GH_PAT"]
+          vault_token = os.environ["VAULT_TOKEN"]
+          vault_addr = os.environ["VAULT_ADDR"]
+          repos_json = os.environ["REPOS_JSON"]
+          repo = "TomasBFerreira/devops-portal"
+
+          def get_pub_key(repo):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
+                  headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github+json"}
+              )
+              return json.load(urllib.request.urlopen(req))
+
+          def set_secret(repo, name, value, key_data):
+              key_id = key_data["key_id"]
+              pub_key = public.PublicKey(key_data["key"].encode(), encoding.Base64Encoder)
+              box = public.SealedBox(pub_key)
+              encrypted = base64.b64encode(box.encrypt(value.encode())).decode()
+              payload = json.dumps({"encrypted_value": encrypted, "key_id": key_id}).encode()
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/secrets/{name}",
+                  data=payload, method="PUT",
+                  headers={
+                      "Authorization": f"Bearer {gh_token}",
+                      "Accept": "application/vnd.github+json",
+                      "Content-Type": "application/json"
+                  }
+              )
+              urllib.request.urlopen(req)
+              print(f"  ✓ {name}")
+
+          key_data = get_pub_key(repo)
+          print(f"Setting secrets on {repo}:")
+          set_secret(repo, "VAULT_BOOTSTRAP_ROOT_TOKEN", vault_token, key_data)
+          set_secret(repo, "VAULT_BOOTSTRAP_ADDR",       vault_addr,  key_data)
+          set_secret(repo, "GH_PAT",                     gh_token,    key_data)
+          set_secret(repo, "GITHUB_REPOS_JSON",           repos_json,  key_data)
+          print("Done.")
+          PYEOF
+        env:
+          GH_PAT:       ${{ secrets.GH_PAT }}
+          VAULT_TOKEN:  ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_ADDR:   ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          REPOS_JSON:   '[{"owner":"TomasBFerreira","repo":"wikijs","displayName":"Wiki.js"},{"owner":"TomasBFerreira","repo":"databaes-landing-page","displayName":"Landing Page"},{"owner":"TomasBFerreira","repo":"databaes-status-api","displayName":"Status API"},{"owner":"TomasBFerreira","repo":"nextcloud","displayName":"Nextcloud"},{"owner":"TomasBFerreira","repo":"media-stack","displayName":"Media Stack"}]'
