@@ -181,10 +181,10 @@
 
     - name: Parse Grafana OIDC credential facts
       set_fact:
-        _grafana_oidc_client_id: "{{ grafana_oidc_raw.stdout | regex_search('client_id=(.+)', '\\1') | first | default('') }}"
-        _grafana_oidc_client_secret: "{{ grafana_oidc_raw.stdout | regex_search('client_secret=(.+)', '\\1') | first | default('') }}"
-        _grafana_oidc_sso_host: "{{ grafana_oidc_raw.stdout | regex_search('sso_host=(.+)', '\\1') | first | default('') }}"
-        _grafana_oidc_enabled: "{{ grafana_oidc_raw.stdout | regex_search('oidc_enabled=(.+)', '\\1') | first | default('false') }}"
+        _grafana_oidc_client_id: "{{ (grafana_oidc_raw.stdout | regex_search('client_id=(.+)', '\\1') or ['']) | first }}"
+        _grafana_oidc_client_secret: "{{ (grafana_oidc_raw.stdout | regex_search('client_secret=(.+)', '\\1') or ['']) | first }}"
+        _grafana_oidc_sso_host: "{{ (grafana_oidc_raw.stdout | regex_search('sso_host=(.+)', '\\1') or ['']) | first }}"
+        _grafana_oidc_enabled: "{{ (grafana_oidc_raw.stdout | regex_search('oidc_enabled=(.+)', '\\1') or ['false']) | first }}"
       no_log: true
 
     - name: Write monitoring .env file
