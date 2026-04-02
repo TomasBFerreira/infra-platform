@@ -91,6 +91,22 @@ jobs:
           echo "::add-mask::$ROOT_TOKEN"
           echo "VAULT_TOKEN=$ROOT_TOKEN" >> $GITHUB_ENV
 
+      - name: Add DNS resolution for Authentik on Vault LXC (dev only)
+        if: steps.check-sso.outputs.skip != 'true' && inputs.environment == 'dev'
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          # The dev Vault LXC can't resolve auth-dev.databaes.net via external DNS.
+          # Add a /etc/hosts entry pointing to the Traefik network-vm (192.168.20.55)
+          # so Vault can fetch the OIDC discovery URL server-to-server.
+          NW_IP=$(vault kv get -field=ip secret/network_vm/dev/active-slot 2>/dev/null || echo "192.168.20.55")
+          ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no root@"$VAULT_IP" \
+            "grep -q 'auth-dev.databaes.net' /etc/hosts \
+              || echo '$NW_IP auth-dev.databaes.net' >> /etc/hosts \
+              && grep 'auth-dev.databaes.net' /etc/hosts"
+          echo "Ensured auth-dev.databaes.net resolves to $NW_IP on Vault LXC"
+
       - name: Patch discovery_url to public HTTPS URL
         if: steps.check-sso.outputs.skip != 'true'
         run: |
