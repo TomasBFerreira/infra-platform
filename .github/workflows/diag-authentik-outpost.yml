@@ -1,0 +1,64 @@
+name: Diagnose Authentik Outpost
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, dev]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - name: SSH into Authentik CT and diagnose outpost
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_key
+          chmod 600 /tmp/sso_key
+          SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
+
+          echo "=== Docker containers ==="
+          ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
+
+          echo "=== Test forwardAuth from inside the CT ==="
+          ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "curl -sv --max-time 5 \
+              -H 'X-Original-URL: https://grafana-dev.databaes.net/' \
+              -H 'X-Forwarded-Host: grafana-dev.databaes.net' \
+              -H 'X-Forwarded-Proto: https' \
+              http://localhost:9300/outpost.goauthentik.io/auth/traefik 2>&1 | grep -E 'HTTP|< |> |location'"
+
+          echo "=== Last 50 authentik-server logs ==="
+          ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker logs authentik-server --tail 50 2>&1 | grep -i 'outpost\|proxy\|404\|error\|warn' | tail -30"
+
+          echo "=== Outpost providers via API ==="
+          FRESH_TOKEN=$(ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
+          echo "::add-mask::$FRESH_TOKEN"
+
+          curl -sf "http://${SSO_IP}:9000/api/v3/outposts/instances/?managed=goauthentik.io/outposts/embedded" \
+            -H "Authorization: Bearer $FRESH_TOKEN" | python3 -c "
+import sys,json
+r=json.load(sys.stdin)
+for o in r['results']:
+  print('Outpost:', o['name'], '| providers:', o['providers'])
+  config = o.get('config', {})
+  print('  authentik_host:', config.get('authentik_host'))
+  print('  log_level:', config.get('log_level'))
+"
+
+          echo "=== Proxy providers ==="
+          curl -sf "http://${SSO_IP}:9000/api/v3/providers/proxy/" \
+            -H "Authorization: Bearer $FRESH_TOKEN" | python3 -c "
+import sys,json
+r=json.load(sys.stdin)
+for p in r['results']:
+  print('Provider:', p['pk'], p['name'], '| mode:', p['mode'], '| external_host:', p.get('external_host',''), '| cookie_domain:', p.get('cookie_domain',''))
+"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/sso_key
