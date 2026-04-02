@@ -7,26 +7,35 @@ jobs:
   test:
     runs-on: [self-hosted, dev]
     steps:
-      - name: Test devops-portal and Authentik
+      - name: Test devops-portal, Authentik, and SSO flow
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
+          echo "=== Vault active SSO slot ==="
+          vault kv get secret/sso/dev/active-slot || echo "FAILED to read vault"
+
           echo "=== Direct backend health ==="
           curl -sf --max-time 5 http://192.168.20.11:30085/api/health && echo " OK" || echo " FAILED"
 
-          echo "=== Authentik outpost (192.168.20.75:9300) ==="
-          curl -sf --max-time 5 http://192.168.20.75:9300/outpost.goauthentik.io/ping \
+          echo "=== Authentik .75 outpost forwardAuth path ==="
+          curl -sf --max-time 5 \
+            -H "X-Original-URL: https://devops-portal-dev.databaes.net/" \
+            http://192.168.20.75:9300/outpost.goauthentik.io/auth/traefik \
             -o /dev/null -w "HTTP %{http_code}\n" || echo "UNREACHABLE"
 
-          echo "=== Authentik outpost (192.168.20.76:9300) ==="
-          curl -sf --max-time 5 http://192.168.20.76:9300/outpost.goauthentik.io/ping \
-            -o /dev/null -w "HTTP %{http_code}\n" || echo "UNREACHABLE"
-
-          echo "=== Authentik main app (192.168.20.75:9000) ==="
+          echo "=== Authentik .75 main app ==="
           curl -sf --max-time 5 http://192.168.20.75:9000/-/health/ready/ \
             -o /dev/null -w "HTTP %{http_code}\n" || echo "UNREACHABLE"
 
-          echo "=== Authentik main app (192.168.20.76:9000) ==="
+          echo "=== Authentik .76 main app ==="
           curl -sf --max-time 5 http://192.168.20.76:9000/-/health/ready/ \
             -o /dev/null -w "HTTP %{http_code}\n" || echo "UNREACHABLE"
+
+          echo "=== Traefik forwardAuth test (HTTPS) ==="
+          curl -sk --max-time 15 \
+            --resolve devops-portal-dev.databaes.net:443:192.168.20.55 \
+            https://devops-portal-dev.databaes.net/api/health \
+            -o /dev/null -w "HTTP %{http_code}\n"
+
+          echo "=== If 302: SSO is working (redirecting to Authentik login) ==="
