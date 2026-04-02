@@ -145,6 +145,48 @@
 
     # ── Environment file ─────────────────────────────────────────────────────
 
+    # Read Grafana OIDC credentials from bootstrap Vault if available.
+    # The SSO pipeline writes these after Authentik is deployed.
+    # Safe to skip: if the secret is absent, OIDC vars are left blank and
+    # Grafana falls back to local admin auth (GF_AUTH_GENERIC_OAUTH_ENABLED=false).
+    - name: Read Grafana OIDC credentials from bootstrap Vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        CLIENT_ID=$(VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+                    VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                    vault kv get -field=client_id secret/authentik/{{ deploy_env }}/grafana-oidc 2>/dev/null || true)
+        CLIENT_SECRET=$(VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+                        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                        vault kv get -field=client_secret secret/authentik/{{ deploy_env }}/grafana-oidc 2>/dev/null || true)
+        SSO_HOST=$(VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+                   VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+                   vault kv get -field=discovery_url secret/authentik/{{ deploy_env }}/grafana-oidc 2>/dev/null \
+                   | sed 's|/application/o/grafana/||' || true)
+        if [ -n "$CLIENT_ID" ]; then
+          echo "client_id=$CLIENT_ID"
+          echo "client_secret=$CLIENT_SECRET"
+          echo "sso_host=$SSO_HOST"
+          echo "oidc_enabled=true"
+        else
+          echo "client_id="
+          echo "client_secret="
+          echo "sso_host="
+          echo "oidc_enabled=false"
+          echo "SKIP: secret/authentik/{{ deploy_env }}/grafana-oidc not found (run SSO pipeline first)" >&2
+        fi
+      register: grafana_oidc_raw
+      changed_when: false
+      no_log: true
+
+    - name: Parse Grafana OIDC credential facts
+      set_fact:
+        _grafana_oidc_client_id: "{{ grafana_oidc_raw.stdout | regex_search('client_id=(.+)', '\\1') | first | default('') }}"
+        _grafana_oidc_client_secret: "{{ grafana_oidc_raw.stdout | regex_search('client_secret=(.+)', '\\1') | first | default('') }}"
+        _grafana_oidc_sso_host: "{{ grafana_oidc_raw.stdout | regex_search('sso_host=(.+)', '\\1') | first | default('') }}"
+        _grafana_oidc_enabled: "{{ grafana_oidc_raw.stdout | regex_search('oidc_enabled=(.+)', '\\1') | first | default('false') }}"
+      no_log: true
+
     - name: Write monitoring .env file
       copy:
         dest: "{{ monitoring_dir }}/.env"
@@ -154,6 +196,10 @@
         content: |
           GRAFANA_ADMIN_PASSWORD={{ grafana_admin_password }}
           DEPLOY_ENV={{ deploy_env }}
+          GRAFANA_OIDC_ENABLED={{ _grafana_oidc_enabled }}
+          GRAFANA_OIDC_CLIENT_ID={{ _grafana_oidc_client_id }}
+          GRAFANA_OIDC_CLIENT_SECRET={{ _grafana_oidc_client_secret }}
+          GRAFANA_OIDC_SSO_HOST={{ _grafana_oidc_sso_host }}
 
     - name: Symlink .env into repo directory
       file:

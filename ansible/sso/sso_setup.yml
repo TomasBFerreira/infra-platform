@@ -590,6 +590,119 @@
             discovery_url="{{ _sso_host_browser }}/application/o/vault/"
       no_log: true
 
+    # ── Authentik API — configure Grafana OIDC provider ──────────────────────
+    # Grafana uses Generic OAuth (GF_AUTH_GENERIC_OAUTH_*) which is standard OIDC.
+    # Credentials are written to Vault so the monitoring pipeline can inject them
+    # into the Grafana docker-compose .env at deploy time.
+
+    - name: Check if Grafana OAuth2 provider already exists
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/?name=Grafana"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_grafana_provider
+
+    - name: Set Grafana resource facts
+      set_fact:
+        _grafana_provider_exists: "{{ existing_grafana_provider.json.pagination.count > 0 }}"
+        _existing_grafana_client_id: "{{ existing_grafana_provider.json.results[0].client_id | default('') }}"
+        _existing_grafana_client_secret: "{{ existing_grafana_provider.json.results[0].client_secret | default('') }}"
+        _existing_grafana_provider_pk: "{{ existing_grafana_provider.json.results[0].pk | default('') }}"
+        _grafana_redirect_uris:
+          - {url: "https://grafana.databaes.net/login/generic_oauth", matching_mode: "strict"}
+          - {url: "https://grafana-dev.databaes.net/login/generic_oauth", matching_mode: "strict"}
+
+    - name: Create Grafana OAuth2 provider in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Grafana"
+          client_type: "confidential"
+          redirect_uris: "{{ _grafana_redirect_uris }}"
+          sub_mode: "user_id"
+          include_claims_in_id_token: true
+          signing_key: "{{ _signing_key }}"
+          authorization_flow: "{{ _auth_flow }}"
+          invalidation_flow: "{{ _invalidation_flow }}"
+          property_mappings: "{{ _scope_mappings }}"
+        status_code: 201
+      register: created_grafana_provider
+      when: not _grafana_provider_exists
+
+    - name: Update Grafana OAuth2 provider redirect URIs in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/{{ _existing_grafana_provider_pk }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          redirect_uris: "{{ _grafana_redirect_uris }}"
+        status_code: 200
+      when: _grafana_provider_exists
+
+    - name: Resolve final Grafana provider facts
+      set_fact:
+        _grafana_provider_pk: "{{ created_grafana_provider.json.pk if not _grafana_provider_exists else _existing_grafana_provider_pk }}"
+        _grafana_client_id: "{{ created_grafana_provider.json.client_id if not _grafana_provider_exists else _existing_grafana_client_id }}"
+        _grafana_client_secret: "{{ created_grafana_provider.json.client_secret if not _grafana_provider_exists else _existing_grafana_client_secret }}"
+
+    - name: Check if Grafana application already exists
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/?slug=grafana"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_grafana_app
+
+    - name: Create Grafana application in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Grafana"
+          slug: "grafana"
+          provider: "{{ _grafana_provider_pk }}"
+          open_in_new_tab: true
+        status_code: 201
+      when: existing_grafana_app.json.pagination.count == 0
+
+    - name: Store Grafana OIDC credentials in env vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
+            ;;
+          prod)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
+            ;;
+        esac
+        vault kv put secret/authentik/grafana-oidc \
+          client_id="{{ _grafana_client_id }}" \
+          client_secret="{{ _grafana_client_secret }}" \
+          sso_ip="{{ ansible_host }}" \
+          discovery_url="{{ _sso_host_browser }}/application/o/grafana/"
+
+        # Also write to bootstrap vault so monitoring pipeline re-runs can re-seed this secret
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+          vault kv put secret/authentik/{{ vault_env | default('dev') }}/grafana-oidc \
+            client_id="{{ _grafana_client_id }}" \
+            client_secret="{{ _grafana_client_secret }}" \
+            sso_ip="{{ ansible_host }}" \
+            discovery_url="{{ _sso_host_browser }}/application/o/grafana/"
+      no_log: true
+
     # ── Authentik API — configure WikiJS Proxy provider ──────────────────────
     # WikiJS is gated by the Traefik authentik-dev/prod forwardAuth middleware.
     # A Proxy Provider (forward_single mode) must exist in Authentik and be

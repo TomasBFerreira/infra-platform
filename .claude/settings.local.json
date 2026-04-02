@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh workflow:*)",
+      "Bash(gh run:*)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(gh api:*)",
+      "Bash(git -C /app/infra-platform log --oneline ansible/sso/sso_setup.yml)",
+      "Bash(git:*)",
+      "Bash(gh pr:*)",
+      "Bash(xargs -I{} git -C /app/traefik-gitops show {}:config/dynamic/services.yml)",
+      "Bash(echo \"DNS_EXIT:$?\")",
+      "Bash(echo \"OIDC_EXIT:$?\")",
+      "Bash(curl:*)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k\\) for k in d.get\\(''''routers'''',{}\\).keys\\(\\)]\")",
+      "Bash(ssh -o StrictHostKeyChecking=no -i /tmp/sso_worker_key root@192.168.50.247 \"docker logs authentik-server --tail 50 2>&1\")",
+      "Bash(ls /tmp/sso*)",
+      "Bash(xargs -I{} gh api repos/TomasBFerreira/infra-platform/actions/jobs/{}/logs)",
+      "Bash(git commit:*)",
+      "Bash(arguments\" when two shell: | tasks in the same playbook both start with:*)",
+      "Bash(ssh:*)",
+      "Bash(find /app/infra-platform -name *.log -newer /app/infra-platform/CLAUDE.md)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3 -c \"import json,sys; r=json.load\\(sys.stdin\\); print\\(r[''''status''''], r.get\\(''''conclusion'''',''''''''\\)\\)\")",
+      "Bash(grep:*)"
+    ]
+  }
+}

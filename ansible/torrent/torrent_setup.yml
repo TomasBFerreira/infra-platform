@@ -105,6 +105,27 @@
               network_mode: host
               restart: unless-stopped
 
+    - name: Create qBittorrent config subdirectory
+      file:
+        path: /opt/qbittorrent/config/qBittorrent
+        state: directory
+        mode: '0755'
+
+    # Disable WebUI authentication — Traefik ForwardAuth (Authentik) is the
+    # sole gate. Any client that reaches qBittorrent has already authenticated.
+    # AuthSubnetWhitelistEnabled=true + 0.0.0.0/0 bypasses the login page for
+    # all IPs. LocalHostAuth=false also disables the localhost-only bypass prompt.
+    - name: Write qBittorrent auth-bypass config
+      copy:
+        dest: /opt/qbittorrent/config/qBittorrent/qBittorrent.conf
+        mode: '0644'
+        force: false   # do not overwrite an existing config (preserves user settings)
+        content: |
+          [Preferences]
+          WebUI\AuthSubnetWhitelistEnabled=true
+          WebUI\AuthSubnetWhitelist=0.0.0.0/0
+          WebUI\LocalHostAuth=false
+
     - name: Start qBittorrent
       command: docker compose up -d
       args:
