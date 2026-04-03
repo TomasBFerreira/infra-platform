@@ -106,6 +106,27 @@ jobs:
         if: always()
         run: rm -f /tmp/bs_sso_key
 
+      - name: Inject network-VM hosts entry into bootstrap vault CT
+        if: steps.check-sso.outputs.skip != 'true'
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          PVE_USER:    ${{ secrets.PVE_USER }}
+        run: |
+          # The bootstrap vault CT (192.168.50.200) has no route to auth-dev.databaes.net
+          # (management subnet has no direct path to Cloudflare edge or dev subnet).
+          # Resolve auth-dev.databaes.net using the active dev network-VM IP so Traefik
+          # serves HTTPS for the domain at a reachable internal address.
+          NETWORK_VM_IP=$(vault kv get -field=ip secret/network-vm/dev/active-slot 2>/dev/null || echo "")
+          if [ -z "$NETWORK_VM_IP" ]; then
+            echo "Could not resolve active dev network-VM IP — skipping hosts injection"
+          else
+            PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+            echo "Injecting $NETWORK_VM_IP auth-dev.databaes.net into CT 200 /etc/hosts"
+            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+              "pct exec 200 -- bash -c 'grep -q auth-dev.databaes.net /etc/hosts && sed -i \"/auth-dev.databaes.net/d\" /etc/hosts; echo \"${NETWORK_VM_IP} auth-dev.databaes.net\" >> /etc/hosts'"
+          fi
+
       - name: Configure OIDC auth method on bootstrap vault
         if: steps.check-sso.outputs.skip != 'true'
         env:
@@ -150,3 +171,12 @@ jobs:
             ttl="12h"
           echo "Admin OIDC role written"
           echo "Bootstrap vault OIDC configured — login at http://192.168.50.200:8200 via OIDC"
+
+      - name: Remove injected hosts entry from bootstrap vault CT
+        if: always() && steps.check-sso.outputs.skip != 'true'
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+            "pct exec 200 -- sed -i '/auth-dev.databaes.net/d' /etc/hosts" 2>/dev/null || true
