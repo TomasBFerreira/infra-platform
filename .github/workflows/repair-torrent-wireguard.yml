@@ -40,6 +40,7 @@ jobs:
 
       - name: Update vault endpoint (if new_endpoint provided)
         if: ${{ github.event.inputs.new_endpoint != '' }}
+        continue-on-error: true
         run: |
           ENV="${{ github.event.inputs.environment || 'prod' }}"
           if [ "$ENV" = "prod" ]; then
@@ -72,6 +73,13 @@ jobs:
           WG_DNS=$(vault kv get -field=dns secret/wireguard 2>/dev/null || echo "")
 
           echo "Endpoint from vault: $WG_ENDPOINT"
+
+          # If caller passed a new_endpoint, use it instead of the vault value
+          NEW_ENDPOINT="${{ github.event.inputs.new_endpoint }}"
+          if [ -n "$NEW_ENDPOINT" ]; then
+            echo "Overriding with new_endpoint input: $NEW_ENDPOINT"
+            WG_ENDPOINT="$NEW_ENDPOINT"
+          fi
           {
             echo "wg_private_key=$WG_PRIVATE_KEY"
             echo "wg_peer_public_key=$WG_PEER_PUBLIC_KEY"
