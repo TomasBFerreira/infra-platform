@@ -86,9 +86,17 @@
           listener "tcp" {
             address     = "0.0.0.0:8200"
             tls_disable = true
+            telemetry {
+              unauthenticated_metrics_access = true
+            }
           }
 
           api_addr = "http://{{ vault_ct_ip }}:8200"
+
+          telemetry {
+            prometheus_retention_time = "30s"
+            disable_hostname = false
+          }
 
     - name: Enable and start Vault service
       systemd:
@@ -545,3 +553,84 @@
       debug:
         msg: "No Authentik credentials found in vault — OIDC not configured. Deploy SSO first, then re-run this pipeline."
       when: vault_admin_token != '' and oidc_client_id_check is not skipped and oidc_client_id_check.stdout | length == 0
+
+    # ── OTel Collector (monitoring sidecar) ─────────────────────────────────
+
+    - name: Download otelcol-contrib binary
+      get_url:
+        url: "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.120.0/otelcol-contrib_0.120.0_linux_amd64.tar.gz"
+        dest: /tmp/otelcol-contrib.tar.gz
+        mode: '0644'
+
+    - name: Extract otelcol-contrib binary
+      unarchive:
+        src: /tmp/otelcol-contrib.tar.gz
+        dest: /usr/local/bin/
+        include: [otelcol-contrib]
+        remote_src: yes
+        mode: '0755'
+
+    - name: Create otelcol directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /etc/otelcol
+        - /var/lib/otelcol
+        - /var/log/vault
+
+    - name: Fix vault log directory ownership
+      file:
+        path: /var/log/vault
+        owner: vault
+        group: vault
+        mode: '0755'
+
+    - name: Copy otelcol config
+      copy:
+        src: otelcol-vault.yml
+        dest: /etc/otelcol/otelcol.yml
+        mode: '0640'
+
+    - name: Create otelcol environment file
+      copy:
+        content: |
+          DEPLOY_ENV={{ vault_env }}
+          OTEL_COLLECTOR_ENDPOINT={{ otel_collector_endpoint | default('192.168.20.96:4317') }}
+        dest: /etc/otelcol/otelcol.env
+        mode: '0640'
+
+    - name: Create otelcol systemd service
+      copy:
+        content: |
+          [Unit]
+          Description=OpenTelemetry Collector (vault-ct)
+          After=network.target vault.service
+          Wants=vault.service
+
+          [Service]
+          EnvironmentFile=/etc/otelcol/otelcol.env
+          ExecStart=/usr/local/bin/otelcol-contrib --config /etc/otelcol/otelcol.yml
+          Restart=on-failure
+          RestartSec=10s
+          LimitNOFILE=65536
+          User=root
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/otelcol.service
+        mode: '0644'
+
+    - name: Enable and start otelcol service
+      systemd:
+        name: otelcol
+        daemon_reload: yes
+        enabled: yes
+        state: started
+
+    - name: Enable Vault audit logging
+      shell: |
+        VAULT_ADDR=http://localhost:8200 VAULT_TOKEN="{{ vault_admin_token }}" \
+          vault audit enable file file_path=/var/log/vault/audit.log 2>/dev/null || true
+      when: vault_admin_token != ''

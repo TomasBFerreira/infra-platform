@@ -60,6 +60,22 @@ certificatesResolvers:
           - "1.1.1.1:53"
           - "8.8.8.8:53"
 
+# OTLP metrics and traces to the central monitoring LXC.
+# Note: Traefik's static YAML does NOT expand ${VAR} env vars (Go yaml parser limitation),
+# so the collector endpoint is hardcoded here. For env-specific configs, use Ansible
+# to template this file per environment.
+metrics:
+  otlp:
+    grpc:
+      endpoint: "192.168.20.96:4317"
+      insecure: true
+
+tracing:
+  otlp:
+    grpc:
+      endpoint: "192.168.20.96:4317"
+      insecure: true
+
 log:
   level: INFO
 

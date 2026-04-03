@@ -1,0 +1,111 @@
+# OTel Collector config for vault-ct (non-Docker LXC running Vault binary)
+# Installed as a systemd service: /etc/otelcol/otelcol-vault.yml
+# Binary: /usr/local/bin/otelcol-contrib
+# Service: otelcol.service
+
+receivers:
+  # Vault Prometheus metrics via unauthenticated endpoint
+  prometheus/vault:
+    config:
+      scrape_configs:
+        - job_name: vault
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["localhost:8200"]
+          metrics_path: /v1/sys/metrics
+          params:
+            format: ["prometheus"]
+
+  # Host system metrics (CPU, memory, disk, network, processes)
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      disk: {}
+      filesystem:
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+      network: {}
+      load: {}
+      processes: {}
+      process:
+        include:
+          match_type: strict
+          names: [vault]
+        mute_process_name_error: true
+        mute_process_exe_error: true
+        mute_process_io_error: true
+
+  # Vault audit log (if enabled)
+  filelog/vault-audit:
+    include:
+      - /var/log/vault/audit.log
+    start_at: end
+    operators:
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.time
+          layout: "%Y-%m-%dT%H:%M:%S.%fZ"
+    storage: file_storage
+
+processors:
+  batch:
+    send_batch_size: 1000
+    timeout: 10s
+
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 128
+    spike_limit_mib: 32
+
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 5s
+    override: false
+
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "${DEPLOY_ENV}"
+        action: upsert
+      - key: service.tier
+        value: lxc
+        action: insert
+      - key: service.name
+        value: vault
+        action: insert
+
+exporters:
+  otlp:
+    endpoint: "${OTEL_COLLECTOR_ENDPOINT}"
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 120s
+
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    metrics:
+      receivers: [prometheus/vault, hostmetrics]
+      processors: [memory_limiter, resourcedetection, resource, batch]
+      exporters: [otlp]
+
+    logs:
+      receivers: [filelog/vault-audit]
+      processors: [memory_limiter, resourcedetection, resource, batch]
+      exporters: [otlp]

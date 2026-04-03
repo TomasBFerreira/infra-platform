@@ -2,15 +2,13 @@ services:
   traefik:
     image: traefik:v3.2
     container_name: traefik
+    hostname: network-vm-blue
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     network_mode: host
     environment:
       - TZ=Europe/London
-      # Set to active monitoring-lxc IP:4317 to enable OTel metrics + tracing.
-      # Populated by Ansible from Vault: secret/monitoring/<env>/active-slot
-      - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-}
       # Cloudflare DNS API token for Let's Encrypt DNS-01 wildcard cert (*.databaes.net).
       # Needs Zone:Zone:Read + Zone:DNS:Edit permission. Populated by Ansible from Vault.
       # LEGO (Traefik's ACME lib) requires CLOUDFLARE_ prefix; ZONE_API_TOKEN can be same token.
@@ -36,6 +34,7 @@ services:
     container_name: otelcol
     restart: unless-stopped
     command: ["--config=/etc/otelcol/otelcol-lxc.yml"]
+    user: "0"  # run as root — needed to read docker socket and container log files
     environment:
       - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-localhost:4317}
       - DEPLOY_ENV=${DEPLOY_ENV:-dev}
