@@ -57,6 +57,7 @@ jobs:
           echo ""
           echo "--- Routing tables ---"
           ip route show
+          ip route show table 200 2>/dev/null || true
           echo "--- ip rule ---"
           ip rule show
           echo ""
@@ -65,6 +66,23 @@ jobs:
           echo ""
           echo "--- Disk space ---"
           df -h /mnt/media 2>/dev/null || df -h /
+          REMOTE
+
+      - name: Restart WireGuard if peer has 0 bytes received
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          echo "=== Restarting WireGuard on $IP ==="
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          RECEIVED=$(wg show wg0 transfer 2>/dev/null | awk '{print $1}' | head -1)
+          if [ "$RECEIVED" = "0" ] || [ -z "$RECEIVED" ]; then
+            echo "WireGuard peer has 0 bytes received — restarting wg-quick@wg0"
+            systemctl restart wg-quick@wg0
+            sleep 5
+            echo "--- WireGuard status after restart ---"
+            wg show 2>&1
+          else
+            echo "WireGuard receiving data ($RECEIVED bytes) — no restart needed"
+          fi
           REMOTE
 
       - name: Cleanup SSH key
