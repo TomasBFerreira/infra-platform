@@ -9,6 +9,10 @@ on:
         default: 'prod'
         type: choice
         options: [dev, prod]
+      new_endpoint:
+        description: 'New WireGuard endpoint (host:port). Leave blank to use vault value as-is.'
+        required: false
+        default: ''
 
 jobs:
   repair:
@@ -34,22 +38,91 @@ jobs:
             | awk 'NF > 0' > /tmp/torrent_repair_key
           chmod 600 /tmp/torrent_repair_key
 
-      - name: Restart WireGuard and verify
+      - name: Update vault endpoint (if new_endpoint provided)
+        if: ${{ github.event.inputs.new_endpoint != '' }}
+        run: |
+          ENV="${{ github.event.inputs.environment || 'prod' }}"
+          if [ "$ENV" = "prod" ]; then
+            export VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
+            export VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
+          else
+            export VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
+            export VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
+          fi
+          NEW_ENDPOINT="${{ github.event.inputs.new_endpoint }}"
+          echo "Patching secret/wireguard endpoint → $NEW_ENDPOINT"
+          vault kv patch secret/wireguard endpoint="$NEW_ENDPOINT"
+
+      - name: Fetch WireGuard config from vault
+        id: wgcfg
+        run: |
+          ENV="${{ github.event.inputs.environment || 'prod' }}"
+          if [ "$ENV" = "prod" ]; then
+            export VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
+            export VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
+          else
+            export VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
+            export VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
+          fi
+
+          WG_PRIVATE_KEY=$(vault kv get -field=private_key secret/wireguard)
+          WG_PEER_PUBLIC_KEY=$(vault kv get -field=peer_public_key secret/wireguard)
+          WG_ENDPOINT=$(vault kv get -field=endpoint secret/wireguard)
+          WG_ADDRESS=$(vault kv get -field=address secret/wireguard)
+          WG_DNS=$(vault kv get -field=dns secret/wireguard 2>/dev/null || echo "")
+
+          echo "Endpoint from vault: $WG_ENDPOINT"
+          {
+            echo "wg_private_key=$WG_PRIVATE_KEY"
+            echo "wg_peer_public_key=$WG_PEER_PUBLIC_KEY"
+            echo "wg_endpoint=$WG_ENDPOINT"
+            echo "wg_address=$WG_ADDRESS"
+            echo "wg_dns=$WG_DNS"
+          } >> $GITHUB_OUTPUT
+
+      - name: Rewrite wg0.conf and restart WireGuard
+        env:
+          WG_PRIVATE_KEY:     ${{ steps.wgcfg.outputs.wg_private_key }}
+          WG_PEER_PUBLIC_KEY: ${{ steps.wgcfg.outputs.wg_peer_public_key }}
+          WG_ENDPOINT:        ${{ steps.wgcfg.outputs.wg_endpoint }}
+          WG_ADDRESS:         ${{ steps.wgcfg.outputs.wg_address }}
+          WG_DNS:             ${{ steps.wgcfg.outputs.wg_dns }}
         run: |
           IP="${{ steps.slots.outputs.ip }}"
-          echo "=== Restarting WireGuard on $IP ==="
-          ssh -i /tmp/torrent_repair_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
-          echo "--- Before ---"
-          wg show wg0 transfer 2>/dev/null || echo "wg0 not up"
+          ENDPOINT_IP="${WG_ENDPOINT%%:*}"
 
-          echo "Restarting wg-quick@wg0..."
+          echo "=== Rewriting wg0.conf on $IP (endpoint: $WG_ENDPOINT) ==="
+
+          # Build the config locally then scp it over, avoiding heredoc-in-heredoc issues
+          CONF_FILE=$(mktemp)
+          cat > "$CONF_FILE" <<WGCONF
+[Interface]
+PrivateKey = ${WG_PRIVATE_KEY}
+Address = ${WG_ADDRESS}
+$([ -n "$WG_DNS" ] && printf "DNS = %s\n" "$WG_DNS")
+Table = off
+PostUp = GW=\$(ip route show default | awk '/default/ {print \$3; exit}'); ip route add ${ENDPOINT_IP}/32 via \${GW} dev eth0 2>/dev/null || true; ip route add default dev wg0 table 200; ip rule add to 192.168.10.0/24 lookup main priority 100; ip rule add to 192.168.20.0/24 lookup main priority 101; ip rule add to 192.168.30.0/24 lookup main priority 102; ip rule add to 192.168.50.0/24 lookup main priority 103; ip rule add lookup 200 priority 200
+PostDown = ip route del default dev wg0 table 200 2>/dev/null || true; ip rule del to 192.168.10.0/24 lookup main priority 100 2>/dev/null || true; ip rule del to 192.168.20.0/24 lookup main priority 101 2>/dev/null || true; ip rule del to 192.168.30.0/24 lookup main priority 102 2>/dev/null || true; ip rule del to 192.168.50.0/24 lookup main priority 103 2>/dev/null || true; ip rule del lookup 200 priority 200 2>/dev/null || true; ip route del ${ENDPOINT_IP}/32 2>/dev/null || true
+
+[Peer]
+PublicKey = ${WG_PEER_PUBLIC_KEY}
+Endpoint = ${WG_ENDPOINT}
+AllowedIPs = 0.0.0.0/0
+WGCONF
+
+          scp -i /tmp/torrent_repair_key -o StrictHostKeyChecking=no \
+            "$CONF_FILE" root@"$IP":/etc/wireguard/wg0.conf
+          rm -f "$CONF_FILE"
+
+          ssh -i /tmp/torrent_repair_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          chmod 600 /etc/wireguard/wg0.conf
+          echo "--- Restarting wg-quick@wg0 ---"
           systemctl restart wg-quick@wg0
           sleep 10
 
-          echo "--- After (10s) ---"
+          echo "--- Status (10s) ---"
           wg show 2>&1
 
-          # Check if handshake was established
           LATEST_HS=$(wg show wg0 latest-handshakes 2>/dev/null | awk '{print $2}')
           if [ -n "$LATEST_HS" ] && [ "$LATEST_HS" != "0" ]; then
             echo "✓ Handshake established (epoch $LATEST_HS)"
@@ -61,3 +134,4 @@ jobs:
       - name: Cleanup SSH key
         if: always()
         run: rm -f /tmp/torrent_repair_key
+
