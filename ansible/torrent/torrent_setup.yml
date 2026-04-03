@@ -155,6 +155,7 @@
           PublicKey = {{ wg_peer_public_key }}
           Endpoint = {{ wg_endpoint }}
           AllowedIPs = 0.0.0.0/0
+          PersistentKeepalive = 25
       when: wg_private_key | default('') | length > 0
 
     - name: Enable and start WireGuard
