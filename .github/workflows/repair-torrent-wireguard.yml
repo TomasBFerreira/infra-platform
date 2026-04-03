@@ -13,6 +13,14 @@ on:
         description: 'New WireGuard endpoint (host:port). Leave blank to use vault value as-is.'
         required: false
         default: ''
+      new_private_key:
+        description: 'New WireGuard private key (Interface PrivateKey). Leave blank to use vault value.'
+        required: false
+        default: ''
+      new_address:
+        description: 'New WireGuard interface address (e.g. 100.64.1.230/32). Leave blank to use vault value.'
+        required: false
+        default: ''
 
 jobs:
   repair:
@@ -74,12 +82,13 @@ jobs:
 
           echo "Endpoint from vault: $WG_ENDPOINT"
 
-          # If caller passed a new_endpoint, use it instead of the vault value
+          # If caller passed override values, use them instead of vault
           NEW_ENDPOINT="${{ github.event.inputs.new_endpoint }}"
-          if [ -n "$NEW_ENDPOINT" ]; then
-            echo "Overriding with new_endpoint input: $NEW_ENDPOINT"
-            WG_ENDPOINT="$NEW_ENDPOINT"
-          fi
+          NEW_PRIVATE_KEY="${{ github.event.inputs.new_private_key }}"
+          NEW_ADDRESS="${{ github.event.inputs.new_address }}"
+          [ -n "$NEW_ENDPOINT"     ] && { echo "Overriding endpoint: $NEW_ENDPOINT";       WG_ENDPOINT="$NEW_ENDPOINT";         }
+          [ -n "$NEW_PRIVATE_KEY"  ] && { echo "Overriding private_key (provided)";        WG_PRIVATE_KEY="$NEW_PRIVATE_KEY";   }
+          [ -n "$NEW_ADDRESS"      ] && { echo "Overriding address: $NEW_ADDRESS";          WG_ADDRESS="$NEW_ADDRESS";           }
           {
             echo "wg_private_key=$WG_PRIVATE_KEY"
             echo "wg_peer_public_key=$WG_PEER_PUBLIC_KEY"
