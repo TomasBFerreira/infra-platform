@@ -1,0 +1,72 @@
+name: Debug Torrent CT
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  debug:
+    runs-on: [self-hosted, "${{ github.event.inputs.environment || 'prod' }}"]
+    steps:
+      - name: Resolve active torrent slot
+        id: slots
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ github.event.inputs.environment || 'prod' }}"
+          ACTIVE_SLOT=$(vault kv get -field=slot  secret/torrent/$ENV/active-slot 2>/dev/null || echo "none")
+          ACTIVE_IP=$(vault kv get   -field=ip     secret/torrent/$ENV/active-slot 2>/dev/null || echo "")
+          echo "slot=$ACTIVE_SLOT" >> $GITHUB_OUTPUT
+          echo "ip=$ACTIVE_IP"    >> $GITHUB_OUTPUT
+          echo "Active slot: $ACTIVE_SLOT  IP: $ACTIVE_IP"
+
+      - name: Fetch SSH key
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/torrent_worker \
+            | awk 'NF > 0' > /tmp/torrent_debug_key
+          chmod 600 /tmp/torrent_debug_key
+
+      - name: Diagnose torrent CT
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          if [ -z "$IP" ]; then
+            echo "ERROR: could not resolve torrent CT IP"
+            exit 1
+          fi
+          echo "=== Diagnosing torrent CT at $IP ==="
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          echo "--- Docker containers ---"
+          docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
+          echo ""
+          echo "--- qBittorrent logs (last 30 lines) ---"
+          docker logs qbittorrent --tail 30 2>&1 || echo "(no qbittorrent container)"
+          echo ""
+          echo "--- WireGuard status ---"
+          systemctl status wg-quick@wg0 --no-pager -l 2>&1 | head -20 || echo "(wg-quick@wg0 not found)"
+          wg show 2>&1 || echo "(wg not available)"
+          echo ""
+          echo "--- Routing tables ---"
+          ip route show
+          echo "--- ip rule ---"
+          ip rule show
+          echo ""
+          echo "--- Port 8080 listening ---"
+          ss -tlnp | grep 8080 || echo "(nothing on 8080)"
+          echo ""
+          echo "--- Disk space ---"
+          df -h /mnt/media 2>/dev/null || df -h /
+          REMOTE
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/torrent_debug_key
