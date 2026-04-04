@@ -397,6 +397,78 @@ jobs:
             echo "Pushed — sync-dns.yml will fire automatically"
           fi
 
+  update-download-clients:
+    needs: [resolve-slots, flip-active]
+    if: needs.flip-active.result == 'success'
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+      ENV:         ${{ needs.resolve-slots.outputs.environment }}
+      NEW_IP:      ${{ needs.resolve-slots.outputs.staging_ip }}
+    steps:
+      - name: Update qBittorrent host in Sonarr and Radarr
+        run: |
+          WORKER_IP=$(vault kv get -field=ip secret/worker-node/${ENV}/active-slot 2>/dev/null || echo "")
+          if [ -z "$WORKER_IP" ]; then
+            echo "No worker node registered for ${ENV} — media stack not deployed, skipping"
+            exit 0
+          fi
+
+          SONARR_KEY=$(vault kv get -field=sonarr_api_key secret/media-stack/api-keys 2>/dev/null || echo "")
+          RADARR_KEY=$(vault kv get -field=radarr_api_key secret/media-stack/api-keys 2>/dev/null || echo "")
+          if [ -z "$SONARR_KEY" ] || [ -z "$RADARR_KEY" ]; then
+            echo "Media stack API keys not in vault — stack may not be deployed yet, skipping"
+            exit 0
+          fi
+
+          update_qbt() {
+            local name="$1" port="$2" api_key="$3"
+            local url="http://${WORKER_IP}:${port}"
+            echo "--- Updating ${name} download client host → ${NEW_IP} ---"
+
+            CLIENT_ID=$(curl -sf "${url}/api/v3/downloadclient" \
+              -H "X-Api-Key: ${api_key}" \
+              | python3 -c "
+import sys, json
+clients = json.load(sys.stdin)
+match = [c for c in clients if c.get('implementation') == 'QBittorrent']
+print(match[0]['id'] if match else '')
+" 2>/dev/null || echo "")
+
+            if [ -z "$CLIENT_ID" ]; then
+              echo "${name}: no QBittorrent download client found — run media-stack deploy to register it"
+              return
+            fi
+
+            CLIENT=$(curl -sf "${url}/api/v3/downloadclient/${CLIENT_ID}" \
+              -H "X-Api-Key: ${api_key}" 2>/dev/null)
+            UPDATED=$(echo "$CLIENT" | python3 -c "
+import sys, json, os
+c = json.load(sys.stdin)
+new_ip = os.environ['NEW_IP']
+for f in c.get('fields', []):
+    if f.get('name') == 'host':
+        f['value'] = new_ip
+print(json.dumps(c))
+")
+
+            HTTP_STATUS=$(curl -sf -X PUT "${url}/api/v3/downloadclient/${CLIENT_ID}" \
+              -H "X-Api-Key: ${api_key}" \
+              -H "Content-Type: application/json" \
+              -d "$UPDATED" \
+              -w "%{http_code}" -o /dev/null 2>/dev/null || echo "000")
+
+            if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "202" ] || [ "$HTTP_STATUS" = "201" ]; then
+              echo "✓ ${name}: qBittorrent host updated to ${NEW_IP}"
+            else
+              echo "✗ ${name}: update failed (HTTP ${HTTP_STATUS}) — will resync on next media-stack deploy"
+            fi
+          }
+
+          update_qbt "Sonarr" 8989 "${SONARR_KEY}"
+          update_qbt "Radarr" 7878 "${RADARR_KEY}"
+
   teardown-old-active:
     needs: [resolve-slots, flip-active]
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
