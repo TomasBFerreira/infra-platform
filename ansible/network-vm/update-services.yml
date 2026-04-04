@@ -1,0 +1,12 @@
+---
+# Lightweight playbook — applies only traefik and adguard roles to the active
+# network-vm without re-running full setup (no tailscale, wireguard, firewall).
+# Used by the "Update Network-VM Services (no reprovision)" workflow.
+- name: Update Network-VM services (traefik + adguard)
+  hosts: all
+  become: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  roles:
+    - role: traefik
+    - role: adguard
