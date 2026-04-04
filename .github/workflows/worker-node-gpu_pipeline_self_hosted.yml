@@ -138,6 +138,23 @@ jobs:
           git checkout ${{ github.ref_name }}
           git pull origin ${{ github.ref_name }}
 
+      - name: Stop VMID 999 (test GPU VM) to release PCI passthrough device
+        if: inputs.target_node == 'betsy'
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          STATUS=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 \
+            "qm status 999 2>/dev/null || echo 'notfound'")
+          if echo "$STATUS" | grep -q "running"; then
+            echo "VMID 999 (test GPU VM) is running — stopping to release GTX 970..."
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.2 "qm stop 999"
+            sleep 5
+            echo "✓ VMID 999 stopped"
+          else
+            echo "VMID 999 status: ${STATUS} — GPU is free"
+          fi
+
       - name: Terraform Init
         env:
           TF_VAR_pve_api:        ${{ needs.resolve-node.outputs.pve_api_url }}
@@ -313,6 +330,13 @@ jobs:
             ip="${IP}" \
             node_number="${NODE_NUM}" \
             vmid="${{ needs.resolve-node.outputs.vmid }}"
+
+          # Also register at the standard worker-node slot so media-stack deploy can find this GPU node.
+          vault kv put secret/worker-node/${ENV}/active-slot \
+            ip="${IP}" \
+            node_number="${NODE_NUM}" \
+            vmid="${{ needs.resolve-node.outputs.vmid }}"
+          echo "✓ Registered GPU node ${IP} at both secret/worker-node-gpu/${ENV}/active-slot and secret/worker-node/${ENV}/active-slot"
 
   cleanup-on-failure:
     needs: [resolve-node, terraform-node, ansible-node]
