@@ -322,6 +322,10 @@ jobs:
           fi
           ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
           ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
+          # Monitoring collector endpoint — used by Traefik for OTLP metrics/tracing
+          MONITORING_IP=$(vault kv get -field=ip secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+          OTEL_COLLECTOR_ENDPOINT="${MONITORING_IP}:4317"
+          echo "OTEL_COLLECTOR_ENDPOINT=$OTEL_COLLECTOR_ENDPOINT" >> $GITHUB_ENV
           # Prod tunnel token lives in env vault; dev/qa use the GH secret directly
           if [ "$ENV" = "prod" ]; then
             CF_TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel 2>/dev/null || echo "")
@@ -401,6 +405,7 @@ YAML
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
             -e "cloudflare_tunnel_token=$CF_TUNNEL_TOKEN" \
+            -e "otel_collector_endpoint=$OTEL_COLLECTOR_ENDPOINT" \
             -e "@/tmp/network_vm_extra_vars.yml" \
             ansible/network-vm/network-vm_setup.yml
 

@@ -13,7 +13,23 @@ entryPoints:
 log:
   level: INFO
 
-accessLog: {}
+accessLog:
+  format: json
+
+# OTel metrics + tracing — endpoint injected at deploy time via OTEL_COLLECTOR_ENDPOINT env var.
+# Set by Ansible from secret/monitoring/<env>/active-slot in Vault.
+# When unset Traefik starts fine; the OTLP sections are simply inactive.
+metrics:
+  otlp:
+    grpc:
+      endpoint: "${OTEL_COLLECTOR_ENDPOINT}"
+      insecure: true
+
+tracing:
+  otlp:
+    grpc:
+      endpoint: "${OTEL_COLLECTOR_ENDPOINT}"
+      insecure: true
 
 providers:
   file:

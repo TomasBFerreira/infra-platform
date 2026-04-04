@@ -66,7 +66,14 @@
     dest: /opt/traefik/docker-compose.yml
     mode: '0644'
 
+- name: Write Traefik env file
+  copy:
+    dest: /opt/traefik/.env
+    mode: '0600'
+    content: |
+      OTEL_COLLECTOR_ENDPOINT={{ otel_collector_endpoint | default('') }}
+
 - name: Deploy Traefik
-  command: docker compose up -d
+  command: docker compose up -d --force-recreate
   args:
     chdir: /opt/traefik

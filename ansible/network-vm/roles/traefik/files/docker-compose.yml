@@ -6,6 +6,8 @@ services:
     security_opt:
       - no-new-privileges:true
     network_mode: host
+    env_file:
+      - /opt/traefik/.env
     environment:
       - TZ=Europe/London
     volumes:
