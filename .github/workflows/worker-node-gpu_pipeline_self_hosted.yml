@@ -36,9 +36,9 @@ on:
           - benedict
           - vladimir
       template_vmid:
-        description: 'VMID of the cloud-init template VM to clone (must exist on target node)'
+        description: 'VMID of the cloud-init template VM to clone (must exist on target node). betsy uses 9001 (debian-12-cloud).'
         required: true
-        default: '9000'
+        default: '9001'
         type: string
       vm_cores:
         description: 'vCPU cores (prod default: 6; use 2 for lightweight testing)'
@@ -204,7 +204,7 @@ jobs:
             "qm stop ${VMID} 2>/dev/null || true; qm destroy ${VMID} --purge 2>/dev/null || true"
           rm -f /app/infra-platform/terraform/worker-node-gpu/terraform.node-${VMID}.tfstate
 
-      - name: Pre-flight — stop VM 111 (l-wn-pd1) on betsy to free memory
+      - name: Pre-flight — stop VM 112 (worker-node-02) on betsy to free memory
         if: inputs.target_node == 'betsy'
         env:
           PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
@@ -212,10 +212,10 @@ jobs:
         run: |
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          echo "Stopping VM 111 (l-wn-pd1) to free memory before GPU node provisioning..."
+          echo "Stopping VM 112 (worker-node-02) to free memory before GPU node provisioning..."
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
-            "qm stop 111 2>/dev/null || true"
-          echo "VM 111 stop issued — waiting 15s for memory to free"
+            "qm stop 112 2>/dev/null || true"
+          echo "VM 112 stop issued — waiting 15s for memory to free"
           sleep 15
 
       - name: Terraform Apply
