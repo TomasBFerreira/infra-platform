@@ -1,0 +1,129 @@
+name: Create PVE Cloud-Init Template
+
+# Creates a Ubuntu 24.04 cloud-init template VM on a Proxmox node.
+# Required before running the worker-node pipeline on a fresh Proxmox host.
+#
+# Usage:
+#   gh workflow run create-pve-template.yml \
+#     --field target_node=betsy \
+#     --field template_vmid=9000
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_node:
+        description: 'Proxmox node to create template on'
+        required: true
+        default: 'betsy'
+        type: choice
+        options: [benedict, betsy]
+      template_vmid:
+        description: 'VMID for the new template'
+        required: true
+        default: '9000'
+      ubuntu_release:
+        description: 'Ubuntu cloud-image release codename'
+        required: true
+        default: 'noble'
+        type: choice
+        options: [noble, jammy]
+
+jobs:
+  create-template:
+    runs-on: [self-hosted, "${{ inputs.target_node == 'betsy' && 'prod' || 'dev' }}"]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+      VMID:     ${{ inputs.template_vmid }}
+      RELEASE:  ${{ inputs.ubuntu_release }}
+    steps:
+      - name: Check if template already exists on Proxmox node
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          BETSY_IP="${{ inputs.target_node == 'betsy' && '192.168.50.2' || '192.168.50.4' }}"
+
+          STATUS=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@${BETSY_IP} \
+            "qm status ${VMID} 2>/dev/null || echo 'notfound'")
+
+          if echo "$STATUS" | grep -qE "running|stopped"; then
+            IS_TEMPLATE=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@${BETSY_IP} \
+              "qm config ${VMID} 2>/dev/null | grep '^template:' | awk '{print \$2}'")
+            if [ "$IS_TEMPLATE" = "1" ]; then
+              echo "✓ Template VMID ${VMID} already exists — nothing to do"
+              exit 0
+            else
+              echo "VMID ${VMID} exists but is NOT a template (status: $STATUS)"
+              echo "Please choose a different template_vmid or remove the existing VM"
+              exit 1
+            fi
+          else
+            echo "VMID ${VMID} does not exist — will create template"
+          fi
+
+      - name: Create Ubuntu cloud-init template on Proxmox node
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          BETSY_IP="${{ inputs.target_node == 'betsy' && '192.168.50.2' || '192.168.50.4' }}"
+
+          ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@${BETSY_IP} bash -s << ENDSSH
+set -e
+
+VMID="${VMID}"
+RELEASE="${RELEASE}"
+IMG_URL="https://cloud-images.ubuntu.com/\${RELEASE}/current/\${RELEASE}-server-cloudimg-amd64.img"
+IMG_PATH="/tmp/\${RELEASE}-cloudimg.img"
+
+echo "=== Downloading Ubuntu \${RELEASE} cloud image ==="
+if [ ! -f "\${IMG_PATH}" ]; then
+  wget -q --show-progress "\${IMG_URL}" -O "\${IMG_PATH}"
+  echo "Download complete"
+else
+  echo "Image already cached at \${IMG_PATH}"
+fi
+
+echo ""
+echo "=== Creating VM \${VMID} ==="
+qm create \${VMID} \
+  --name "ubuntu-\${RELEASE}-cloudinit" \
+  --memory 2048 \
+  --cores 2 \
+  --net0 virtio,bridge=vmbr0 \
+  --ostype l26 \
+  --scsihw virtio-scsi-pci
+
+echo ""
+echo "=== Importing disk to local-lvm ==="
+qm importdisk \${VMID} "\${IMG_PATH}" local-lvm --format raw
+
+echo ""
+echo "=== Configuring boot disk and cloud-init ==="
+qm set \${VMID} --scsi0 local-lvm:vm-\${VMID}-disk-0,cache=none,discard=on
+qm set \${VMID} --boot c --bootdisk scsi0
+qm set \${VMID} --ide2 local-lvm:cloudinit
+qm set \${VMID} --serial0 socket --vga serial0
+qm set \${VMID} --agent enabled=1
+qm set \${VMID} --ciuser root
+qm resize \${VMID} scsi0 +18G
+
+echo ""
+echo "=== Converting to template ==="
+qm template \${VMID}
+
+echo ""
+echo "✓ Template VMID \${VMID} created successfully"
+qm config \${VMID}
+ENDSSH
+
+      - name: Verify template
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          BETSY_IP="${{ inputs.target_node == 'betsy' && '192.168.50.2' || '192.168.50.4' }}"
+
+          IS_TEMPLATE=$(ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@${BETSY_IP} \
+            "qm config ${VMID} 2>/dev/null | grep '^template:' | awk '{print \$2}'")
+
+          if [ "$IS_TEMPLATE" = "1" ]; then
+            echo "✓ Confirmed: VMID ${VMID} is a template"
+          else
+            echo "✗ VMID ${VMID} does not appear to be a template after creation"
+            exit 1
+          fi
