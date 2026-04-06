@@ -27,9 +27,17 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "curl -sI http://192.168.10.12:30080/ 2>&1 | head -5"
 
-          echo "=== Traefik routes ==="
+          echo "=== Traefik rancher-prod-router ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -m json.tool 2>/dev/null | grep -A2 'databaes.net\|rule' | head -20 || echo 'dashboard not available'"
+            "curl -s http://localhost:8080/api/http/routers/rancher-prod-router@file 2>/dev/null || echo 'router not found'"
+
+          echo "=== services.yml rancher section ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "grep -A5 'rancher' /opt/traefik/config/dynamic/services.yml || echo 'rancher not in services.yml'"
+
+          echo "=== curl rancher.databaes.net via localhost ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -sI -H 'Host: rancher.databaes.net' http://localhost:80/ 2>&1 | head -6"
 
           echo "=== cloudflared systemd status ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
