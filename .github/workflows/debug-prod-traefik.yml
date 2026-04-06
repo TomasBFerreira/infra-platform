@@ -51,9 +51,21 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "curl -ks -o /dev/null -w '%{http_code}' --max-time 5 https://192.168.10.2/ || echo 'unreachable'"
 
+          echo "=== curl plex (CONTROL: same insecureTransport + HTTPS backend) ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -sI --resolve plex.databaes.net:80:127.0.0.1 http://plex.databaes.net/ 2>&1 | head -4"
+
           echo "=== curl rancher via --resolve ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "curl -sIv --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ 2>&1 | grep -E 'HTTP/|> Host|< |Connected'"
+
+          echo "=== Restart Traefik ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "docker restart traefik && sleep 3 && echo 'restarted'"
+
+          echo "=== curl rancher AFTER restart ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -sI --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ 2>&1 | head -4"
 
           echo "=== All web-entrypoint routers in API ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
