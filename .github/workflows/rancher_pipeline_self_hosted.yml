@@ -26,14 +26,16 @@ jobs:
   resolve-rancher:
     runs-on: [self-hosted, "${{ github.event.inputs.environment || 'dev' }}"]
     outputs:
-      environment:  ${{ steps.rancher.outputs.environment }}
-      pve_api_url:  ${{ steps.rancher.outputs.pve_api_url }}
-      pve_node:     ${{ steps.rancher.outputs.pve_node }}
-      vmid:         ${{ steps.rancher.outputs.vmid }}
-      ip:           ${{ steps.rancher.outputs.ip }}
-      hostname:     ${{ steps.rancher.outputs.hostname }}
-      gateway:        ${{ steps.rancher.outputs.gateway }}
-      network_bridge: ${{ steps.rancher.outputs.network_bridge }}
+      environment:      ${{ steps.rancher.outputs.environment }}
+      pve_api_url:      ${{ steps.rancher.outputs.pve_api_url }}
+      pve_node:         ${{ steps.rancher.outputs.pve_node }}
+      vmid:             ${{ steps.rancher.outputs.vmid }}
+      ip:               ${{ steps.rancher.outputs.ip }}
+      hostname:         ${{ steps.rancher.outputs.hostname }}
+      gateway:          ${{ steps.rancher.outputs.gateway }}
+      network_bridge:   ${{ steps.rancher.outputs.network_bridge }}
+      rancher_ip:       ${{ steps.rancher.outputs.rancher_ip }}
+      rancher_hostname: ${{ steps.rancher.outputs.rancher_hostname }}
     steps:
       - name: Resolve rancher VMID, IP, and node
         id: rancher
