@@ -15,27 +15,28 @@ jobs:
           vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
             | awk 'NF > 0' > /tmp/nwkey && chmod 600 /tmp/nwkey
 
-          echo "=== Dynamic config dir ==="
+          echo "=== docker-compose.yml on prod VM ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "ls -la /opt/traefik/config/dynamic/"
+            "cat /opt/traefik/docker-compose.yml 2>/dev/null || cat /opt/traefik/docker-compose.yaml 2>/dev/null || find /opt/traefik -name 'docker-compose*' | head -3"
 
-          echo "=== acme.json cert domains ==="
+          echo "=== Traefik container inspect (labels + mounts) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "docker exec traefik cat /acme.json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); [print(k,\"certs:\",[c.get(\"domain\",{}).get(\"main\") for c in v.get(\"Certificates\",[])]) for k,v in d.items()]' || echo 'no acme.json'"
+            "docker inspect traefik 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin)[0]; print(\"Labels:\",d.get(\"Config\",{}).get(\"Labels\",{})); print(\"Mounts:\",[(m[\"Source\"],m[\"Destination\"]) for m in d.get(\"Mounts\",[])]);'"
 
-          echo "=== Traefik rancher-prod-router ==="
+          echo "=== curl rancher + immediate access log ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/routers/rancher-prod-router@file"
+            "curl -sI --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ > /dev/null 2>&1; sleep 1; docker logs traefik --tail 5 2>&1"
 
-          echo "=== curl rancher ==="
+          echo "=== curl plex + immediate access log ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ 2>&1 | head -5"
+            "curl -sI --resolve plex.databaes.net:80:127.0.0.1 http://plex.databaes.net/ > /dev/null 2>&1; sleep 1; docker logs traefik --tail 5 2>&1"
 
-          echo "=== curl plex (control) ==="
+          echo "=== All routers from API (all providers) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI --resolve plex.databaes.net:80:127.0.0.1 http://plex.databaes.net/ 2>&1 | head -3"
+            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -c 'import sys,json; [print(r[\"name\"],\"priority:\",r.get(\"priority\"),\"|\",r.get(\"rule\",\"\")) for r in sorted(json.load(sys.stdin), key=lambda x: x.get(\"priority\",0), reverse=True) if \"rancher\" in r.get(\"rule\",\"\").lower() or r.get(\"priority\",0) > 100]'"
 
           rm -f /tmp/nwkey
+
 
 
 
