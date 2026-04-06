@@ -1,0 +1,275 @@
+---
+# Registers an already-running k3s node with Rancher.
+# All variables are required (passed as extra vars from the pipeline):
+#   vm_hostname              — used as the Rancher cluster name
+#   rancher_ip               — IP of the Rancher LXC (e.g. 192.168.10.2)
+#   rancher_hostname         — hostname of Rancher (e.g. rancher.databaes.net)
+#   rancher_bootstrap_password — Rancher admin password
+
+- name: Register GPU worker node with Rancher
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Add Rancher hostname to /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ rancher_ip }} {{ rancher_hostname }}"
+        state: present
+
+    - name: Patch CoreDNS NodeHosts ConfigMap for Rancher hostname resolution
+      environment:
+        RANCHER_IP: "{{ rancher_ip }}"
+        RANCHER_HOST: "{{ rancher_hostname }}"
+      shell: |
+        ENTRY="$RANCHER_IP $RANCHER_HOST"
+        if k3s kubectl get configmap coredns -n kube-system \
+            -o jsonpath="{.data.NodeHosts}" 2>/dev/null | grep -qF "$RANCHER_HOST"; then
+          echo "Rancher hostname already in CoreDNS NodeHosts"
+        else
+          CURRENT=$(k3s kubectl get configmap coredns -n kube-system \
+            -o jsonpath="{.data.NodeHosts}" 2>/dev/null || echo "")
+          MERGED_ESC=$(printf '%s\n%s' "$CURRENT" "$ENTRY" \
+            | python3 -c "import sys; s=sys.stdin.read(); print(s.replace('\\\\','\\\\\\\\').replace('\"','\\\\\"').replace(chr(10),'\\\\n'), end='')")
+          k3s kubectl patch configmap coredns -n kube-system \
+            --type=merge -p "{\"data\":{\"NodeHosts\":\"${MERGED_ESC}\"}}"
+          echo "Added $ENTRY to CoreDNS NodeHosts"
+        fi
+      changed_when: false
+
+    - name: Restart CoreDNS to apply NodeHosts change
+      shell: k3s kubectl rollout restart deployment/coredns -n kube-system
+      changed_when: false
+
+    - name: Wait for CoreDNS to be ready
+      shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=60s
+      changed_when: false
+
+    - name: Write Rancher registration script
+      copy:
+        dest: /tmp/register_rancher.sh
+        mode: "0700"
+        content: |
+          #!/bin/bash
+          set -e
+
+          echo "Waiting for Rancher API at $RANCHER_IP ($RANCHER_HOST)..."
+          for i in $(seq 1 24); do
+            HTTP_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' \
+              -H "Host: $RANCHER_HOST" \
+              "https://$RANCHER_IP/v3-public/authProviders" 2>/dev/null || echo "000")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Rancher API ready (attempt $i)"
+              break
+            fi
+            echo "Attempt $i/24: HTTP $HTTP_STATUS — retrying in 5s..."
+            sleep 5
+            if [ "$i" = "24" ]; then
+              echo "ERROR: Rancher API at $RANCHER_IP ($RANCHER_HOST) not reachable after 120s (last HTTP $HTTP_STATUS)"
+              exit 1
+            fi
+          done
+
+          LOGIN_RESP=$(curl -sk -H "Host: $RANCHER_HOST" \
+            -X POST "https://$RANCHER_IP/v3-public/localProviders/local?action=login" \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"'"$RANCHER_PASS"'","ttl":60000}')
+
+          if [ -z "$LOGIN_RESP" ]; then
+            echo "ERROR: Rancher login returned an empty response"
+            exit 1
+          fi
+
+          RANCHER_TOKEN=$(echo "$LOGIN_RESP" | python3 -c '
+          import sys, json
+          d = json.load(sys.stdin)
+          if "token" not in d:
+              print("ERROR: no token in login response:", d, file=sys.stderr)
+              sys.exit(1)
+          print(d["token"])
+          ')
+
+          MUST_CHANGE=$(echo "$LOGIN_RESP" | python3 -c '
+          import sys, json
+          print(json.load(sys.stdin).get("mustChangePassword", False))
+          ' 2>/dev/null || echo "False")
+          if [ "$MUST_CHANGE" = "True" ]; then
+            USER_ID=$(echo "$LOGIN_RESP" | python3 -c '
+          import sys, json
+          print(json.load(sys.stdin)["userId"])
+          ')
+            curl -sk -H "Host: $RANCHER_HOST" \
+              -X POST "https://$RANCHER_IP/v3/users/$USER_ID?action=setpassword" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              -H 'Content-Type: application/json' \
+              -d '{"newPassword":"'"$RANCHER_PASS"'"}' > /dev/null
+          fi
+
+          EXISTING=$(curl -sk -H "Host: $RANCHER_HOST" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://$RANCHER_IP/v3/clusters?name=$VM_HOST" \
+            | python3 -c '
+          import sys, json
+          d = json.load(sys.stdin)
+          items = d.get("data", [])
+          print(items[0]["id"] if items else "")
+          ' 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING" ]; then
+            echo "Cluster already registered in Rancher (ID: $EXISTING)"
+            CLUSTER_ID="$EXISTING"
+          else
+            CLUSTER_ID=$(curl -sk --fail-with-body -H "Host: $RANCHER_HOST" \
+              -X POST "https://$RANCHER_IP/v3/clusters" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              -H 'Content-Type: application/json' \
+              -d '{"type":"cluster","name":"'"$VM_HOST"'"}' \
+              | python3 -c '
+          import sys, json
+          print(json.load(sys.stdin)["id"])
+          ')
+            echo "Created cluster in Rancher (ID: $CLUSTER_ID)"
+          fi
+
+          MANIFEST_URL=""
+          for i in $(seq 1 12); do
+            MANIFEST_URL=$(curl -sk -H "Host: $RANCHER_HOST" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              "https://$RANCHER_IP/v3/clusterregistrationtokens?clusterId=$CLUSTER_ID" \
+              | python3 -c '
+          import sys, json
+          d = json.load(sys.stdin)
+          items = d.get("data", [])
+          print(items[0]["manifestUrl"] if items else "")
+          ' 2>/dev/null || echo "")
+            [ -n "$MANIFEST_URL" ] && break
+            echo "Waiting for cluster registration token (attempt $i/12)..."
+            sleep 5
+          done
+
+          if [ -z "$MANIFEST_URL" ]; then
+            echo "ERROR: no cluster registration token after 60s"
+            exit 1
+          fi
+
+          MANIFEST_URL_BY_IP=$(echo "$MANIFEST_URL" | sed "s|https://$RANCHER_HOST|https://$RANCHER_IP|g")
+          echo "Applying registration manifest: $MANIFEST_URL_BY_IP"
+          curl -sk "$MANIFEST_URL_BY_IP" \
+            -H "Host: $RANCHER_HOST" \
+            | k3s kubectl apply -f -
+          echo "Rancher cluster agent manifest applied"
+          echo "CLUSTER_ID=$CLUSTER_ID"
+
+    - name: Login to Rancher and register cluster
+      environment:
+        RANCHER_IP: "{{ rancher_ip }}"
+        RANCHER_HOST: "{{ rancher_hostname }}"
+        RANCHER_PASS: "{{ rancher_bootstrap_password }}"
+        VM_HOST: "{{ vm_hostname }}"
+      command: /tmp/register_rancher.sh
+      register: rancher_reg_result
+
+    - name: Show registration output
+      debug:
+        msg: "{{ rancher_reg_result.stdout_lines }}"
+
+    - name: Extract registered cluster ID
+      set_fact:
+        registered_cluster_id: >-
+          {{ rancher_reg_result.stdout
+             | regex_search('CLUSTER_ID=([a-z0-9-]+)', '\1')
+             | first | default('local') }}
+
+    - name: Wait for cattle-cluster-agent deployment to be created
+      command: k3s kubectl get deployment cattle-cluster-agent -n cattle-system
+      register: agent_check
+      retries: 24
+      delay: 5
+      until: agent_check.rc == 0
+
+    - name: Patch cattle-cluster-agent with hostAliases for Rancher
+      shell: |
+        k3s kubectl patch deployment cattle-cluster-agent -n cattle-system \
+          --type=strategic \
+          -p='{"spec":{"template":{"spec":{"hostAliases":[{"ip":"{{ rancher_ip }}","hostnames":["{{ rancher_hostname }}"]}]}}}}'
+
+    - name: Wait for cattle-cluster-agent rollout
+      command: >
+        k3s kubectl rollout status deployment/cattle-cluster-agent
+        -n cattle-system --timeout=120s
+
+    - name: Remove Rancher registration script
+      file:
+        path: /tmp/register_rancher.sh
+        state: absent
+
+    - name: Apply Rancher RBAC bindings for registered cluster
+      when: rancher_rbac_cluster_bindings is defined
+      block:
+        - name: Copy RBAC apply script
+          copy:
+            dest: /tmp/apply_rancher_rbac.py
+            mode: '0755'
+            content: |
+              #!/usr/bin/env python3
+              import json, os, subprocess
+
+              host     = os.environ['RANCHER_HOST']
+              endpoint = os.environ.get('RANCHER_ENDPOINT', 'localhost')
+              password = os.environ['RANCHER_PASS']
+              cluster  = os.environ.get('CLUSTER_ID', 'local')
+
+              def curl_json(*args):
+                  r = subprocess.run(['curl', '-sk'] + list(args),
+                                     capture_output=True, text=True)
+                  try:
+                      return json.loads(r.stdout)
+                  except Exception:
+                      return {'_raw': r.stdout, 'type': 'error'}
+
+              token_resp = curl_json(
+                  '-H', f'Host: {host}',
+                  '-X', 'POST',
+                  f'https://{endpoint}/v3-public/localProviders/local?action=login',
+                  '-H', 'Content-Type: application/json',
+                  '-d', json.dumps({'username': 'admin', 'password': password, 'ttl': 60000}))
+              token = token_resp.get('token', '')
+              if not token:
+                  print(f'ERROR: Rancher login failed: {token_resp}')
+                  exit(1)
+
+              def post_binding(ep, body):
+                  resp = curl_json(
+                      '-H', f'Host: {host}',
+                      '-H', f'Authorization: Bearer {token}',
+                      '-X', 'POST', f'https://{endpoint}/{ep}',
+                      '-H', 'Content-Type: application/json',
+                      '-d', json.dumps(body))
+                  rtype = resp.get('type', '')
+                  msg   = resp.get('message', '')
+                  if 'already exist' in msg.lower():
+                      print(f'  {ep}: already exists, ok')
+                  elif rtype and not rtype.startswith('error'):
+                      print(f'  {ep}: created {resp.get("id", "?")}')
+                  else:
+                      print(f'  WARNING {ep}: {resp}')
+
+              for b in json.loads(os.environ.get('CLUSTER_BINDINGS', '[]')):
+                  post_binding('v3/clusterroletemplatebindings',
+                               {**b, 'clusterId': cluster})
+              print('Done.')
+
+        - name: Run RBAC apply script
+          shell: python3 /tmp/apply_rancher_rbac.py
+          environment:
+            RANCHER_HOST:     "{{ rancher_hostname }}"
+            RANCHER_ENDPOINT: "{{ rancher_ip }}"
+            RANCHER_PASS:     "{{ rancher_bootstrap_password }}"
+            CLUSTER_BINDINGS: "{{ rancher_rbac_cluster_bindings | to_json }}"
+            CLUSTER_ID:       "{{ registered_cluster_id | default('local') }}"
+
+    - name: Registration summary
+      debug:
+        msg: >-
+          GPU worker '{{ vm_hostname }}' registered with Rancher at
+          https://{{ rancher_hostname }} (cluster ID: {{ registered_cluster_id | default('unknown') }})

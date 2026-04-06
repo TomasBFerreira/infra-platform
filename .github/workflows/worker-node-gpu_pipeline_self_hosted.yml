@@ -85,7 +85,7 @@ jobs:
               VMID_BASE=120; ENV=prod; ENV_SUBNET=10
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
               GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
-              RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
+              RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher.databaes.net"
               ;;
             vladimir)
               VMID_BASE=320; ENV=qa; ENV_SUBNET=30
