@@ -31,6 +31,18 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "curl -s http://localhost:8080/api/http/routers/rancher-prod-router@file 2>/dev/null || echo 'router not found'"
 
+          echo "=== Traefik rancher-prod-service ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -s http://localhost:8080/api/http/services/rancher-prod-service@file 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(\"status:\",d.get(\"status\")); print(\"error:\",d.get(\"error\",\"none\")); print(\"serverStatus:\",d.get(\"serverStatus\",{}))'  2>&1 || echo 'service not found'"
+
+          echo "=== Traefik plex-router (control - uses insecureTransport) ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -s http://localhost:8080/api/http/routers/plex-router@file 2>/dev/null"
+
+          echo "=== Traefik plex-service status ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "curl -s http://localhost:8080/api/http/services/plex-service@file 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(\"status:\",d.get(\"status\")); print(\"serverStatus:\",d.get(\"serverStatus\",{}))' 2>&1"
+
           echo "=== services.yml inside container (rancher section) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "docker exec traefik cat /etc/traefik/dynamic/services.yml | grep -A8 'rancher-prod-router'"
