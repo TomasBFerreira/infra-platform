@@ -43,9 +43,13 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "curl -s http://localhost:8080/api/http/services/plex-service@file 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(\"status:\",d.get(\"status\")); print(\"serverStatus:\",d.get(\"serverStatus\",{}))' 2>&1"
 
+          echo "=== services.yml on HOST (rancher section) ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "grep -A10 'rancher-prod-router' /opt/traefik/config/dynamic/services.yml"
+
           echo "=== services.yml inside container (rancher section) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "docker exec traefik cat /etc/traefik/dynamic/services.yml | grep -A8 'rancher-prod-router'"
+            "docker exec traefik cat /etc/traefik/dynamic/services.yml | grep -A10 'rancher-prod-router'"
 
           echo "=== Rancher backend reachable? ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
