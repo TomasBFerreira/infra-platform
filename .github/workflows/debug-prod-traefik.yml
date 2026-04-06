@@ -31,6 +31,14 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "curl -s http://localhost:8080/api/http/routers/rancher-prod-router@file 2>/dev/null || echo 'router not found'"
 
+          echo "=== Traefik container mounts ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "docker inspect traefik --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'"
+
+          echo "=== Traefik logs (last 20) ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
+            "docker logs traefik --tail 20 2>&1"
+
           echo "=== services.yml rancher section ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "grep -A5 'rancher' /opt/traefik/config/dynamic/services.yml || echo 'rancher not in services.yml'"
