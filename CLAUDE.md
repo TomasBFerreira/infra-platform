@@ -18,6 +18,26 @@ Every new app/service being onboarded must satisfy all of the following before i
 11. **Standard users on every VM/LXC** — every Ansible playbook must create two users: `appadm` (owns the service — runs processes, owns files) and `tomas` (admin for interactive access, member of `sudo` group). No service should run as root, and no interactive access should rely solely on the root account.
 12. **Register a GitHub Actions runner for every new repo** — any repo that needs CI/CD must have a runner registered on the shared env runner LXC. Use the `register-runner.yml` workflow in infra-platform (one-time per repo per env). See [docs/runbooks.md](docs/runbooks.md#registering-a-github-actions-runner-for-a-new-repo) for the full procedure.
 
+## Vault access
+
+The **bootstrap vault** (`http://192.168.50.200:8200`) is directly reachable from the runner and from any LXC on the management network. To write a secret without a pipeline:
+
+```bash
+VAULT_ADDR=http://192.168.50.200:8200 VAULT_TOKEN=<token> vault kv put secret/<path> <field>=<value>
+```
+
+Credentials are in the `VAULT_BOOTSTRAP_ADDR` / `VAULT_BOOTSTRAP_ROOT_TOKEN` GitHub secrets (also documented in `docs/vaults.md`).
+
+**To enter an LXC interactively** (when SSH or a pipeline isn't viable): SSH into the Proxmox node that hosts it, then use `pct enter <vmid>`. Example — bootstrap vault LXC (CT 200) from betsy:
+
+```bash
+ssh root@192.168.50.2   # betsy (prod node)
+pct enter 200           # bootstrap vault
+vault kv put secret/rancher/prod/bootstrap password="..."
+```
+
+Use this method as a last resort when the self-hosted runner is unavailable or the secret type isn't covered by a seed pipeline.
+
 ---
 
 # infra-platform
