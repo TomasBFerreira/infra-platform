@@ -62,7 +62,7 @@ jobs:
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
               PVE_NODE="betsy"
               GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
-              RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
+              RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher.databaes.net"
               ;;
           esac
 
@@ -314,7 +314,7 @@ jobs:
     env:
       ENV:              ${{ needs.resolve-rancher.outputs.environment }}
       RANCHER_IP:       ${{ needs.resolve-rancher.outputs.ip }}
-      RANCHER_HOSTNAME: ${{ needs.resolve-rancher.outputs.hostname }}.databaes.net
+      RANCHER_HOSTNAME: ${{ needs.resolve-rancher.outputs.rancher_hostname }}
     steps:
       - name: Fetch Rancher credentials from Vault
         env:
