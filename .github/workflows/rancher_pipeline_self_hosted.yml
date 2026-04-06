@@ -210,8 +210,9 @@ jobs:
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
-      ENV: ${{ needs.resolve-rancher.outputs.environment }}
-      IP:  ${{ needs.resolve-rancher.outputs.ip }}
+      ENV:              ${{ needs.resolve-rancher.outputs.environment }}
+      IP:               ${{ needs.resolve-rancher.outputs.ip }}
+      RANCHER_HOSTNAME: ${{ needs.resolve-rancher.outputs.rancher_hostname }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
