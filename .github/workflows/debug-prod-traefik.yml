@@ -15,76 +15,77 @@ jobs:
           vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
             | awk 'NF > 0' > /tmp/nwkey && chmod 600 /tmp/nwkey
 
-          echo "=== Docker containers ==="
+          echo "=== Dynamic config dir contents ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
+            "ls -la /opt/traefik/config/dynamic/"
 
-          echo "=== Test localhost:80 ==="
+          echo "=== acme.json: all domain names with certs ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI -H 'Host: databaes.net' http://localhost:80/ 2>&1 | head -5"
+            "docker exec traefik cat /acme.json 2>/dev/null | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+for resolver,data in d.items():
+    certs=data.get(\"Certificates\",[])
+    print(f\"resolver={resolver} certs={len(certs)}\")
+    for c in certs:
+        print(\"  domain:\",c.get(\"domain\",{}).get(\"main\",\"?\"),c.get(\"domain\",{}).get(\"sans\",[]))
+' 2>&1 || echo 'no acme.json or parse error'"
 
-          echo "=== Test k3s landing page ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI http://192.168.10.12:30080/ 2>&1 | head -5"
+          echo "=== HYPOTHESIS TEST: temporarily use web-only for rancher ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 "
+# Save original
+cp /opt/traefik/config/dynamic/services.yml /tmp/services_backup.yml
 
-          echo "=== Traefik rancher-prod-router ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/routers/rancher-prod-router@file 2>/dev/null || echo 'router not found'"
+# Create a patched version with web-only for rancher-prod-router
+python3 -c '
+import re, sys
+content = open(\"/opt/traefik/config/dynamic/services.yml\").read()
 
-          echo "=== Traefik rancher-prod-service ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/services/rancher-prod-service@file 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(\"status:\",d.get(\"status\")); print(\"error:\",d.get(\"error\",\"none\")); print(\"serverStatus:\",d.get(\"serverStatus\",{}))'  2>&1 || echo 'service not found'"
+# Replace the rancher-prod-router entryPoints section to use only web
+# The block looks like:
+#     rancher-prod-router:
+#       entryPoints:
+#       - web
+#       - websecure
+# We want to remove the websecure line only for rancher-prod-router
 
-          echo "=== Traefik plex-router (control - uses insecureTransport) ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/routers/plex-router@file 2>/dev/null"
+lines = content.splitlines()
+result = []
+in_rancher_entry_points = False
+skip_next = False
+for i, line in enumerate(lines):
+    if \"rancher-prod-router:\" in line:
+        in_rancher_entry_points = False
+        result.append(line)
+    elif in_rancher_entry_points and line.strip() == \"- websecure\":
+        in_rancher_entry_points = False  # done with entryPoints block
+        # skip this line (remove websecure)
+        print(f\"Removing line: {line}\", file=sys.stderr)
+    elif \"rancher-prod-router\" in \"\".join(result[-5:]) and line.strip() == \"entryPoints:\": 
+        in_rancher_entry_points = True
+        result.append(line)
+    else:
+        result.append(line)
 
-          echo "=== Traefik plex-service status ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/services/plex-service@file 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(\"status:\",d.get(\"status\")); print(\"serverStatus:\",d.get(\"serverStatus\",{}))' 2>&1"
+open(\"/opt/traefik/config/dynamic/services.yml\", \"w\").write(\"\n\".join(result))
+print(\"Done\")
+' 2>&1
 
-          echo "=== services.yml on HOST (rancher section) ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "grep -A10 'rancher-prod-router' /opt/traefik/config/dynamic/services.yml"
+echo 'Patched file rancher section:'
+grep -A8 'rancher-prod-router' /opt/traefik/config/dynamic/services.yml
 
-          echo "=== services.yml inside container (rancher section) ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "docker exec traefik cat /etc/traefik/dynamic/services.yml | grep -A10 'rancher-prod-router'"
+docker restart traefik && sleep 5 && echo 'Traefik restarted'
+"
 
-          echo "=== Rancher backend reachable? ==="
+          echo "=== Test rancher with web-only config ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -ks -o /dev/null -w '%{http_code}' --max-time 5 https://192.168.10.2/ || echo 'unreachable'"
+            "curl -sI --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ 2>&1 | head -6"
 
-          echo "=== curl plex (CONTROL: same insecureTransport + HTTPS backend) ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI --resolve plex.databaes.net:80:127.0.0.1 http://plex.databaes.net/ 2>&1 | head -4"
-
-          echo "=== curl rancher via --resolve ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sIv --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ 2>&1 | grep -E 'HTTP/|> Host|< |Connected'"
-
-          echo "=== Restart Traefik ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "docker restart traefik && sleep 3 && echo 'restarted'"
-
-          echo "=== curl rancher AFTER restart ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ 2>&1 | head -4"
-
-          echo "=== All web-entrypoint routers in API ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -c 'import sys,json; [print(r[\"name\"],\"|\",r.get(\"rule\",\"\"),\"|\",r.get(\"status\")) for r in json.load(sys.stdin) if \"web\" in r.get(\"using\",[])]'"
-
-          echo "=== cloudflared systemd status ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "systemctl status cloudflared --no-pager 2>&1 | head -20"
-
-          echo "=== cloudflared config ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "cat /etc/cloudflared/config.yml 2>/dev/null || echo 'no config.yml'; ls /etc/cloudflared/ 2>/dev/null"
-
-          echo "=== cloudflared tunnel status (last 20 lines of journal) ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "journalctl -u cloudflared -n 20 --no-pager 2>&1"
+          echo "=== Restore original config ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 "
+cp /tmp/services_backup.yml /opt/traefik/config/dynamic/services.yml
+docker restart traefik && sleep 3 && echo 'restored and restarted'
+"
 
           rm -f /tmp/nwkey
+
