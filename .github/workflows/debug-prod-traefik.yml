@@ -45,13 +45,7 @@ jobs:
 
           echo "=== All web-entrypoint routers in API ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -c \"
-import sys,json
-routers=json.load(sys.stdin)
-for r in routers:
-  if 'web' in r.get('using',[]):
-    print(r['name'],'|',r.get('rule',''),'|',r.get('status'))
-\" | grep -v 'internal'"
+            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -c 'import sys,json; [print(r[\"name\"],\"|\",r.get(\"rule\",\"\"),\"|\",r.get(\"status\")) for r in json.load(sys.stdin) if \"web\" in r.get(\"using\",[])]'"
 
           echo "=== cloudflared systemd status ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
