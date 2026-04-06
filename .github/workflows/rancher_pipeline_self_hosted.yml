@@ -301,6 +301,7 @@ jobs:
             -e "ansible_user=root" \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "runner_env=${ENV}" \
+            -e "rancher_hostname=${RANCHER_HOSTNAME}" \
             -e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}" \
             ${RANCHER_OIDC_CLIENT_ID:+-e "rancher_oidc_client_id=${RANCHER_OIDC_CLIENT_ID}"} \
             ${RANCHER_OIDC_CLIENT_SECRET:+-e "rancher_oidc_client_secret=${RANCHER_OIDC_CLIENT_SECRET}"} \
