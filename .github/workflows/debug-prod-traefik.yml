@@ -7,7 +7,7 @@ jobs:
   debug:
     runs-on: [self-hosted, prod]
     steps:
-      - name: Check Traefik on prod network-vm
+      - name: Check Rancher LXC (192.168.10.2)
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
@@ -15,27 +15,27 @@ jobs:
           vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
             | awk 'NF > 0' > /tmp/nwkey && chmod 600 /tmp/nwkey
 
-          echo "=== docker-compose.yml on prod VM ==="
+          echo "=== Check port 443 and 80 on Rancher LXC from network VM ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "cat /opt/traefik/docker-compose.yml 2>/dev/null || cat /opt/traefik/docker-compose.yaml 2>/dev/null || find /opt/traefik -name 'docker-compose*' | head -3"
+            "curl -ksv --max-time 5 https://192.168.10.2/ 2>&1 | grep -E 'Connected|SSL|< HTTP|TLS|certificate|SNI|Host|subject|issuer' | head -20"
 
-          echo "=== Traefik container inspect (labels + mounts) ==="
+          echo "=== Port 80 on Rancher LXC ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "docker inspect traefik 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin)[0]; print(\"Labels:\",d.get(\"Config\",{}).get(\"Labels\",{})); print(\"Mounts:\",[(m[\"Source\"],m[\"Destination\"]) for m in d.get(\"Mounts\",[])]);'"
+            "curl -sv --max-time 5 -H 'Host: rancher.databaes.net' http://192.168.10.2/ 2>&1 | grep -E 'Connected|< HTTP|Location' | head -10"
 
-          echo "=== curl rancher + immediate access log ==="
+          echo "=== SSH to Rancher LXC and check k3s ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ > /dev/null 2>&1; sleep 1; docker logs traefik --tail 5 2>&1"
+            "ssh -o StrictHostKeyChecking=no root@192.168.10.2 'kubectl get pods -A 2>&1 | head -30; echo ---; kubectl get ingress -A 2>&1; echo ---; kubectl get svc -A 2>&1 | grep -E rancher'" \
+            2>&1 || echo "ssh to rancher LXC failed — trying with rancher key from vault"
 
-          echo "=== curl plex + immediate access log ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI --resolve plex.databaes.net:80:127.0.0.1 http://plex.databaes.net/ > /dev/null 2>&1; sleep 1; docker logs traefik --tail 5 2>&1"
+          echo "=== Try rancher LXC with vault SSH key ==="
+          vault kv get -field=private_key secret/ssh_keys/lxc_default 2>/dev/null \
+            | awk 'NF > 0' > /tmp/rancherkey && chmod 600 /tmp/rancherkey 2>/dev/null || echo "no lxc_default key"
+          ssh -i /tmp/rancherkey -o StrictHostKeyChecking=no root@192.168.10.2 \
+            "kubectl get pods -A 2>&1 | head -30" 2>&1 || echo "lxc_default key also failed"
 
-          echo "=== All routers from API (all providers) ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -c 'import sys,json; [print(r[\"name\"],\"priority:\",r.get(\"priority\"),\"|\",r.get(\"rule\",\"\")) for r in sorted(json.load(sys.stdin), key=lambda x: x.get(\"priority\",0), reverse=True) if \"rancher\" in r.get(\"rule\",\"\").lower() or r.get(\"priority\",0) > 100]'"
+          rm -f /tmp/nwkey /tmp/rancherkey
 
-          rm -f /tmp/nwkey
 
 
 
