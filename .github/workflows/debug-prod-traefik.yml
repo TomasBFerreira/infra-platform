@@ -31,21 +31,27 @@ jobs:
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
             "curl -s http://localhost:8080/api/http/routers/rancher-prod-router@file 2>/dev/null || echo 'router not found'"
 
-          echo "=== Traefik container mounts ==="
+          echo "=== services.yml inside container (rancher section) ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "docker inspect traefik --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'"
+            "docker exec traefik cat /etc/traefik/dynamic/services.yml | grep -A8 'rancher-prod-router'"
 
-          echo "=== Traefik logs (last 20) ==="
+          echo "=== Rancher backend reachable? ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "docker logs traefik --tail 20 2>&1"
+            "curl -ks -o /dev/null -w '%{http_code}' --max-time 5 https://192.168.10.2/ || echo 'unreachable'"
 
-          echo "=== services.yml rancher section ==="
+          echo "=== curl rancher via --resolve ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "grep -A5 'rancher' /opt/traefik/config/dynamic/services.yml || echo 'rancher not in services.yml'"
+            "curl -sIv --resolve rancher.databaes.net:80:127.0.0.1 http://rancher.databaes.net/ 2>&1 | grep -E 'HTTP/|> Host|< |Connected'"
 
-          echo "=== curl rancher.databaes.net via localhost ==="
+          echo "=== All web-entrypoint routers in API ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sI -H 'Host: rancher.databaes.net' http://localhost:80/ 2>&1 | head -6"
+            "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -c \"
+import sys,json
+routers=json.load(sys.stdin)
+for r in routers:
+  if 'web' in r.get('using',[]):
+    print(r['name'],'|',r.get('rule',''),'|',r.get('status'))
+\" | grep -v 'internal'"
 
           echo "=== cloudflared systemd status ==="
           ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
