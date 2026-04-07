@@ -57,7 +57,7 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
       }
     }
     dns {
-      servers = [var.gateway]
+      servers = ["1.1.1.1", "8.8.8.8"]
     }
     user_account {
       username = "root"
