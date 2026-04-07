@@ -15,7 +15,7 @@
           - open-iscsi
           - nfs-common
           - qemu-guest-agent
-          - linux-headers-amd64
+          - "linux-headers-{{ 'generic' if ansible_distribution == 'Ubuntu' else 'amd64' }}"
           - build-essential
           - dkms
         state: present
@@ -28,7 +28,8 @@
         state: started
 
     # ── NVIDIA drivers ───────────────────────────────────────────────────────
-    # Installs the proprietary NVIDIA driver from the Debian non-free repo.
+    # Ubuntu: installs from the official Ubuntu driver repo.
+    # Debian: installs from non-free repo.
     # A reboot is required after install so the DKMS module loads into the
     # running kernel before k3s and the container toolkit are configured.
 
@@ -37,8 +38,9 @@
         repo: "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware"
         state: present
         filename: debian-bookworm-nonfree
+      when: ansible_distribution == 'Debian'
 
-    - name: Install NVIDIA driver
+    - name: Install NVIDIA driver (Debian)
       apt:
         name:
           - nvidia-driver
@@ -46,6 +48,21 @@
         state: present
         update_cache: yes
       register: nvidia_driver_install
+      when: ansible_distribution == 'Debian'
+
+    - name: Install NVIDIA driver (Ubuntu)
+      apt:
+        name:
+          - nvidia-driver-550
+        state: present
+        update_cache: yes
+      register: nvidia_driver_install_ubuntu
+      when: ansible_distribution == 'Ubuntu'
+
+    - name: Set NVIDIA install result
+      set_fact:
+        nvidia_driver_install: "{{ nvidia_driver_install_ubuntu if ansible_distribution == 'Ubuntu' else nvidia_driver_install }}"
+      when: ansible_distribution == 'Ubuntu'
 
     - name: Reboot to load NVIDIA kernel module
       reboot:
