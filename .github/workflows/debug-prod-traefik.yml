@@ -58,6 +58,54 @@ jobs:
 
           rm -f /tmp/nwkey
 
+      - name: Diagnose Authentik outpost, Vault, and Grafana health
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nwkey && chmod 600 /tmp/nwkey
+
+          NW="ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55"
+          JUMP="-o ProxyJump=root@192.168.10.55"
+
+          echo "=== 1. Authentik outpost endpoint from network-vm → SSO LXC .75 ==="
+          $NW "curl -sv --max-time 5 http://192.168.10.75:9000/outpost.goauthentik.io/auth/traefik 2>&1" || echo "curl to .75 failed"
+
+          echo ""
+          echo "=== 2. Authentik outpost endpoint from network-vm → SSO LXC .76 ==="
+          $NW "curl -sv --max-time 5 http://192.168.10.76:9000/outpost.goauthentik.io/auth/traefik 2>&1" || echo "curl to .76 failed"
+
+          echo ""
+          echo "=== 3. Docker containers on SSO prod .75 ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no $JUMP root@192.168.10.75 "docker ps -a" 2>&1 || echo "docker ps on .75 failed"
+
+          echo ""
+          echo "=== 4. Authentik logs on SSO prod .75 ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no $JUMP root@192.168.10.75 "docker logs authentik-server --tail 20 2>&1 || journalctl -u authentik -n 20 --no-pager 2>&1" 2>&1 || echo "logs on .75 failed"
+
+          echo ""
+          echo "=== 5. Docker containers on SSO prod .76 ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no $JUMP root@192.168.10.76 "docker ps -a" 2>&1 || echo "docker ps on .76 failed"
+
+          echo ""
+          echo "=== 6. Authentik logs on SSO prod .76 ==="
+          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no $JUMP root@192.168.10.76 "docker logs authentik-server --tail 20 2>&1 || journalctl -u authentik -n 20 --no-pager 2>&1" 2>&1 || echo "logs on .76 failed"
+
+          echo ""
+          echo "=== 7. Vault prod health from network-vm ==="
+          $NW "curl -sv --max-time 5 http://192.168.10.46:8200/v1/sys/health 2>&1" || echo "vault health check failed"
+
+          echo ""
+          echo "=== 8. Grafana health on .95 from network-vm ==="
+          $NW "curl -sv --max-time 5 http://192.168.10.95:3000/api/health 2>&1" || echo "grafana .95 health check failed"
+
+          echo ""
+          echo "=== 9. Grafana health on .96 from network-vm ==="
+          $NW "curl -sv --max-time 5 http://192.168.10.96:3000/api/health 2>&1" || echo "grafana .96 health check failed"
+
+          rm -f /tmp/nwkey
+
 
 
 
