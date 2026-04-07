@@ -32,56 +32,6 @@
         enabled: yes
         state: started
 
-    # ── NVIDIA drivers ───────────────────────────────────────────────────────
-    # Ubuntu: installs from the official Ubuntu driver repo.
-    # Debian: installs from non-free repo.
-    # A reboot is required after install so the DKMS module loads into the
-    # running kernel before k3s and the container toolkit are configured.
-
-    - name: Enable Debian non-free and non-free-firmware components
-      apt_repository:
-        repo: "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware"
-        state: present
-        filename: debian-bookworm-nonfree
-      when: ansible_distribution == 'Debian'
-
-    - name: Install NVIDIA driver (Debian)
-      apt:
-        name:
-          - nvidia-driver
-          - firmware-misc-nonfree
-        state: present
-        update_cache: yes
-      register: nvidia_driver_install
-      when: ansible_distribution == 'Debian'
-
-    - name: Install NVIDIA driver (Ubuntu)
-      shell: |
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nvidia-driver-550-server
-      register: nvidia_driver_install_ubuntu
-      when: ansible_distribution == 'Ubuntu'
-      async: 600
-      poll: 30
-
-    - name: Set NVIDIA install result
-      set_fact:
-        nvidia_driver_install: "{{ nvidia_driver_install_ubuntu if ansible_distribution == 'Ubuntu' else nvidia_driver_install }}"
-      when: ansible_distribution == 'Ubuntu'
-
-    - name: Reboot to load NVIDIA kernel module
-      reboot:
-        reboot_timeout: 300
-      when: nvidia_driver_install.changed | default(false)
-
-    - name: Verify NVIDIA driver is loaded
-      command: nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
-      register: nvidia_smi_out
-      changed_when: false
-
-    - name: Print GPU info
-      debug:
-        msg: "GPU: {{ nvidia_smi_out.stdout }}"
-
     # ── k3s ─────────────────────────────────────────────────────────────────
 
     - name: Switch to iptables-legacy before k3s install
@@ -120,55 +70,6 @@
         name: k3s
         enabled: yes
         state: started
-
-    # ── NVIDIA Container Toolkit ─────────────────────────────────────────────
-    # Configures containerd (k3s's embedded runtime) to use the NVIDIA runtime
-    # so GPU workloads (Plex transcoding, NVENC) can access the GPU from pods.
-
-    - name: Add NVIDIA Container Toolkit GPG key
-      shell: |
-        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-          | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-      args:
-        creates: /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-
-    - name: Add NVIDIA Container Toolkit apt repo
-      shell: |
-        curl -sL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-          | sed "s|deb https://|deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://|g" \
-          > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-      args:
-        creates: /etc/apt/sources.list.d/nvidia-container-toolkit.list
-
-    - name: Install NVIDIA Container Toolkit
-      apt:
-        name: nvidia-container-toolkit
-        state: present
-        update_cache: yes
-
-    - name: Configure containerd to use NVIDIA runtime
-      command: nvidia-ctk runtime configure --runtime=containerd
-      register: ctk_configure
-      changed_when: "'successfully' in ctk_configure.stdout or ctk_configure.rc == 0"
-
-    - name: Restart k3s to pick up NVIDIA containerd config
-      systemd:
-        name: k3s
-        state: restarted
-
-    - name: Wait for k3s to be Ready after restart
-      command: k3s kubectl get nodes
-      register: k3s_nodes_post
-      retries: 12
-      delay: 10
-      until: k3s_nodes_post.rc == 0 and 'Ready' in k3s_nodes_post.stdout
-
-    - name: Label node as GPU-capable
-      shell: |
-        NODE=$(k3s kubectl get nodes -o jsonpath="{.items[0].metadata.name}")
-        k3s kubectl label node "$NODE" nvidia.com/gpu.present=true --overwrite
-        k3s kubectl label node "$NODE" workload=gpu --overwrite
-      changed_when: false
 
     # ── Standard users ───────────────────────────────────────────────────────
 

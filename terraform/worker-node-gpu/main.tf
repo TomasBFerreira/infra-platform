@@ -7,9 +7,6 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
   vm_id     = var.vmid
   node_name = var.target_node
 
-  # q35 is required for proper PCIe passthrough (hostpci with pcie=true).
-  machine = "q35"
-
   clone {
     vm_id = var.template_vmid
     full  = true
@@ -18,7 +15,6 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
   cpu {
     cores   = 6
     sockets = 1
-    # "host" exposes all host CPU features — needed for NVENC/NVDEC instruction sets.
     type    = "host"
   }
 
@@ -39,16 +35,6 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
     bridge = var.network_bridge
   }
 
-  # GTX 970 (GM204) passthrough — both functions (VGA + audio) in IOMMU group 15.
-  # The GPU is bound to vfio-pci on the host and is not used by the hypervisor.
-  hostpci {
-    device = "hostpci0"
-    id     = var.gpu_pci_id
-    pcie   = true
-    rombar = true
-    xvga   = false
-  }
-
   initialization {
     ip_config {
       ipv4 {
@@ -63,15 +49,6 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
       username = "root"
       keys     = [trimspace(data.vault_generic_secret.ssh_key.data["public_key"])]
     }
-  }
-
-  # Serial console for Ansible/SSH access (separate from GPU display output).
-  serial_device {
-    device = "socket"
-  }
-
-  vga {
-    type = "serial0"
   }
 
   agent {
