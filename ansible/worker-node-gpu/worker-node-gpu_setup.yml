@@ -51,13 +51,12 @@
       when: ansible_distribution == 'Debian'
 
     - name: Install NVIDIA driver (Ubuntu)
-      apt:
-        name:
-          - nvidia-driver-550
-        state: present
-        update_cache: yes
+      shell: |
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nvidia-driver-550-server
       register: nvidia_driver_install_ubuntu
       when: ansible_distribution == 'Ubuntu'
+      async: 600
+      poll: 30
 
     - name: Set NVIDIA install result
       set_fact:
@@ -67,7 +66,7 @@
     - name: Reboot to load NVIDIA kernel module
       reboot:
         reboot_timeout: 300
-      when: nvidia_driver_install.changed
+      when: nvidia_driver_install.changed | default(false)
 
     - name: Verify NVIDIA driver is loaded
       command: nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
