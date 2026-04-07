@@ -6,6 +6,11 @@
   tasks:
     # ── System prerequisites ─────────────────────────────────────────────────
 
+    - name: Wait for cloud-init to finish
+      command: cloud-init status --wait
+      changed_when: false
+      timeout: 600
+
     - name: Install prerequisites
       apt:
         name:
