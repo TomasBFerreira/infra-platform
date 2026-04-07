@@ -7,7 +7,7 @@ jobs:
   debug:
     runs-on: [self-hosted, prod]
     steps:
-      - name: Check Rancher LXC (192.168.10.2)
+      - name: Diagnose Traefik on network-vm (192.168.10.55)
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
@@ -15,26 +15,48 @@ jobs:
           vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
             | awk 'NF > 0' > /tmp/nwkey && chmod 600 /tmp/nwkey
 
-          echo "=== Check port 443 and 80 on Rancher LXC from network VM ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -ksv --max-time 5 https://192.168.10.2/ 2>&1 | grep -E 'Connected|SSL|< HTTP|TLS|certificate|SNI|Host|subject|issuer' | head -20"
+          NW="ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55"
 
-          echo "=== Port 80 on Rancher LXC ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "curl -sv --max-time 5 -H 'Host: rancher.databaes.net' http://192.168.10.2/ 2>&1 | grep -E 'Connected|< HTTP|Location' | head -10"
+          echo "=== 1. Docker container status ==="
+          $NW "docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>&1" || echo "docker ps failed"
 
-          echo "=== SSH to Rancher LXC and check k3s ==="
-          ssh -i /tmp/nwkey -o StrictHostKeyChecking=no root@192.168.10.55 \
-            "ssh -o StrictHostKeyChecking=no root@192.168.10.2 'kubectl get pods -A 2>&1 | head -30; echo ---; kubectl get ingress -A 2>&1; echo ---; kubectl get svc -A 2>&1 | grep -E rancher'" \
-            2>&1 || echo "ssh to rancher LXC failed — trying with rancher key from vault"
+          echo ""
+          echo "=== 2. services.yml on disk (first 20 + last 20 lines) ==="
+          $NW "head -20 /opt/traefik/config/dynamic/services.yml && echo '...' && tail -20 /opt/traefik/config/dynamic/services.yml" || echo "file read failed"
 
-          echo "=== Try rancher LXC with vault SSH key ==="
-          vault kv get -field=private_key secret/ssh_keys/lxc_default 2>/dev/null \
-            | awk 'NF > 0' > /tmp/rancherkey && chmod 600 /tmp/rancherkey 2>/dev/null || echo "no lxc_default key"
-          ssh -i /tmp/rancherkey -o StrictHostKeyChecking=no root@192.168.10.2 \
-            "kubectl get pods -A 2>&1 | head -30" 2>&1 || echo "lxc_default key also failed"
+          echo ""
+          echo "=== 3. Grep prowlarr/sonarr/rancher routers in deployed services.yml ==="
+          $NW "grep -n -E 'prowlarr-router|sonarr-router|radarr-router|rancher-prod-router|grafana-router' /opt/traefik/config/dynamic/services.yml" || echo "grep failed"
 
-          rm -f /tmp/nwkey /tmp/rancherkey
+          echo ""
+          echo "=== 4. Traefik API — list loaded HTTP routers ==="
+          $NW "curl -s http://localhost:8080/api/http/routers 2>/dev/null | python3 -c 'import sys,json; [print(r[\"name\"],r.get(\"status\",\"?\"),r[\"rule\"][:60]) for r in json.load(sys.stdin)]' 2>&1 || echo 'API not available or no python3'" || echo "traefik api check failed"
+
+          echo ""
+          echo "=== 5. Traefik API — list loaded middlewares ==="
+          $NW "curl -s http://localhost:8080/api/http/middlewares 2>/dev/null | python3 -c 'import sys,json; [print(m[\"name\"],m.get(\"status\",\"?\"),m.get(\"type\",\"?\")) for m in json.load(sys.stdin)]' 2>&1 || echo 'API not available'" || echo "middleware check failed"
+
+          echo ""
+          echo "=== 6. Test forwardAuth chain from inside network-vm ==="
+          $NW "curl -sv --max-time 5 -H 'Host: prowlarr.databaes.net' http://127.0.0.1:80/ 2>&1 | grep -E '< HTTP|Location|content-type' | head -10" || echo "local test failed"
+
+          echo ""
+          echo "=== 7. Test internal-prod loopback (forwardAuth target) ==="
+          $NW "curl -sv --max-time 5 http://127.0.0.1:9098/outpost.goauthentik.io/auth/traefik 2>&1 | grep -E '< HTTP|Location|content-type' | head -10" || echo "loopback test failed"
+
+          echo ""
+          echo "=== 8. Auth-service backend connectivity ==="
+          $NW "for ip in 192.168.10.75 192.168.10.76; do echo -n \"\$ip:9000 → \"; curl -s --max-time 3 http://\$ip:9000/-/health/ready/ -o /dev/null -w '%{http_code}'; echo; done" || echo "auth backend check failed"
+
+          echo ""
+          echo "=== 9. Traefik logs (last 30 lines) ==="
+          $NW "docker logs traefik --tail 30 2>&1" || echo "docker logs failed"
+
+          echo ""
+          echo "=== 10. traefik.yml static config entrypoints ==="
+          $NW "grep -A3 'entryPoints' /opt/traefik/config/traefik.yml | head -30" || echo "static config check failed"
+
+          rm -f /tmp/nwkey
 
 
 
