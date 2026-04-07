@@ -23,7 +23,7 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
   }
 
   memory {
-    dedicated = 16384
+    dedicated = 8192
   }
 
   disk {
