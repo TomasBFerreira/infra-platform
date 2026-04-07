@@ -7,7 +7,7 @@
     # ── System prerequisites ─────────────────────────────────────────────────
 
     - name: Wait for cloud-init to finish
-      command: cloud-init status --wait
+      shell: cloud-init status --wait || true
       changed_when: false
       timeout: 600
 
