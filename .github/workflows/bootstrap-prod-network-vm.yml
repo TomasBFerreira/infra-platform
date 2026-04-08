@@ -2,6 +2,15 @@ name: Bootstrap prod network-vm (Ansible)
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_tailscale_auth:
+        description: 'Skip Tailscale re-authentication (use false to force re-auth when node is removed/state lost)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
   bootstrap:
@@ -117,7 +126,7 @@ jobs:
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
             -e "cloudflare_tunnel_token=$CF_TUNNEL_TOKEN" \
-            -e "tailscale_skip_auth=true" \
+            -e "tailscale_skip_auth=${{ inputs.skip_tailscale_auth || 'true' }}" \
             ansible/network-vm/network-vm_setup.yml
 
       - name: Cleanup

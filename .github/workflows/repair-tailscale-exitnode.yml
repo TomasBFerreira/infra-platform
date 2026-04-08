@@ -1,0 +1,197 @@
+name: Repair Tailscale Exit Node
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+      force_reauth:
+        description: 'Force Tailscale re-authentication (use if node was removed from admin console or state is lost)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  repair:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENV: ${{ inputs.environment }}
+      FORCE_REAUTH: ${{ inputs.force_reauth }}
+      SUBNETS: "192.168.10.0/24,192.168.20.0/24,192.168.30.0/24,192.168.50.0/24"
+
+    steps:
+      - name: Resolve active network-vm IP from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ACTIVE_IP=$(vault kv get -field=ip secret/network-vm/${ENV}/active-slot 2>/dev/null || echo "")
+          if [ -z "$ACTIVE_IP" ]; then
+            echo "ERROR: No active slot found in Vault for env=${ENV}"
+            echo "       Run the full network-vm pipeline to provision a new LXC."
+            exit 1
+          fi
+          echo "ACTIVE_IP=${ACTIVE_IP}" >> $GITHUB_ENV
+          echo "Active network-vm IP for ${ENV}: ${ACTIVE_IP}"
+
+      - name: Fetch SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nwvm_repair_key_${GITHUB_RUN_ID}
+          chmod 600 /tmp/nwvm_repair_key_${GITHUB_RUN_ID}
+          echo "SSH_KEY=/tmp/nwvm_repair_key_${GITHUB_RUN_ID}" >> $GITHUB_ENV
+
+      - name: Check SSH reachability
+        run: |
+          echo "=== Checking SSH on ${ACTIVE_IP} ==="
+          if ! nc -zw5 "${ACTIVE_IP}" 22; then
+            echo "ERROR: ${ACTIVE_IP} is not reachable on port 22."
+            echo "  If the LXC is stopped, run the 'Start prod network-vm' or full pipeline first."
+            exit 1
+          fi
+          echo "SSH is reachable."
+
+      - name: Check current Tailscale state
+        run: |
+          ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no root@"${ACTIVE_IP}" bash <<'EOF'
+          echo "=== tailscaled service ==="
+          systemctl status tailscaled --no-pager || true
+
+          echo ""
+          echo "=== Tailscale BackendState ==="
+          tailscale status --json 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print('BackendState:', d.get('BackendState')); print('Self:', d.get('Self',{}).get('HostName')); print('IPs:', d.get('Self',{}).get('TailscaleIPs')); print('PrimaryRoutes:', d.get('Self',{}).get('PrimaryRoutes')); print('AdvertisedRoutes:', d.get('Self',{}).get('AdvertisedRoutes'))" \
+            || echo "tailscale status failed — daemon may be down"
+
+          echo ""
+          echo "=== IP forwarding ==="
+          cat /proc/sys/net/ipv4/ip_forward
+
+          echo ""
+          echo "=== iptables FORWARD chain (first 10) ==="
+          iptables -L FORWARD -n --line-numbers 2>/dev/null | head -10 || echo "(iptables unavailable)"
+          EOF
+
+      - name: Restart tailscaled if not running
+        run: |
+          BACKEND=$(ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no root@"${ACTIVE_IP}" \
+            "tailscale status --json 2>/dev/null | python3 -c \"import json,sys; print(json.load(sys.stdin).get('BackendState','unknown'))\" 2>/dev/null || echo 'unknown'")
+          echo "BackendState: ${BACKEND}"
+          echo "BACKEND_STATE=${BACKEND}" >> $GITHUB_ENV
+
+          if [ "${BACKEND}" != "Running" ] && [ "${FORCE_REAUTH}" != "true" ]; then
+            echo "tailscaled is not Running — restarting service..."
+            ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no root@"${ACTIVE_IP}" bash <<'EOF'
+              systemctl restart tailscaled
+              echo "Waiting for tailscaled to initialise..."
+              sleep 5
+              systemctl is-active tailscaled && echo "tailscaled: active" || {
+                echo "ERROR: tailscaled failed to start"
+                journalctl -u tailscaled -n 30 --no-pager
+                exit 1
+              }
+          EOF
+          elif [ "${FORCE_REAUTH}" = "true" ]; then
+            echo "force_reauth=true — will re-authenticate in next step"
+          else
+            echo "tailscaled is Running — skipping restart"
+          fi
+
+      - name: Fetch Tailscale auth key from Vault (re-auth path only)
+        if: env.FORCE_REAUTH == 'true' || env.BACKEND_STATE == 'NeedsLogin' || env.BACKEND_STATE == 'NoState'
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_PROD_ADDR: ${{ secrets.VAULT_PROD_ADDR }}
+          VAULT_PROD_TOKEN: ${{ secrets.VAULT_PROD_TOKEN }}
+        run: |
+          if [ "${ENV}" = "prod" ]; then
+            TS_AUTHKEY=$(VAULT_ADDR="${VAULT_PROD_ADDR}" VAULT_TOKEN="${VAULT_PROD_TOKEN}" \
+              vault kv get -field=authkey secret/tailscale)
+          else
+            TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+          fi
+          if [ -z "$TS_AUTHKEY" ]; then
+            echo "ERROR: Could not fetch Tailscale auth key from Vault."
+            echo "  Generate a new reusable/pre-auth key in the Tailscale admin console"
+            echo "  and update Vault: vault kv put secret/tailscale authkey=<key>"
+            exit 1
+          fi
+          echo "::add-mask::$TS_AUTHKEY"
+          echo "TS_AUTHKEY=$TS_AUTHKEY" >> $GITHUB_ENV
+
+      - name: Re-authenticate Tailscale (re-auth path)
+        if: env.FORCE_REAUTH == 'true' || env.BACKEND_STATE == 'NeedsLogin' || env.BACKEND_STATE == 'NoState'
+        run: |
+          SLOT=$(vault kv get -field=slot secret/network-vm/${ENV}/active-slot 2>/dev/null || echo "blue")
+          HOSTNAME="${ENV}-network-vm-${SLOT}"
+          echo "Re-authenticating as hostname: ${HOSTNAME}"
+          ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no root@"${ACTIVE_IP}" \
+            "timeout 90 tailscale up \
+              --authkey='${TS_AUTHKEY}' \
+              --reset \
+              --advertise-routes=${SUBNETS} \
+              --advertise-exit-node \
+              --hostname=${HOSTNAME}"
+          echo "Re-authentication complete"
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+
+      - name: Re-advertise exit node and routes (already-connected path)
+        if: env.FORCE_REAUTH != 'true' && env.BACKEND_STATE == 'Running'
+        run: |
+          echo "Re-advertising routes and exit node on ${ACTIVE_IP}..."
+          ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no root@"${ACTIVE_IP}" \
+            "tailscale up --advertise-routes=${SUBNETS} --advertise-exit-node"
+          echo "Done"
+
+      - name: Verify final Tailscale state
+        run: |
+          ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no root@"${ACTIVE_IP}" bash <<'EOF'
+          echo "=== Final Tailscale status ==="
+          tailscale status
+
+          echo ""
+          BACKEND=$(tailscale status --json 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('BackendState','unknown'))" 2>/dev/null)
+          echo "BackendState: ${BACKEND}"
+
+          if [ "${BACKEND}" = "Running" ]; then
+            echo "SUCCESS: Tailscale is Running"
+            tailscale status --json | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          s = d.get('Self', {})
+          print('  Hostname:', s.get('HostName'))
+          print('  IPs:', s.get('TailscaleIPs'))
+          print('  PrimaryRoutes:', s.get('PrimaryRoutes'))
+          print('  AdvertisedRoutes:', s.get('AdvertisedRoutes'))
+          "
+            echo ""
+            echo "NOTE: If exit node is not showing as available to clients, verify it is"
+            echo "      APPROVED in the Tailscale admin console (Machines → Edit route settings)."
+          else
+            echo "WARNING: BackendState is ${BACKEND} — manual intervention may be required."
+            echo "  If state is NeedsLogin: re-run with force_reauth=true"
+            echo "  If LXC is unreachable: check Proxmox host and run the full network-vm pipeline"
+            exit 1
+          fi
+          EOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f "${SSH_KEY}" /tmp/nwvm_repair_key_* 2>/dev/null || true
