@@ -1,0 +1,59 @@
+name: Copy bootstrap vault token to repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Target repo (owner/repo)'
+        required: true
+        default: 'TomasBFerreira/streambox'
+
+jobs:
+  copy:
+    runs-on: [self-hosted, dev]
+    steps:
+      - name: Set VAULT_BOOTSTRAP_ROOT_TOKEN in target repo
+        run: |
+          apt-get install -y -q python3-nacl
+          python3 - <<PYEOF
+          import os, base64, json
+          from nacl import encoding, public
+          import urllib.request
+
+          token    = os.environ["VAULT_TOKEN"]
+          gh_token = os.environ["GH_PAT"]
+          repo     = os.environ["TARGET_REPO"]
+          secret   = "VAULT_BOOTSTRAP_ROOT_TOKEN"
+
+          # Get repo public key
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
+              headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github+json"}
+          )
+          key_data = json.load(urllib.request.urlopen(req))
+          key_id   = key_data["key_id"]
+          pub_key  = public.PublicKey(key_data["key"].encode(), encoding.Base64Encoder)
+
+          # Encrypt secret
+          box       = public.SealedBox(pub_key)
+          encrypted = base64.b64encode(box.encrypt(token.encode())).decode()
+
+          # Set secret
+          payload = json.dumps({"encrypted_value": encrypted, "key_id": key_id}).encode()
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/secrets/{secret}",
+              data=payload,
+              method="PUT",
+              headers={
+                  "Authorization": f"Bearer {gh_token}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json"
+              }
+          )
+          urllib.request.urlopen(req)
+          print(f"Secret {secret} updated in {repo}")
+          PYEOF
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          TARGET_REPO: ${{ inputs.repo }}
