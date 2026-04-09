@@ -107,11 +107,16 @@ jobs:
 
           # ── Django ORM: set branding_custom_css + ui_theme ───────────────────
           # These fields are NOT in the REST API serializer for this Authentik version.
-          # Copy CSS into the container and apply via ak shell.
-          subprocess.run(
-              ["scp", "-i", sshkey, "-o", "StrictHostKeyChecking=no",
-               css_src, f"root@{ip}:/tmp/ak_custom.css"],
-              check=True, capture_output=True)
+          # Pipe CSS via SSH stdin (avoids SCP which fails on some runner configs).
+          css_content = open(css_src).read()
+          r = subprocess.run(
+              ["ssh", "-i", sshkey, "-o", "StrictHostKeyChecking=no",
+               f"root@{ip}", "cat > /tmp/ak_custom.css"],
+              input=css_content, text=True, capture_output=True)
+          if r.returncode != 0:
+              print(f"SSH write error: {r.stderr}", file=sys.stderr); sys.exit(1)
+          print(f"Wrote {len(css_content)} chars of CSS to remote /tmp/ak_custom.css")
+
           django_cmd = (
               "from authentik.core.models import Brand;"
               "b=Brand.objects.get(default=True);"
