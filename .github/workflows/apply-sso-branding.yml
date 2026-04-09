@@ -275,7 +275,9 @@ jobs:
               "branding_custom_css": custom_css,
               "attributes": {"settings": {"theme": {"base": "dark"}}},
           })
-          print(f"✅ Branding applied — title: {result['branding_title']!r}, css length: {len(result['branding_custom_css'])} chars")
+          css_len = len(result.get("branding_custom_css") or "")
+          print(f"✅ Branding applied — title: {result.get('branding_title')!r}, css length: {css_len} chars")
+          print(f"   response keys: {list(result.keys())}")
           PYEOF
 
       - name: Cleanup
