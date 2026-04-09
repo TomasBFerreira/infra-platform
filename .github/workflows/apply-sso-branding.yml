@@ -82,8 +82,8 @@ jobs:
               print("No brands found — aborting", file=sys.stderr)
               sys.exit(1)
 
-          brand_pk = brands["results"][0]["pk"]
-          print(f"Found brand pk={brand_pk}")
+          brand_pk = brands["results"][0]["brand_uuid"]
+          print(f"Found brand uuid={brand_pk}")
 
           custom_css = """/* ── databaes.net theme for Authentik ─────────────────────────── */
           @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
