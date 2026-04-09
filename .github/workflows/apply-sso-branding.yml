@@ -88,13 +88,21 @@ jobs:
           custom_css = """/* ── databaes.net theme for Authentik ─────────────────────────── */
           @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
 
-          /* Force dark mode for all visitors */
+          /* ------------------------------------------------------------------ */
+          /* Flow background — must use !important to beat Authentik's inline   */
+          /* <style> tag that sets --ak-flow-background after our custom.css     */
+          /* ------------------------------------------------------------------ */
+          :root {
+            --ak-flow-background: #161616 !important;
+          }
+
+          /* Force dark mode + palette for all visitors */
           :root,
           html[data-theme],
           html[data-theme="light"] {
             color-scheme: dark;
 
-            /* PatternFly 4 global token overrides */
+            /* PatternFly 4 global token overrides — inherited into shadow DOM */
             --pf-global--BackgroundColor--100:      #161616;
             --pf-global--BackgroundColor--200:      #1f1f1f;
             --pf-global--BackgroundColor--300:      #272727;
@@ -116,7 +124,7 @@ jobs:
             --ak-global--Color--100:                #e5e5e5;
           }
 
-          /* Page background */
+          /* Page background (outer DOM — not shadow DOM) */
           .pf-c-page,
           .pf-c-background-image,
           body,
@@ -141,7 +149,7 @@ jobs:
             z-index: 9999;
           }
 
-          /* Login card */
+          /* Login card (admin UI — not shadow DOM) */
           .pf-c-login__main,
           .pf-c-card {
             background-color: #1f1f1f !important;
@@ -272,6 +280,7 @@ jobs:
 
           result = api("PATCH", f"/core/brands/{brand_pk}/", {
               "branding_title": "databaes.net",
+              "ui_theme": "dark",
               "branding_custom_css": custom_css,
               "attributes": {"settings": {"theme": {"base": "dark"}}},
           })
