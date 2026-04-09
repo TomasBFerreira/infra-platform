@@ -121,7 +121,7 @@ jobs:
           print(f"Wrote {len(css_content)} chars of CSS to remote /tmp/ak_custom.css")
 
           django_cmd = (
-              "from authentik.core.models import Brand;"
+              "from authentik.brands.models import Brand;"
               "b=Brand.objects.get(default=True);"
               "css=open(\"/tmp/ak_custom.css\").read();"
               "b.branding_custom_css=css;"
