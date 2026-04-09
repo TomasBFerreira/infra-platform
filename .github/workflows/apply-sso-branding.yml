@@ -1,0 +1,283 @@
+name: Apply SSO Branding
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  apply-branding:
+    runs-on: self-hosted
+    steps:
+      - name: Check SSO is deployed — skip if not
+        id: check-sso
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ inputs.environment }}"
+          if ! vault kv get secret/sso/${ENV}/active-slot > /dev/null 2>&1; then
+            echo "SSO not yet deployed for ${ENV} — skipping branding"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch SSH key and resolve SSO IP
+        if: steps.check-sso.outputs.skip != 'true'
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_key
+          chmod 600 /tmp/sso_key
+
+          SSO_IP=$(vault kv get -field=ip secret/sso/${{ inputs.environment }}/active-slot)
+          echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
+
+      - name: Get fresh Authentik API token
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          FRESH_TOKEN=$(ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
+
+          if [ -z "$FRESH_TOKEN" ]; then
+            echo "Could not get fresh token from Authentik — aborting"
+            exit 1
+          fi
+          echo "::add-mask::$FRESH_TOKEN"
+          echo "AUTHENTIK_TOKEN=$FRESH_TOKEN" >> $GITHUB_ENV
+
+      - name: Apply databaes.net branding
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys, urllib.request, urllib.error
+
+          ip    = os.environ["SSO_IP"]
+          token = os.environ["AUTHENTIK_TOKEN"]
+          base  = f"http://{ip}:9000/api/v3"
+          hdrs  = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          def api(method, path, body=None):
+              url = base + path
+              data = json.dumps(body).encode() if body else None
+              req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  print(f"HTTP {e.code} {method} {path}: {e.read().decode()}", file=sys.stderr)
+                  sys.exit(1)
+
+          brands = api("GET", "/brands/")
+          if not brands["results"]:
+              print("No brands found — aborting", file=sys.stderr)
+              sys.exit(1)
+
+          brand_pk = brands["results"][0]["pk"]
+          print(f"Found brand pk={brand_pk}")
+
+          custom_css = """/* ── databaes.net theme for Authentik ─────────────────────────── */
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
+
+          /* Force dark mode for all visitors */
+          :root,
+          html[data-theme],
+          html[data-theme="light"] {
+            color-scheme: dark;
+
+            /* PatternFly 4 global token overrides */
+            --pf-global--BackgroundColor--100:      #161616;
+            --pf-global--BackgroundColor--200:      #1f1f1f;
+            --pf-global--BackgroundColor--300:      #272727;
+            --pf-global--Color--100:                #e5e5e5;
+            --pf-global--Color--200:                #888888;
+            --pf-global--Color--300:                #555555;
+            --pf-global--BorderColor--100:          #383838;
+            --pf-global--primary-color--100:        #f97316;
+            --pf-global--primary-color--200:        #c2570f;
+            --pf-global--active-color--100:         #f97316;
+            --pf-global--link--Color:               #f97316;
+            --pf-global--link--Color--hover:        #c2570f;
+            --pf-global--FontFamily--sans-serif:    'Inter', system-ui, sans-serif;
+            --pf-global--FontFamily--monospace:     'Space Mono', 'JetBrains Mono', monospace;
+            --pf-global--BorderRadius--sm:          10px;
+
+            /* authentik-specific tokens */
+            --ak-global--BackgroundColor--100:      #161616;
+            --ak-global--Color--100:                #e5e5e5;
+          }
+
+          /* Page background */
+          .pf-c-page,
+          .pf-c-background-image,
+          body,
+          html {
+            background-color: #161616 !important;
+            font-family: 'Inter', system-ui, sans-serif !important;
+          }
+
+          /* Scanline texture overlay matching databaes.net body::after */
+          body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+              0deg,
+              transparent,
+              transparent 2px,
+              rgba(0, 0, 0, 0.04) 2px,
+              rgba(0, 0, 0, 0.04) 4px
+            );
+            pointer-events: none;
+            z-index: 9999;
+          }
+
+          /* Login card */
+          .pf-c-login__main,
+          .pf-c-card {
+            background-color: #1f1f1f !important;
+            border: 1px solid #383838 !important;
+            border-radius: 10px !important;
+          }
+
+          /* Card header / title */
+          .pf-c-login__main-header,
+          .pf-c-title {
+            color: #e5e5e5 !important;
+          }
+
+          /* Labels and body text */
+          .pf-c-form__label,
+          .pf-c-login__main-body,
+          .pf-c-login__main-footer {
+            color: #e5e5e5 !important;
+          }
+
+          /* Inputs */
+          .pf-c-form-control {
+            background-color: #272727 !important;
+            border-color: #383838 !important;
+            border-radius: 10px !important;
+            color: #e5e5e5 !important;
+          }
+
+          .pf-c-form-control:focus,
+          .pf-c-form-control:focus-within {
+            border-color: #f97316 !important;
+            box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.18) !important;
+            outline: none !important;
+          }
+
+          /* Primary button — orange */
+          .pf-c-button.pf-m-primary {
+            background-color: #f97316 !important;
+            border-color: #f97316 !important;
+            border-radius: 10px !important;
+            color: #161616 !important;
+            font-weight: 600 !important;
+            font-family: 'Inter', system-ui, sans-serif !important;
+          }
+
+          .pf-c-button.pf-m-primary:hover,
+          .pf-c-button.pf-m-primary:focus {
+            background-color: #c2570f !important;
+            border-color: #c2570f !important;
+            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.35) !important;
+          }
+
+          /* Secondary / link buttons */
+          .pf-c-button.pf-m-link,
+          .pf-c-button.pf-m-plain {
+            color: #f97316 !important;
+          }
+
+          .pf-c-button.pf-m-link:hover {
+            color: #c2570f !important;
+          }
+
+          /* Alert / error banners */
+          .pf-c-alert.pf-m-danger {
+            background-color: rgba(239, 68, 68, 0.12) !important;
+            border-color: #ef4444 !important;
+          }
+
+          .pf-c-alert.pf-m-warning {
+            background-color: rgba(234, 179, 8, 0.12) !important;
+            border-color: #eab308 !important;
+          }
+
+          .pf-c-alert.pf-m-success {
+            background-color: rgba(34, 197, 94, 0.12) !important;
+            border-color: #22c55e !important;
+          }
+
+          /* Navigation sidebar (admin UI) */
+          .pf-c-nav,
+          .pf-c-page__sidebar {
+            background-color: #1f1f1f !important;
+            border-right: 1px solid #383838 !important;
+          }
+
+          .pf-c-nav__item .pf-c-nav__link {
+            color: #e5e5e5 !important;
+          }
+
+          .pf-c-nav__item .pf-c-nav__link:hover,
+          .pf-c-nav__item .pf-c-nav__link.pf-m-current {
+            background-color: rgba(249, 115, 22, 0.18) !important;
+            color: #f97316 !important;
+          }
+
+          /* Top masthead */
+          .pf-c-page__header,
+          .pf-c-masthead {
+            background-color: #1f1f1f !important;
+            border-bottom: 1px solid #383838 !important;
+          }
+
+          /* Data tables */
+          .pf-c-table tr:hover td {
+            background-color: #272727 !important;
+          }
+
+          .pf-c-table thead th {
+            background-color: #1f1f1f !important;
+            color: #888888 !important;
+            border-color: #383838 !important;
+          }
+
+          /* Dropdown menus */
+          .pf-c-dropdown__menu,
+          .pf-c-select__menu {
+            background-color: #272727 !important;
+            border: 1px solid #383838 !important;
+            border-radius: 10px !important;
+          }
+
+          .pf-c-dropdown__menu-item:hover,
+          .pf-c-select__menu-item:hover {
+            background-color: rgba(249, 115, 22, 0.18) !important;
+            color: #f97316 !important;
+          }
+          """
+
+          result = api("PATCH", f"/brands/{brand_pk}/", {
+              "branding_title": "databaes.net",
+              "branding_custom_css": custom_css,
+              "attributes": {"settings": {"theme": {"base": "dark"}}},
+          })
+          print(f"✅ Branding applied — title: {result['branding_title']!r}, css length: {len(result['branding_custom_css'])} chars")
+          PYEOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/sso_key
