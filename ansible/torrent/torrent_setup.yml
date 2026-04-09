@@ -148,14 +148,37 @@
           DNS = {{ wg_dns }}
           {% endif %}
           Table = off
-          PostUp = GW=$(ip route show default | awk '/default/ {print $3; exit}'); ip route add {{ wg_endpoint.split(':')[0] }}/32 via ${GW} dev eth0 2>/dev/null || true; ip route add default dev wg0 table 200; ip rule add to 192.168.10.0/24 lookup main priority 100; ip rule add to 192.168.20.0/24 lookup main priority 101; ip rule add to 192.168.30.0/24 lookup main priority 102; ip rule add to 192.168.50.0/24 lookup main priority 103; ip rule add lookup 200 priority 200
-          PostDown = ip route del default dev wg0 table 200 2>/dev/null || true; ip rule del to 192.168.10.0/24 lookup main priority 100 2>/dev/null || true; ip rule del to 192.168.20.0/24 lookup main priority 101 2>/dev/null || true; ip rule del to 192.168.30.0/24 lookup main priority 102 2>/dev/null || true; ip rule del to 192.168.50.0/24 lookup main priority 103 2>/dev/null || true; ip rule del lookup 200 priority 200 2>/dev/null || true; ip route del {{ wg_endpoint.split(':')[0] }}/32 2>/dev/null || true
+          PostUp = GW=$(ip route show default | awk '/default/ {print $3; exit}'); ip route add {{ wg_endpoint.split(':')[0] }}/32 via ${GW} dev eth0 2>/dev/null || true; ip rule add to {{ wg_endpoint.split(':')[0] }}/32 lookup main priority 99 2>/dev/null || true; ip route add default dev wg0 table 200; ip rule add to 192.168.10.0/24 lookup main priority 100; ip rule add to 192.168.20.0/24 lookup main priority 101; ip rule add to 192.168.30.0/24 lookup main priority 102; ip rule add to 192.168.50.0/24 lookup main priority 103; ip rule add lookup 200 priority 200
+          PostDown = ip route del default dev wg0 table 200 2>/dev/null || true; ip rule del to {{ wg_endpoint.split(':')[0] }}/32 lookup main priority 99 2>/dev/null || true; ip rule del to 192.168.10.0/24 lookup main priority 100 2>/dev/null || true; ip rule del to 192.168.20.0/24 lookup main priority 101 2>/dev/null || true; ip rule del to 192.168.30.0/24 lookup main priority 102 2>/dev/null || true; ip rule del to 192.168.50.0/24 lookup main priority 103 2>/dev/null || true; ip rule del lookup 200 priority 200 2>/dev/null || true; ip route del {{ wg_endpoint.split(':')[0] }}/32 2>/dev/null || true
 
           [Peer]
           PublicKey = {{ wg_peer_public_key }}
           Endpoint = {{ wg_endpoint }}
           AllowedIPs = 0.0.0.0/0
           PersistentKeepalive = 25
+      when: wg_private_key | default('') | length > 0
+
+    # ── Bind qBittorrent torrent traffic to VPN interface ──────────────────
+    # WebUI stays on all interfaces (0.0.0.0) so Sonarr/Radarr can reach it
+    # on the LAN, but BitTorrent traffic only goes through wg0.
+
+    - name: Wait for qBittorrent API to be ready
+      uri:
+        url: "http://127.0.0.1:8080/api/v2/app/version"
+        return_content: yes
+      register: qbt_ready
+      retries: 15
+      delay: 4
+      until: qbt_ready.status == 200
+      when: wg_private_key | default('') | length > 0
+
+    - name: Bind qBittorrent to wg0 interface
+      uri:
+        url: "http://127.0.0.1:8080/api/v2/app/setPreferences"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          json: '{"current_network_interface":"wg0"}'
       when: wg_private_key | default('') | length > 0
 
     - name: Enable and start WireGuard
