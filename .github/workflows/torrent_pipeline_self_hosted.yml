@@ -49,14 +49,18 @@ jobs:
               GREEN_VMID=266; GREEN_IP="192.168.20.66"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               PVE_NODE="benedict"
-              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
+              # Gateway is the network-vm (NAT), not the bridge (.1 has no WAN uplink).
+              # Resolve dynamically from Vault; fall back to known blue slot IP.
+              GATEWAY=$(vault kv get -field=ip secret/network-vm/dev/active-slot 2>/dev/null || echo "192.168.20.55")
+              NETWORK_BRIDGE="vmbr20"
               ;;
             prod)
               BLUE_VMID=165;  BLUE_IP="192.168.10.65"
               GREEN_VMID=166; GREEN_IP="192.168.10.66"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
               PVE_NODE="betsy"
-              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
+              GATEWAY=$(vault kv get -field=ip secret/network-vm/prod/active-slot 2>/dev/null || echo "192.168.10.55")
+              NETWORK_BRIDGE="vmbr10"
               ;;
           esac
 
