@@ -289,6 +289,25 @@ jobs:
           print(f"   response keys: {list(result.keys())}")
           PYEOF
 
+      - name: Purge Cloudflare cache for custom.css
+        if: steps.check-sso.outputs.skip != 'true'
+        env:
+          CF_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ZONE:   ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            HOST="auth.databaes.net"
+          else
+            HOST="auth-dev.databaes.net"
+          fi
+          curl -sf -X POST \
+            "https://api.cloudflare.com/client/v4/zones/$CF_ZONE/purge_cache" \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"files\":[\"https://${HOST}/static/dist/custom.css\"]}" \
+            | python3 -c "import sys,json; r=json.load(sys.stdin); print('CF purge:', 'OK' if r['success'] else r['errors'])"
+
       - name: Cleanup
         if: always()
         run: rm -f /tmp/sso_key
