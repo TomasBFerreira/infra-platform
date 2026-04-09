@@ -67,12 +67,7 @@ jobs:
           GROUP_PK=$(curl -s \
             -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
             "${AUTHENTIK_URL}/api/v3/core/groups/?name=media-admin" \
-            | python3 -c "
-import json, sys
-r = json.load(sys.stdin)
-results = r.get('results', [])
-print(results[0]['pk'] if results else '')
-" 2>/dev/null)
+            | python3 -c "import json,sys;r=json.load(sys.stdin);results=r.get('results',[]);print(results[0]['pk'] if results else '')" 2>/dev/null)
           if [ -n "$GROUP_PK" ]; then
             echo "media-admin group exists (pk=$GROUP_PK) — importing into Terraform state"
             terraform import authentik_group.media_admin "$GROUP_PK"
