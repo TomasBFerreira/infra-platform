@@ -286,10 +286,11 @@ jobs:
           })
           css_len = len(result.get("branding_custom_css") or "")
           print(f"✅ Branding PATCH — title: {result.get('branding_title')!r}, css in response: {css_len} chars")
-          print(f"   response keys: {list(result.keys())}")
+          print(f"   PATCH response keys: {list(result.keys())}")
 
-          # Verify with a GET (PATCH response omits branding_custom_css)
+          # Verify with a GET (PATCH response may omit some fields)
           verify = api("GET", f"/core/brands/{brand_pk}/")
+          print(f"   GET all fields: {json.dumps(verify, indent=2)}")
           css_stored = len(verify.get("branding_custom_css") or "")
           print(f"✅ Branding GET verify — title: {verify.get('branding_title')!r}, ui_theme: {verify.get('ui_theme')!r}, css stored: {css_stored} chars")
           PYEOF
