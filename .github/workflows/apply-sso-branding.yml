@@ -285,8 +285,13 @@ jobs:
               "attributes": {"settings": {"theme": {"base": "dark"}}},
           })
           css_len = len(result.get("branding_custom_css") or "")
-          print(f"✅ Branding applied — title: {result.get('branding_title')!r}, css length: {css_len} chars")
+          print(f"✅ Branding PATCH — title: {result.get('branding_title')!r}, css in response: {css_len} chars")
           print(f"   response keys: {list(result.keys())}")
+
+          # Verify with a GET (PATCH response omits branding_custom_css)
+          verify = api("GET", f"/core/brands/{brand_pk}/")
+          css_stored = len(verify.get("branding_custom_css") or "")
+          print(f"✅ Branding GET verify — title: {verify.get('branding_title')!r}, ui_theme: {verify.get('ui_theme')!r}, css stored: {css_stored} chars")
           PYEOF
 
       - name: Purge Cloudflare cache for custom.css
@@ -301,25 +306,38 @@ jobs:
           else
             HOST="auth-dev.databaes.net"
           fi
-          CF_TOKEN=$(vault kv get -field=dns_api_token secret/cloudflare 2>/dev/null || true)
+          # Prefer a dedicated cache-purge token; fall back to the DNS token (Zone:Zone:Read only).
+          # To create one: CF Dashboard → User Profile → API Tokens → Create Token →
+          #   "Cache Purge" template → scope to databaes.net → then:
+          #   vault kv patch secret/cloudflare cache_purge_token=<value>
+          CF_TOKEN=$(vault kv get -field=cache_purge_token secret/cloudflare 2>/dev/null || \
+                     vault kv get -field=dns_api_token    secret/cloudflare 2>/dev/null || true)
           if [ -z "$CF_TOKEN" ]; then
-            echo "⚠️  No Cloudflare token in Vault — skipping cache purge (will expire naturally)"
+            echo "⚠️  No Cloudflare token in Vault — skipping cache purge (will expire naturally in ~4 h)"
             exit 0
           fi
-          ZONE_ID=$(curl -sf "https://api.cloudflare.com/client/v4/zones?name=databaes.net" \
+          ZONE_ID=$(curl -s "https://api.cloudflare.com/client/v4/zones?name=databaes.net" \
             -H "Authorization: Bearer $CF_TOKEN" \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['result'][0]['id'])" 2>/dev/null || true)
           if [ -z "$ZONE_ID" ]; then
-            echo "⚠️  Could not look up zone ID (token may lack Zones:Read) — skipping cache purge"
+            echo "⚠️  Could not look up zone ID — skipping cache purge"
             exit 0
           fi
-          RESULT=$(curl -sf -X POST \
+          RESP=$(curl -s -X POST \
             "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/purge_cache" \
             -H "Authorization: Bearer $CF_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"files\":[\"https://${HOST}/static/dist/custom.css\"]}" \
-            | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK' if r['success'] else str(r['errors']))" 2>/dev/null || echo "failed")
-          echo "CF purge: $RESULT"
+            -d "{\"files\":[\"https://${HOST}/static/dist/custom.css\"]}")
+          SUCCESS=$(echo "$RESP" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['success'])" 2>/dev/null || echo "false")
+          if [ "$SUCCESS" = "True" ]; then
+            echo "✅ CF cache purged for https://${HOST}/static/dist/custom.css"
+          else
+            ERRORS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('errors','?'))" 2>/dev/null || echo "?")
+            echo "⚠️  CF cache purge failed (errors: $ERRORS)"
+            echo "    To fix: add a 'Cache Purge' scoped token to Vault:"
+            echo "    vault kv patch secret/cloudflare cache_purge_token=<token>"
+            echo "    Cache will expire naturally in ~4 h."
+          fi
 
       - name: Cleanup
         if: always()
