@@ -292,8 +292,8 @@ jobs:
       - name: Purge Cloudflare cache for custom.css
         if: steps.check-sso.outputs.skip != 'true'
         env:
-          CF_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CF_ZONE:   ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
           if [ "$ENVIRONMENT" = "prod" ]; then
@@ -301,12 +301,25 @@ jobs:
           else
             HOST="auth-dev.databaes.net"
           fi
-          curl -sf -X POST \
-            "https://api.cloudflare.com/client/v4/zones/$CF_ZONE/purge_cache" \
+          CF_TOKEN=$(vault kv get -field=dns_api_token secret/cloudflare 2>/dev/null || true)
+          if [ -z "$CF_TOKEN" ]; then
+            echo "⚠️  No Cloudflare token in Vault — skipping cache purge (will expire naturally)"
+            exit 0
+          fi
+          ZONE_ID=$(curl -sf "https://api.cloudflare.com/client/v4/zones?name=databaes.net" \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['result'][0]['id'])" 2>/dev/null || true)
+          if [ -z "$ZONE_ID" ]; then
+            echo "⚠️  Could not look up zone ID (token may lack Zones:Read) — skipping cache purge"
+            exit 0
+          fi
+          RESULT=$(curl -sf -X POST \
+            "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/purge_cache" \
             -H "Authorization: Bearer $CF_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"files\":[\"https://${HOST}/static/dist/custom.css\"]}" \
-            | python3 -c "import sys,json; r=json.load(sys.stdin); print('CF purge:', 'OK' if r['success'] else r['errors'])"
+            | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK' if r['success'] else str(r['errors']))" 2>/dev/null || echo "failed")
+          echo "CF purge: $RESULT"
 
       - name: Cleanup
         if: always()
