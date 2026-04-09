@@ -1,0 +1,59 @@
+name: Provision Authentik Groups
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  provision:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch SSH key and resolve SSO IP
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_key
+          chmod 600 /tmp/sso_key
+
+          SSO_IP=$(vault kv get -field=ip secret/sso/${{ inputs.environment }}/active-slot)
+          echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
+          echo "AUTHENTIK_URL=http://${SSO_IP}:9000" >> $GITHUB_ENV
+
+      - name: Get fresh Authentik API token
+        run: |
+          FRESH_TOKEN=$(ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
+
+          if [ -z "$FRESH_TOKEN" ]; then
+            echo "Could not get fresh token from Authentik — aborting"
+            exit 1
+          fi
+          echo "::add-mask::$FRESH_TOKEN"
+          echo "AUTHENTIK_TOKEN=$FRESH_TOKEN" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        working-directory: terraform/authentik
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: terraform/authentik
+        env:
+          TF_VAR_authentik_url:   ${{ env.AUTHENTIK_URL }}
+          TF_VAR_authentik_token: ${{ env.AUTHENTIK_TOKEN }}
+        run: terraform apply -auto-approve
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/sso_key
