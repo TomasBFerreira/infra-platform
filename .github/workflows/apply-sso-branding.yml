@@ -14,6 +14,9 @@ jobs:
   apply-branding:
     runs-on: self-hosted
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Check SSO is deployed — skip if not
         id: check-sso
         env:
