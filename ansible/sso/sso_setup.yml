@@ -794,7 +794,7 @@
     - name: Get Authentik default brand
       tags: [branding]
       uri:
-        url: "http://localhost:9000/api/v3/brands/"
+        url: "http://localhost:9000/api/v3/core/brands/"
         headers:
           Authorization: "Bearer {{ sso_bootstrap_token }}"
       register: authentik_brands
@@ -802,7 +802,7 @@
     - name: Apply databaes.net branding to Authentik
       tags: [branding]
       uri:
-        url: "http://localhost:9000/api/v3/brands/{{ authentik_brands.json.results[0].pk }}/"
+        url: "http://localhost:9000/api/v3/core/brands/{{ authentik_brands.json.results[0].pk }}/"
         method: PATCH
         headers:
           Authorization: "Bearer {{ sso_bootstrap_token }}"

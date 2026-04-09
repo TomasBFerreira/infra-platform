@@ -77,7 +77,7 @@ jobs:
                   print(f"HTTP {e.code} {method} {path}: {e.read().decode()}", file=sys.stderr)
                   sys.exit(1)
 
-          brands = api("GET", "/brands/")
+          brands = api("GET", "/core/brands/")
           if not brands["results"]:
               print("No brands found — aborting", file=sys.stderr)
               sys.exit(1)
@@ -270,7 +270,7 @@ jobs:
           }
           """
 
-          result = api("PATCH", f"/brands/{brand_pk}/", {
+          result = api("PATCH", f"/core/brands/{brand_pk}/", {
               "branding_title": "databaes.net",
               "branding_custom_css": custom_css,
               "attributes": {"settings": {"theme": {"base": "dark"}}},
