@@ -70,6 +70,10 @@ Current nodes:
 Current GPU nodes:
 - worker-node-gpu-01 (prod): VMID 121, IP 192.168.10.21 (betsy — GTX 970 passthrough, IOMMU group 15, PCI 0000:26:00)
 
+> **Note (2026-04-10):** All prod k3s workloads (streambox, media-stack, landing-page, status-api, cattle-cluster-agent) currently run on `worker-node-gpu-01` (VMID 121). `worker-node-01` (VMID 111) listed above is not running on betsy — `qm list` confirms only VMID 121 exists as a worker. Either provision VMID 111 or mark VMID 121 as the authoritative prod worker. See `/app/issues/tomaj-flix-prod-2026-04-10.md` Issue 6, and note Issue 7: `worker-node-gpu_setup.yml` has no default-gateway-update task so VMID 121's netplan still points at `192.168.10.1` even though its runtime route is `192.168.10.55`.
+>
+> **GPU passthrough status (deferred):** The GTX 970 is passed through to VMID 121 at the Proxmox layer, but no pod in the cluster consumes it — no NVIDIA device plugin, no `nvidia.com/gpu` resource requests, no device mounts. All transcoders (Plex, Jellyfin, Streambox) run on CPU. This is a deliberate hold, not a bug. See `/app/issues/gpu-passthrough-deferred.md` for the full status and the plan to re-enable it.
+
 **GitHub Actions runners — env singletons:**
 - github-runner-prod: VMID 101, IP 192.168.10.101 (betsy)
 - github-runner-dev:  VMID 201, IP 192.168.20.101 (benedict)
