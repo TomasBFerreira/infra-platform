@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - dev
+          - qa
           - prod
 
 concurrency:
@@ -53,6 +54,14 @@ jobs:
               # Resolve dynamically from Vault; fall back to known blue slot IP.
               GATEWAY=$(vault kv get -field=ip secret/network-vm/dev/active-slot 2>/dev/null || echo "192.168.20.55")
               NETWORK_BRIDGE="vmbr20"
+              ;;
+            qa)
+              BLUE_VMID=365;  BLUE_IP="192.168.30.65"
+              GREEN_VMID=366; GREEN_IP="192.168.30.66"
+              PVE_API_URL="https://192.168.50.8:8006/api2/json"
+              PVE_NODE="heaton"
+              GATEWAY=$(vault kv get -field=ip secret/network-vm/qa/active-slot 2>/dev/null || echo "192.168.30.55")
+              NETWORK_BRIDGE="vmbr30"
               ;;
             prod)
               BLUE_VMID=165;  BLUE_IP="192.168.10.65"
