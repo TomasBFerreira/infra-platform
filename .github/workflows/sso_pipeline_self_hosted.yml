@@ -382,7 +382,7 @@ jobs:
             ip="${{ needs.resolve-slots.outputs.staging_ip }}"
 
   configure-vault-oidc:
-    needs: [resolve-slots, flip-active]
+    needs: [resolve-slots, flip-active, update-traefik]
     if: always() && needs.flip-active.result == 'success'
     uses: ./.github/workflows/configure-vault-oidc.yml
     with:
