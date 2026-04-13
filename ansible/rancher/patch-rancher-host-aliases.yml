@@ -1,22 +1,21 @@
 ---
-# Patches the Rancher Deployment with hostAliases for internal dev service
-# hostnames so Rancher pods can resolve them without depending on CoreDNS
-# NodeHosts (which k3s's HelmChart controller resets on reconciliation).
+# Patches the Rancher Helm release with extraHostAliases so Rancher pods can
+# resolve internal hostnames (auth-*.databaes.net) for the OIDC token exchange
+# step — without depending on CoreDNS NodeHosts or kubectl patch.
 #
-# This is the durable fix for the OIDC token exchange problem:
-# - CoreDNS NodeHosts is reset by k3s HelmChart controller → not reliable
-# - /etc/hosts on the LXC host is ignored by k3s pods
-# - hostAliases in the Deployment spec persists through pod restarts and
-#   is only lost if Rancher is fully redeployed (which triggers rancher_setup.yml,
-#   which now passes network_vm_ip to re-apply these fixes)
+# WHY helm upgrade --reuse-values instead of kubectl patch:
+# - CoreDNS NodeHosts: reset by k3s HelmChart controller on reconciliation
+# - kubectl patch on Deployment: reverted by Helm reconciliation (~20 min)
+# - extraHostAliases via helm upgrade: baked into the Helm release values,
+#   survives reconciliation and pod restarts. Only lost on full chart re-install.
 #
 # Required vars:
 #   traefik_ip    — active network-vm IP (Traefik, which routes to Authentik)
 #   runner_env    — dev/qa/prod (used for hostname construction)
 #
-# Effect: rolls out a new version of the Rancher deployment (pods restart).
-# The OIDC configure workflow should be re-run after this completes if OIDC
-# settings were lost in the preceding restart.
+# Effect: Helm triggers a rolling restart of Rancher pods (~2 min total).
+# The OIDC configure workflow should be re-run after this if OIDC settings
+# were lost in the preceding restart.
 
 - name: Patch Rancher Deployment with hostAliases
   hosts: all
@@ -45,30 +44,38 @@
       debug:
         msg: "Current hostAliases: {{ current_aliases.stdout }}"
 
-    - name: Patch Rancher deployment with hostAliases
+    - name: Patch Rancher Helm release with extraHostAliases
+      # Use helm upgrade --reuse-values so all existing release values (hostname,
+      # bootstrapPassword, TLS settings) are preserved — only extraHostAliases is
+      # added/updated. This bakes the entries into the Helm release itself, so the
+      # HelmChart controller cannot revert them (unlike kubectl patch which is undone
+      # by Helm reconciliation within ~20 minutes).
+      #
+      # Pin to the currently installed chart version (read from helm history) to
+      # avoid accidentally upgrading Rancher while applying the alias patch.
+      become_user: appadm
       shell: |
-        k3s kubectl patch deployment rancher -n cattle-system \
-          --type=merge \
-          -p '{
-            "spec": {
-              "template": {
-                "spec": {
-                  "hostAliases": [
-                    {
-                      "ip": "{{ network_vm_ip }}",
-                      "hostnames": [
-                        "{{ auth_hostname }}",
-                        "{{ rancher_hostname }}"
-                      ]
-                    }
-                  ]
-                }
-              }
-            }
-          }' 2>/dev/null && echo "hostAliases patched" || echo "patch failed"
+        helm repo update rancher-stable 2>/dev/null || true
+        # Get the currently installed chart version to avoid accidental upgrades
+        CHART_VER=$(helm history rancher -n cattle-system --max 1 -o json 2>/dev/null \
+          | python3 -c "import sys,json; h=json.load(sys.stdin); print(h[0]['chart'].replace('rancher-',''))" \
+          2>/dev/null || echo "")
+        VERSION_FLAG=""
+        [ -n "$CHART_VER" ] && VERSION_FLAG="--version $CHART_VER"
+        echo "Pinning helm upgrade to chart version: ${CHART_VER:-latest}"
+        helm upgrade rancher rancher-stable/rancher \
+          --namespace cattle-system \
+          --reuse-values \
+          $VERSION_FLAG \
+          --set extraHostAliases[0].ip={{ network_vm_ip }} \
+          --set extraHostAliases[0].hostnames[0]={{ auth_hostname }} \
+          --set extraHostAliases[0].hostnames[1]={{ rancher_hostname }} \
+          && echo "hostAliases patched via helm upgrade" || echo "helm upgrade failed"
       register: patch_result
       changed_when: "'hostAliases patched' in patch_result.stdout"
       failed_when: false
+      environment:
+        KUBECONFIG: /home/appadm/.kube/config
 
     - name: Print patch result
       debug:

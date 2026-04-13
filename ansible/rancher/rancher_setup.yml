@@ -178,13 +178,23 @@
     - name: Install Rancher (no-wait)
       become_user: appadm
       shell: |
+        # Bake extraHostAliases into the Helm release when a Traefik/network-vm IP
+        # is provided. This is the only durable way to inject pod /etc/hosts entries
+        # — kubectl patch on a Helm-managed Deployment is reverted by the HelmChart
+        # controller within minutes. Using --set here makes the aliases part of the
+        # Helm release values, so reconciliation preserves them.
+        EXTRA_HOSTS=""
+        if [ -n "{{ network_vm_ip | default('') }}" ]; then
+          EXTRA_HOSTS="--set extraHostAliases[0].ip={{ network_vm_ip }} --set extraHostAliases[0].hostnames[0]=auth-{{ runner_env }}.databaes.net --set extraHostAliases[0].hostnames[1]={{ rancher_hostname }}"
+        fi
         helm upgrade --install rancher rancher-stable/rancher \
           --namespace cattle-system \
           --version "{{ rancher_version }}" \
           --set hostname="{{ rancher_hostname }}" \
           --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
           --set ingress.tls.source=secret \
-          --set privateCA=true
+          --set privateCA=true \
+          $EXTRA_HOSTS
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
@@ -462,37 +472,6 @@
         - network_vm_ip is defined and network_vm_ip | length > 0
         - "'patched' in coredns_patch.stdout"
       shell: k3s kubectl rollout restart deployment/coredns -n kube-system
-      failed_when: false
-
-    # hostAliases on the Deployment spec is the DURABLE DNS fix for Rancher pods.
-    # k3s's HelmChart controller resets CoreDNS NodeHosts on reconciliation, making
-    # the CoreDNS approach unreliable. hostAliases bypass CoreDNS entirely — they're
-    # injected directly into Rancher pod /etc/hosts and survive CoreDNS resets.
-    # The patch triggers a rolling restart of Rancher pods (1-by-1, ~2min total).
-    - name: Patch Rancher Deployment with hostAliases for OIDC DNS resolution
-      when: network_vm_ip is defined and network_vm_ip | length > 0
-      shell: |
-        k3s kubectl patch deployment rancher -n cattle-system \
-          --type=merge \
-          -p '{
-            "spec": {
-              "template": {
-                "spec": {
-                  "hostAliases": [
-                    {
-                      "ip": "{{ network_vm_ip }}",
-                      "hostnames": [
-                        "auth-{{ runner_env }}.databaes.net",
-                        "{{ rancher_hostname }}"
-                      ]
-                    }
-                  ]
-                }
-              }
-            }
-          }' 2>/dev/null && echo "hostAliases patched" || echo "hostAliases patch failed (non-fatal)"
-      register: hostalias_patch
-      changed_when: "'hostAliases patched' in hostalias_patch.stdout"
       failed_when: false
 
     - name: Rancher setup summary
