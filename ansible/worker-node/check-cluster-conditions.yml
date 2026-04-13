@@ -10,7 +10,7 @@
     PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
   vars:
-    cluster_id: "{{ rancher_cluster_id | default('c-dj4lv') }}"
+    cluster_id: "{{ rancher_cluster_id | default('c-qctq5') }}"
 
   tasks:
     - name: Get full cluster conditions

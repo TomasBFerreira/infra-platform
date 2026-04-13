@@ -49,9 +49,9 @@ Management network (Proxmox nodes, bootstrap vault): 192.168.50.0/24
 Existing assignments:
 - vault-ct: prod=145/146 (192.168.10.45/.46), dev=245/246 (192.168.20.45/.46), qa=345/346 (192.168.30.45/.46)
 - network-vm: prod=155/156 (192.168.10.55/.56), dev=255/256 (192.168.20.55/.56), qa=355/356 (192.168.30.55/.56)
-- torrent: prod=165/166 (192.168.10.65/.66), dev=265/266 (192.168.20.65/.66)
-- sso: prod=175/176 (192.168.10.75/.76), dev=275/276 (192.168.20.75/.76)
-- semaphore: prod=185/186 (192.168.10.85/.86), dev=285/286 (192.168.20.85/.86)
+- torrent: prod=165/166 (192.168.10.65/.66), dev=265/266 (192.168.20.65/.66), qa=365/366 (192.168.30.65/.66)
+- sso: prod=175/176 (192.168.10.75/.76), dev=275/276 (192.168.20.75/.76), qa=375/376 (192.168.30.75/.76)
+- semaphore: prod=185/186 (192.168.10.85/.86), dev=285/286 (192.168.20.85/.86), qa=385/386 (192.168.30.85/.86)
 
 **Worker nodes — numbered singletons:**
 - Prod (betsy):  VMID = 110+N, IP = 192.168.10.(10+N)  → 111→.11, 112→.12, 113→.13…
@@ -71,6 +71,8 @@ Current GPU nodes:
 - worker-node-gpu-01 (prod): VMID 121, IP 192.168.10.21 (betsy — GTX 970 passthrough, IOMMU group 15, PCI 0000:26:00)
 
 > **Note (2026-04-10):** All prod k3s workloads (streambox, media-stack, landing-page, status-api, cattle-cluster-agent) currently run on `worker-node-gpu-01` (VMID 121). `worker-node-01` (VMID 111) listed above is not running on betsy — `qm list` confirms only VMID 121 exists as a worker. Either provision VMID 111 or mark VMID 121 as the authoritative prod worker. See `/app/issues/tomaj-flix-prod-2026-04-10.md` Issue 6, and note Issue 7: `worker-node-gpu_setup.yml` has no default-gateway-update task so VMID 121's netplan still points at `192.168.10.1` even though its runtime route is `192.168.10.55`.
+>
+> **Rancher cluster ID (2026-04-13):** `worker-node-gpu-01` was re-registered with prod Rancher on 2026-04-13 after a cluster reset (previous ID `c-dj4lv` was stuck `Connected:False` due to a k3s version mismatch bootstrap deadlock). New cluster ID: **`c-qctq5`**. All 21 cluster conditions are `True`, cluster is `Active`. Update diagnostics workflows and playbooks that reference the old cluster ID when running against prod.
 >
 > **GPU passthrough status (deferred):** The GTX 970 is passed through to VMID 121 at the Proxmox layer, but no pod in the cluster consumes it — no NVIDIA device plugin, no `nvidia.com/gpu` resource requests, no device mounts. All transcoders (Plex, Jellyfin, Streambox) run on CPU. This is a deliberate hold, not a bug. See `/app/issues/gpu-passthrough-deferred.md` for the full status and the plan to re-enable it.
 
