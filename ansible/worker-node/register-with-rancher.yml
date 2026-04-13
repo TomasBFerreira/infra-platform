@@ -40,11 +40,12 @@
     - name: Restart CoreDNS to apply NodeHosts change
       shell: k3s kubectl rollout restart deployment/coredns -n kube-system
       changed_when: false
+      ignore_errors: yes    # Non-fatal — NodeHosts reloads automatically; cattle-cluster-agent uses hostAliases anyway
 
     - name: Wait for CoreDNS to be ready
-      shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=120s
+      shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=30s
       changed_when: false
-      ignore_errors: yes    # CoreDNS may take >60s on low-resource VMs; NodeHosts reloads automatically anyway
+      ignore_errors: yes    # CoreDNS may take >30s if image pull is slow; hostAliases on the agent pod bypasses DNS anyway
 
     - name: Write Rancher registration script
       copy:
