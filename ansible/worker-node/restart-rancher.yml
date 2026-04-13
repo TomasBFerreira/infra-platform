@@ -1,0 +1,57 @@
+---
+# Restarts the Rancher deployment on a Rancher LXC.
+# Runs directly on the Rancher LXC (not a worker node).
+# Waits up to 3 minutes for Rancher to become healthy.
+
+- name: Restart Rancher on Rancher LXC
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Check k3s is running on Rancher LXC
+      command: k3s kubectl version --client
+      changed_when: false
+
+    - name: Show current Rancher pod state
+      command: k3s kubectl get pods -n cattle-system -o wide
+      register: pods_before
+      changed_when: false
+      failed_when: false
+
+    - name: Print pod state
+      debug:
+        msg: "{{ pods_before.stdout_lines }}"
+
+    - name: Restart Rancher deployment
+      command: k3s kubectl rollout restart deployment/rancher -n cattle-system
+      register: restart_result
+      changed_when: true
+      failed_when: false
+
+    - name: Show restart result
+      debug:
+        msg: "{{ restart_result.stdout | default(restart_result.stderr) }}"
+
+    - name: Wait for Rancher rollout
+      command: >
+        k3s kubectl rollout status deployment/rancher
+        -n cattle-system --timeout=180s
+      register: rollout_result
+      changed_when: false
+      failed_when: false
+
+    - name: Show rollout status
+      debug:
+        msg: "{{ rollout_result.stdout_lines | default([rollout_result.stderr | default('no output')]) }}"
+
+    - name: Show final Rancher pod state
+      command: k3s kubectl get pods -n cattle-system -o wide
+      register: pods_after
+      changed_when: false
+      failed_when: false
+
+    - name: Print final pod state
+      debug:
+        msg: "{{ pods_after.stdout_lines }}"

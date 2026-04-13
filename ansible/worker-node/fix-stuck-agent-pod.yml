@@ -1,0 +1,62 @@
+---
+# Force-deletes the stuck cattle-cluster-agent pod on a worker node.
+# A pod stuck in Terminating prevents the new agent pod from replacing it.
+# Uses --grace-period=0 --force to bypass the normal termination sequence.
+
+- name: Force-delete stuck cattle-cluster-agent pod
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Show current cattle-system pods
+      command: k3s kubectl get pods -n cattle-system -o wide
+      register: pods_before
+      changed_when: false
+      failed_when: false
+
+    - name: Print pod state
+      debug:
+        msg: "{{ pods_before.stdout_lines }}"
+
+    - name: Find stuck terminating cattle-cluster-agent pods
+      shell: |
+        k3s kubectl get pods -n cattle-system \
+          -l app=cattle-cluster-agent \
+          --field-selector=status.phase!=Running \
+          -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo ""
+      register: stuck_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Force-delete stuck pods
+      shell: |
+        echo "{{ stuck_pods.stdout }}" | tr ' ' '\n' | grep -v '^$' \
+          | xargs -I{} k3s kubectl delete pod {} -n cattle-system \
+              --grace-period=0 --force --ignore-not-found
+      when: stuck_pods.stdout | trim | length > 0
+      register: force_delete
+      changed_when: true
+      failed_when: false
+
+    - name: Show deletion result
+      debug:
+        msg: "{{ force_delete.stdout_lines | default(['No stuck pods found — nothing to delete']) }}"
+
+    - name: Wait for cattle-cluster-agent to settle
+      command: k3s kubectl rollout status deployment/cattle-cluster-agent -n cattle-system --timeout=60s
+      register: rollout_result
+      changed_when: false
+      failed_when: false
+      ignore_errors: yes
+
+    - name: Show final pod state
+      command: k3s kubectl get pods -n cattle-system -o wide
+      register: pods_after
+      changed_when: false
+      failed_when: false
+
+    - name: Print final pod state
+      debug:
+        msg: "{{ pods_after.stdout_lines }}"

@@ -1,0 +1,136 @@
+---
+# Breaks the "Upgrading" loop caused by Rancher repeatedly pushing SUC Plans.
+#
+# What this does:
+#   1. Shows current cattle-system state
+#   2. Deletes all SUC Plans (stops any active upgrade loop)
+#   3. Scales system-upgrade-controller to 0 (prevents Rancher pushing new Plans)
+#   4. Force-restarts cattle-cluster-agent
+#   5. Shows agent connection logs
+#
+# Required variables:
+#   rancher_ip       — IP of the Rancher LXC
+#   rancher_hostname — hostname of Rancher (for hostAliases patch)
+
+- name: Break Rancher upgrading loop on worker node
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Show current cattle-system pods
+      command: k3s kubectl get pods,deployments -n cattle-system -o wide
+      register: pods_before
+      changed_when: false
+      failed_when: false
+
+    - name: Print pod state
+      debug:
+        msg: "{{ pods_before.stdout_lines }}"
+
+    # ── SUC Plans ─────────────────────────────────────────────────────────────
+
+    - name: Check if Plan CRD exists
+      command: k3s kubectl get crd plans.upgrade.cattle.io
+      register: plan_crd_check
+      changed_when: false
+      failed_when: false
+
+    - name: List existing Plans
+      command: k3s kubectl get plans.upgrade.cattle.io -n cattle-system
+      register: plans_list
+      when: plan_crd_check.rc == 0
+      changed_when: false
+      failed_when: false
+
+    - name: Print Plans
+      debug:
+        msg: "{{ plans_list.stdout_lines | default(['Plan CRD not present']) }}"
+
+    - name: Delete all SUC upgrade Plans
+      command: k3s kubectl delete plans.upgrade.cattle.io --all -n cattle-system
+      when: plan_crd_check.rc == 0
+      register: delete_plans
+      failed_when: false
+      changed_when: "'deleted' in (delete_plans.stdout | default(''))"
+
+    # ── Scale down system-upgrade-controller ──────────────────────────────────
+    # Prevents Rancher from executing new Plans immediately after deletion.
+    # Rancher may scale it back up; if that happens the cluster will need
+    # the k3s version pinned in Rancher UI to the currently installed version.
+
+    - name: Check if system-upgrade-controller exists
+      command: k3s kubectl get deployment system-upgrade-controller -n cattle-system
+      register: suc_check
+      changed_when: false
+      failed_when: false
+
+    - name: Scale system-upgrade-controller to 0
+      command: >
+        k3s kubectl scale deployment system-upgrade-controller
+        -n cattle-system --replicas=0
+      when: suc_check.rc == 0
+      register: suc_scale
+      changed_when: true
+      failed_when: false
+
+    - name: Show SUC scale result
+      debug:
+        msg: "{{ suc_scale.stdout | default('system-upgrade-controller not found — skipped') }}"
+
+    # ── Patch + restart cattle-cluster-agent ──────────────────────────────────
+
+    - name: Ensure hostAliases patch on cattle-cluster-agent
+      shell: |
+        k3s kubectl patch deployment cattle-cluster-agent -n cattle-system \
+          --type=strategic \
+          -p='{"spec":{"template":{"spec":{"hostAliases":[{"ip":"{{ rancher_ip }}","hostnames":["{{ rancher_hostname }}"]}]}}}}'
+      register: patch_result
+      changed_when: "'patched' in patch_result.stdout and 'no change' not in patch_result.stdout"
+      failed_when: false
+
+    - name: Force-restart cattle-cluster-agent
+      command: k3s kubectl rollout restart deployment/cattle-cluster-agent -n cattle-system
+      changed_when: true
+      failed_when: false
+
+    - name: Wait for cattle-cluster-agent rollout
+      command: >
+        k3s kubectl rollout status deployment/cattle-cluster-agent
+        -n cattle-system --timeout=60s
+      register: rollout_result
+      changed_when: false
+      failed_when: false
+
+    # ── Agent logs ────────────────────────────────────────────────────────────
+
+    - name: Get cattle-cluster-agent logs (last 30 lines)
+      shell: >
+        k3s kubectl logs -n cattle-system
+        -l app=cattle-cluster-agent --tail=30 2>/dev/null || echo "no logs yet"
+      register: agent_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Print agent logs
+      debug:
+        msg: "{{ agent_logs.stdout_lines }}"
+
+    - name: Show final cattle-system state
+      command: k3s kubectl get pods,deployments -n cattle-system -o wide
+      register: pods_after
+      changed_when: false
+      failed_when: false
+
+    - name: Print final state
+      debug:
+        msg: "{{ pods_after.stdout_lines }}"
+
+    - name: Summary
+      debug:
+        msg: >-
+          SUC scaled to 0 and Plans cleared. If Rancher scales SUC back up
+          and shows Upgrading again, pin the cluster's Kubernetes version
+          in Rancher UI → Cluster → Edit → Kubernetes Version to the
+          currently installed version (check with: k3s --version).
