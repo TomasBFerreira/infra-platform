@@ -70,24 +70,11 @@ jobs:
           echo "::add-mask::$RANCHER_PW"
           echo "RANCHER_PASSWORD=$RANCHER_PW" >> $GITHUB_ENV
 
-      - name: Get Rancher admin token
-        run: |
-          LOGIN_RESP=$(curl -sk \
-            -H "Host: ${RANCHER_HOSTNAME}" \
-            -X POST "https://${RANCHER_IP}/v3-public/localProviders/local?action=login" \
-            -H "Content-Type: application/json" \
-            -d "{\"username\": \"admin\", \"password\": \"${RANCHER_PASSWORD}\", \"ttl\": 60000}")
-          TOKEN=$(echo "$LOGIN_RESP" | python3 -c \
-            "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
-          if [ -z "$TOKEN" ]; then
-            echo "WARNING: Could not get Rancher token — OIDC config check will be skipped"
-          else
-            echo "::add-mask::$TOKEN"
-            echo "RANCHER_TOKEN=$TOKEN" >> $GITHUB_ENV
-          fi
-
       - name: Diagnose OIDC on Rancher LXC
         run: |
+          # Rancher's k3s Traefik is only reachable from the host itself (localhost),
+          # not from the runner subnet. Pass the password to the playbook so it can
+          # do local curl for the OIDC config from inside the LXC via SSH.
           ssh-keygen -R "${RANCHER_IP}" || true
           ansible-playbook \
             -i "${RANCHER_IP}," -v \
@@ -97,7 +84,7 @@ jobs:
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "rancher_host=${RANCHER_HOSTNAME}" \
             -e "auth_host=${AUTH_HOSTNAME}" \
-            -e "rancher_token=${RANCHER_TOKEN:-}" \
+            -e "rancher_admin_password=${RANCHER_PASSWORD}" \
             ansible/rancher/diagnose-oidc.yml
 
       - name: Cleanup

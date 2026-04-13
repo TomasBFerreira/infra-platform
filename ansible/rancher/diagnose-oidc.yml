@@ -78,11 +78,24 @@
 
     - name: Get current OIDC config from Rancher API
       shell: |
-        # Quick curl to see what the genericOIDC config looks like right now
+        # Login from localhost (k3s Traefik is only reachable locally on the LXC)
+        LOGIN=$(curl -sk --max-time 10 \
+          -H "Host: {{ rancher_hostname }}" \
+          -X POST "https://localhost/v3-public/localProviders/local?action=login" \
+          -H "Content-Type: application/json" \
+          -d '{"username":"admin","password":"{{ rancher_admin_password | default("") }}","ttl":30000}' \
+          2>/dev/null)
+        TOKEN=$(echo "$LOGIN" | python3 -c \
+          "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
+        if [ -z "$TOKEN" ]; then
+          echo "Could not get Rancher token — check password"
+          exit 0
+        fi
+
         curl -sk --max-time 10 \
           -H "Host: {{ rancher_hostname }}" \
           "https://localhost/v3/genericOIDCConfigs/genericoidc" \
-          -H "Authorization: Bearer {{ rancher_token | default('') }}" \
+          -H "Authorization: Bearer $TOKEN" \
           2>/dev/null | python3 -c "
         import sys, json
         try:
@@ -96,8 +109,7 @@
                     print(f'{k}: {v}')
         except Exception as e:
             print('Parse error:', e)
-            print('Raw (first 200):', sys.stdin.read()[:200] if not sys.stdin.closed else '(closed)')
-        " 2>/dev/null || echo "Could not get OIDC config (no token)"
+        " 2>/dev/null || echo "Could not parse OIDC config"
       register: oidc_config
       changed_when: false
       failed_when: false
