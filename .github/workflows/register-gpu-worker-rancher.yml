@@ -71,6 +71,21 @@ jobs:
               ;;
           esac
 
+      - name: Preflight — verify Rancher API is reachable
+        run: |
+          echo "Checking Rancher API at ${RANCHER_IP} (${RANCHER_HOSTNAME})..."
+          HTTP=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H "Host: ${RANCHER_HOSTNAME}" \
+            "https://${RANCHER_IP}/v3-public/authProviders" 2>/dev/null || echo "000")
+          if [ "$HTTP" != "200" ]; then
+            echo "ERROR: Rancher at ${RANCHER_IP} (${RANCHER_HOSTNAME}) not reachable from runner (HTTP $HTTP)"
+            echo ""
+            echo "The ${{ inputs.environment }} Rancher LXC must be deployed and running before registering a worker."
+            echo "Run the rancher_pipeline_self_hosted.yml workflow with the correct environment first."
+            exit 1
+          fi
+          echo "Rancher API reachable (HTTP $HTTP) — proceeding with registration"
+
       - name: Fetch SSH key and Rancher credentials from Vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
