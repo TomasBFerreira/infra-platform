@@ -16,13 +16,37 @@
       register: pod_name
       changed_when: false
 
-    - name: Get full agent logs (last 50 lines)
-      shell: "k3s kubectl logs -n cattle-system {{ pod_name.stdout }} --tail=50 2>/dev/null || echo 'no logs'"
+    - name: Get pod status
+      shell: k3s kubectl get pods -n cattle-system -o wide 2>/dev/null || echo "no pods"
+      register: pod_status
+      changed_when: false
+      failed_when: false
+
+    - name: Print pod status
+      debug:
+        msg: "{{ pod_status.stdout_lines }}"
+
+    - name: Get last 5 agent log lines
+      shell: "k3s kubectl logs -n cattle-system {{ pod_name.stdout }} --tail=5 2>/dev/null || echo 'no logs'"
+      register: last5_logs
+      changed_when: false
+      when: pod_name.stdout | length > 0
+
+    - name: Print last 5 log lines
+      debug:
+        msg: "{{ last5_logs.stdout_lines | default(['pod not found']) }}"
+
+    - name: Get full agent logs filtered (last 200 lines, Connecting/error/broken only)
+      shell: >
+        k3s kubectl logs -n cattle-system {{ pod_name.stdout }} --tail=200 2>/dev/null
+        | grep -E "Connecting|error|broken pipe|register"
+        | tail -15
+        || echo 'no logs'
       register: agent_logs
       changed_when: false
       when: pod_name.stdout | length > 0
 
-    - name: Print agent logs
+    - name: Print agent logs (filtered)
       debug:
         msg: "{{ agent_logs.stdout_lines | default(['pod not found']) }}"
 
