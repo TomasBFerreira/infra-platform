@@ -199,6 +199,7 @@
       command: >
         k3s kubectl rollout status deployment/cattle-cluster-agent
         -n cattle-system --timeout=120s
+      ignore_errors: yes    # image pull or old-pod termination may take >120s; agent will connect when ready
 
     - name: Remove Rancher registration script
       file:
