@@ -1,0 +1,123 @@
+name: Register Worker Node with Rancher
+
+# Registers an already-running worker k3s node with Rancher.
+# Use this when the worker VM exists but was deployed before Rancher
+# was available, or when re-registration is needed after a Rancher rebuild.
+#
+# This workflow does NOT reprovision the VM — it only runs the cluster
+# registration steps on the existing node.
+#
+# Usage:
+#   gh workflow run register-worker-rancher.yml \
+#     --field node_ip=192.168.20.11 \
+#     --field vm_hostname=worker-node-01 \
+#     --field environment=dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_ip:
+        description: 'IP address of the existing worker node'
+        required: true
+        default: '192.168.20.11'
+        type: string
+      vm_hostname:
+        description: 'Hostname of the worker (used as the Rancher cluster name)'
+        required: true
+        default: 'worker-node-01'
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [prod, dev, qa]
+
+jobs:
+  register:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      NODE_IP: ${{ inputs.node_ip }}
+      VM_HOSTNAME: ${{ inputs.vm_hostname }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git reset --hard origin/${{ github.ref_name }}
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Resolve Rancher address for environment
+        run: |
+          case "${{ inputs.environment }}" in
+            prod)
+              echo "RANCHER_IP=192.168.10.2"                >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher.databaes.net"  >> $GITHUB_ENV
+              ;;
+            dev)
+              echo "RANCHER_IP=192.168.20.2"                    >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-dev.databaes.net"  >> $GITHUB_ENV
+              ;;
+            qa)
+              echo "RANCHER_IP=192.168.30.2"                   >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-qa.databaes.net"  >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Fetch SSH key and Rancher credentials from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+          RANCHER_PASS=$(vault kv get -field=password secret/rancher/${{ inputs.environment }}/bootstrap)
+          echo "::add-mask::$RANCHER_PASS"
+          echo "RANCHER_BOOTSTRAP_PASSWORD=$RANCHER_PASS" >> $GITHUB_ENV
+
+          if vault kv get secret/rancher/${{ inputs.environment }}/rbac > /dev/null 2>&1; then
+            RBAC_CLUSTER="$(vault kv get -field=cluster_bindings secret/rancher/${{ inputs.environment }}/rbac 2>/dev/null || echo '[]')"
+            python3 -c "import json,sys; c=json.loads(sys.argv[1]); print(json.dumps({'rancher_rbac_cluster_bindings':c}))" "$RBAC_CLUSTER" > /tmp/rancher_rbac_vars.json
+            echo "RANCHER_RBAC_VARS_FILE=/tmp/rancher_rbac_vars.json" >> "$GITHUB_ENV"
+            echo "Rancher RBAC cluster bindings found"
+          else
+            echo "No RBAC bindings in Vault — skipping"
+          fi
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${NODE_IP}..."
+          timeout 60 bash -c "until nc -z ${NODE_IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+      - name: Register worker node with Rancher
+        run: |
+          ssh-keygen -R "${NODE_IP}" || true
+          ansible-playbook \
+            -i "${NODE_IP}," \
+            -v \
+            --private-key /tmp/worker_node_key \
+            -e "ansible_host=${NODE_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "vm_hostname=${VM_HOSTNAME}" \
+            -e "rancher_ip=${RANCHER_IP}" \
+            -e "rancher_hostname=${RANCHER_HOSTNAME}" \
+            -e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}" \
+            ${RANCHER_RBAC_VARS_FILE:+-e "@${RANCHER_RBAC_VARS_FILE}"} \
+            ansible/worker-node/register-with-rancher.yml
+
+      - name: Cleanup secrets
+        if: always()
+        run: |
+          rm -f /tmp/worker_node_key /tmp/rancher_rbac_vars.json
