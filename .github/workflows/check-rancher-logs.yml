@@ -56,6 +56,16 @@ jobs:
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             ansible/worker-node/check-rancher-logs.yml
 
+      - name: Check cluster conditions on Rancher LXC
+        run: |
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            ansible/worker-node/check-cluster-conditions.yml
+
       - name: Cleanup
         if: always()
         run: rm -f /tmp/rancher_key

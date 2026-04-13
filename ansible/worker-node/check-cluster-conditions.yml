@@ -1,0 +1,97 @@
+---
+# Deep-dive cluster condition check on the Rancher LXC.
+# Shows full cluster conditions, tunnel connection state, and relevant secrets.
+# Run on the Rancher LXC (192.168.10.2), not the worker node.
+
+- name: Check cluster conditions on Rancher LXC
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  vars:
+    cluster_id: "c-dj4lv"
+
+  tasks:
+    - name: Get full cluster conditions
+      shell: >
+        k3s kubectl get clusters.management.cattle.io {{ cluster_id }}
+        -o jsonpath='{.status.conditions}' 2>/dev/null
+        | python3 -c "
+        import sys, json
+        conds = json.load(sys.stdin)
+        for c in conds:
+            t = c.get('type','')
+            s = c.get('status','')
+            m = c.get('message','')[:120]
+            r = c.get('reason','')
+            print(t.ljust(30) + ' status=' + s.ljust(10) + ' reason=' + r[:30] + ' msg=' + m)
+        " || echo "failed to get conditions"
+      register: conditions
+      changed_when: false
+      failed_when: false
+
+    - name: Print all cluster conditions
+      debug:
+        msg: "{{ conditions.stdout_lines }}"
+
+    - name: Get cluster annotations (state/transitioning)
+      shell: >
+        k3s kubectl get clusters.management.cattle.io {{ cluster_id }}
+        -o jsonpath='state={.metadata.annotations.field\.cattle\.io/state}
+        transitioning={.metadata.annotations.field\.cattle\.io/transitioning}
+        message={.metadata.annotations.field\.cattle\.io/transitioningMessage}' 2>/dev/null
+        || echo "not found"
+      register: annotations
+      changed_when: false
+      failed_when: false
+
+    - name: Print cluster annotations
+      debug:
+        msg: "{{ annotations.stdout_lines }}"
+
+    - name: Get tunnel server state from Rancher
+      shell: >
+        k3s kubectl get clusters.management.cattle.io {{ cluster_id }}
+        -o jsonpath='{.status.connected}' 2>/dev/null || echo "field not found"
+      register: tunnel_status
+      changed_when: false
+      failed_when: false
+
+    - name: Print tunnel status
+      debug:
+        msg: "status.connected = {{ tunnel_status.stdout }}"
+
+    - name: Check cattle-system deployments on Rancher LXC
+      command: k3s kubectl get deployments -n cattle-system -o wide
+      register: rancher_deployments
+      changed_when: false
+      failed_when: false
+
+    - name: Print Rancher LXC deployments
+      debug:
+        msg: "{{ rancher_deployments.stdout_lines }}"
+
+    - name: Check if cluster bundle is pending
+      shell: >
+        k3s kubectl get bundles -n fleet-local 2>/dev/null | head -20
+        || echo "no bundles or fleet-local not found"
+      register: bundles
+      changed_when: false
+      failed_when: false
+
+    - name: Print bundles
+      debug:
+        msg: "{{ bundles.stdout_lines }}"
+
+    - name: Check fleet cluster state
+      shell: >
+        k3s kubectl get clusters.fleet.cattle.io -A 2>/dev/null | head -10
+        || echo "no fleet clusters"
+      register: fleet_clusters
+      changed_when: false
+      failed_when: false
+
+    - name: Print fleet clusters
+      debug:
+        msg: "{{ fleet_clusters.stdout_lines }}"
