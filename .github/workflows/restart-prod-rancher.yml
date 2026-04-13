@@ -1,0 +1,66 @@
+name: Restart Prod Rancher
+
+# Restarts the Rancher deployment on the prod Rancher LXC (192.168.10.2).
+# Use when Rancher is accepting TCP but not responding to agent WebSocket connections.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restart:
+    runs-on: [self-hosted, prod]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      RANCHER_IP: 192.168.10.2
+      WORKER_IP: 192.168.10.21
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Fetch SSH keys from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
+            > /tmp/rancher_key
+          chmod 600 /tmp/rancher_key
+
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+      - name: Restart prod Rancher
+        run: |
+          ssh-keygen -R "${RANCHER_IP}" || true
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            ansible/worker-node/restart-rancher.yml
+
+      - name: Force-restart cattle-cluster-agent on worker (to reconnect)
+        run: |
+          ssh-keygen -R "${WORKER_IP}" || true
+          ansible-playbook \
+            -i "${WORKER_IP}," -v \
+            --private-key /tmp/worker_node_key \
+            -e "ansible_host=${WORKER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "rancher_ip=${RANCHER_IP}" \
+            -e "rancher_hostname=rancher.databaes.net" \
+            ansible/worker-node/fix-rancher-upgrading-loop.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/rancher_key /tmp/worker_node_key
