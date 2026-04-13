@@ -170,8 +170,8 @@
     - name: Add Rancher Helm repo
       become_user: appadm
       shell: |
-        helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
-        helm repo update
+        /usr/local/bin/helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+        /usr/local/bin/helm repo update
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
@@ -187,7 +187,7 @@
         if [ -n "{{ network_vm_ip | default('') }}" ]; then
           EXTRA_HOSTS="--set extraHostAliases[0].ip={{ network_vm_ip }} --set extraHostAliases[0].hostnames[0]=auth-{{ runner_env }}.databaes.net --set extraHostAliases[0].hostnames[1]={{ rancher_hostname }}"
         fi
-        helm upgrade --install rancher rancher-stable/rancher \
+        /usr/local/bin/helm upgrade --install rancher rancher-stable/rancher \
           --namespace cattle-system \
           --version "{{ rancher_version }}" \
           --set hostname="{{ rancher_hostname }}" \
