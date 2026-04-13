@@ -1,0 +1,68 @@
+---
+# Force-deletes a cluster object from the Rancher management cluster.
+# Strips finalizers first so the delete isn't blocked.
+# WARNING: destroys all Rancher-side state for the cluster (history, bindings, etc.).
+# Run BEFORE reset-cattle-system.yml + re-registration to get a clean slate.
+#
+# Runs on the Rancher LXC (not the worker node).
+# Required extra var:
+#   cluster_id  — clusters.management.cattle.io object name (e.g. c-dj4lv)
+
+- name: Delete cluster from Rancher
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Get cluster state before deletion
+      shell: |
+        k3s kubectl get clusters.management.cattle.io {{ cluster_id }} \
+          -o jsonpath='name={.metadata.name} state={.metadata.annotations.field\.cattle\.io/state} connected={.status.connected} finalizers={.metadata.finalizers}' \
+          2>/dev/null || echo "cluster not found"
+      register: cluster_state_before
+      changed_when: false
+      failed_when: false
+
+    - name: Print cluster state before deletion
+      debug:
+        msg: "{{ cluster_state_before.stdout }}"
+
+    - name: Strip finalizers so delete is not blocked
+      shell: >
+        k3s kubectl patch clusters.management.cattle.io {{ cluster_id }}
+        --type=merge -p '{"metadata":{"finalizers":null}}' 2>/dev/null
+        || echo "patch not needed or cluster not found"
+      register: patch_result
+      changed_when: false
+      failed_when: false
+
+    - name: Print patch result
+      debug:
+        msg: "{{ patch_result.stdout }}"
+
+    - name: Delete cluster object
+      shell: >
+        k3s kubectl delete clusters.management.cattle.io {{ cluster_id }}
+        --timeout=30s 2>/dev/null || echo "not found or already deleted"
+      register: delete_result
+      failed_when: false
+
+    - name: Print delete result
+      debug:
+        msg: "{{ delete_result.stdout }}"
+
+    - name: Wait for cluster object to be gone
+      shell: >
+        k3s kubectl get clusters.management.cattle.io {{ cluster_id }} 2>/dev/null
+        && echo "STILL_EXISTS" || echo "DELETED"
+      register: verify_delete
+      retries: 12
+      delay: 5
+      until: "'DELETED' in verify_delete.stdout"
+      changed_when: false
+      failed_when: false
+
+    - name: Print deletion verification
+      debug:
+        msg: "Cluster {{ cluster_id }} status: {{ verify_delete.stdout }}"

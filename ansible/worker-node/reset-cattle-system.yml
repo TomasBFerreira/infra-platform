@@ -1,0 +1,52 @@
+---
+# Deletes the cattle-system namespace on a worker node.
+# Forces a clean re-registration slate by removing all cattle-cluster-agent
+# resources, credentials secrets, and Rancher-side certificates from the node.
+#
+# Run AFTER delete-rancher-cluster.yml on the Rancher LXC,
+# and BEFORE re-registering the worker with register-with-rancher.yml.
+#
+# Runs on the worker node.
+
+- name: Reset cattle-system on worker node
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: List all resources in cattle-system before deletion
+      shell: k3s kubectl get all,secrets -n cattle-system 2>/dev/null || echo "namespace not found"
+      register: cattle_state_before
+      changed_when: false
+      failed_when: false
+
+    - name: Print cattle-system state before reset
+      debug:
+        msg: "{{ cattle_state_before.stdout_lines }}"
+
+    - name: Delete cattle-system namespace
+      shell: >
+        k3s kubectl delete namespace cattle-system --timeout=90s 2>/dev/null
+        || echo "namespace not found or already deleted"
+      register: delete_result
+      failed_when: false
+
+    - name: Print delete result
+      debug:
+        msg: "{{ delete_result.stdout }}"
+
+    - name: Verify namespace is fully gone
+      shell: >
+        k3s kubectl get namespace cattle-system 2>/dev/null
+        && echo "STILL_EXISTS" || echo "DELETED"
+      register: ns_check
+      retries: 18
+      delay: 5
+      until: "'DELETED' in ns_check.stdout"
+      changed_when: false
+      failed_when: false
+
+    - name: Print namespace status
+      debug:
+        msg: "cattle-system: {{ ns_check.stdout }}"

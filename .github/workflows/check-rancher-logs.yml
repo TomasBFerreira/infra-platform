@@ -12,6 +12,11 @@ on:
         default: 'prod'
         type: choice
         options: [prod, dev]
+      cluster_id:
+        description: 'Rancher cluster ID (clusters.management.cattle.io name). Leave blank to use default (c-dj4lv for prod).'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   check-rancher-logs:
@@ -58,12 +63,15 @@ jobs:
 
       - name: Check cluster conditions on Rancher LXC
         run: |
+          EXTRA_CLUSTER=""
+          [ -n "${{ inputs.cluster_id }}" ] && EXTRA_CLUSTER="-e rancher_cluster_id=${{ inputs.cluster_id }}"
           ansible-playbook \
             -i "${RANCHER_IP}," -v \
             --private-key /tmp/rancher_key \
             -e "ansible_host=${RANCHER_IP}" \
             -e "ansible_user=root" \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            ${EXTRA_CLUSTER} \
             ansible/worker-node/check-cluster-conditions.yml
 
       - name: Cleanup

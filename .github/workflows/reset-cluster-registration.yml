@@ -1,0 +1,160 @@
+name: Reset Cluster Registration (Full Clean Slate)
+
+# Full cluster reset: deletes the cluster object from Rancher, wipes
+# cattle-system on the worker, then re-registers from scratch.
+#
+# Use when:
+#   - cattle-cluster-agent is stuck at /v3/connect/register indefinitely
+#   - Re-registering alone (register-gpu-worker-rancher) didn't help
+#   - The cluster shows Connected: False with no reason in Rancher
+#
+# This destroys all Rancher-side cluster history (conditions, bindings) and
+# re-creates the cluster object. The k3s workloads on the worker are NOT affected.
+#
+# Usage:
+#   gh workflow run reset-cluster-registration.yml \
+#     --field environment=prod \
+#     --field node_ip=192.168.10.21 \
+#     --field vm_hostname=worker-node-gpu-01 \
+#     --field cluster_id=c-dj4lv
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [prod, dev, qa]
+      node_ip:
+        description: 'Worker node IP'
+        required: true
+        default: '192.168.10.21'
+        type: string
+      vm_hostname:
+        description: 'Worker hostname (used as the Rancher cluster name)'
+        required: true
+        default: 'worker-node-gpu-01'
+        type: string
+      cluster_id:
+        description: 'Rancher cluster ID to delete (clusters.management.cattle.io name)'
+        required: true
+        default: 'c-dj4lv'
+        type: string
+
+jobs:
+  reset-cluster:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      NODE_IP: ${{ inputs.node_ip }}
+      VM_HOSTNAME: ${{ inputs.vm_hostname }}
+      CLUSTER_ID: ${{ inputs.cluster_id }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Resolve Rancher address
+        run: |
+          case "${{ inputs.environment }}" in
+            prod)
+              echo "RANCHER_IP=192.168.10.2"               >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher.databaes.net"  >> $GITHUB_ENV
+              ;;
+            dev)
+              echo "RANCHER_IP=192.168.20.2"                   >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-dev.databaes.net"  >> $GITHUB_ENV
+              ;;
+            qa)
+              echo "RANCHER_IP=192.168.30.2"                  >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-qa.databaes.net"  >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Fetch SSH keys and Rancher credentials from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          # SSH key for Rancher LXC
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | awk 'NF > 0' > /tmp/rancher_key
+          chmod 600 /tmp/rancher_key
+          ssh-keygen -l -f /tmp/rancher_key > /dev/null 2>&1 || {
+            vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+              | python3 -c "import sys,textwrap,re; raw=sys.stdin.read(); raw=raw.replace('\\\\n','\n').replace('\\\\r','').replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; bi=raw.find(B); ei=raw.find(E); body=re.sub(r'\s+','',raw[bi+len(B):ei]); print(B); print(textwrap.fill(body,width=64)); print(E)" \
+              > /tmp/rancher_key
+            chmod 600 /tmp/rancher_key
+          }
+
+          # SSH key for worker node
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+          # Rancher bootstrap password for re-registration
+          RANCHER_PASS=$(vault kv get -field=password secret/rancher/${{ inputs.environment }}/bootstrap)
+          echo "::add-mask::$RANCHER_PASS"
+          echo "RANCHER_BOOTSTRAP_PASSWORD=$RANCHER_PASS" >> $GITHUB_ENV
+
+          # Optional RBAC bindings
+          if vault kv get secret/rancher/${{ inputs.environment }}/rbac > /dev/null 2>&1; then
+            RBAC_CLUSTER="$(vault kv get -field=cluster_bindings secret/rancher/${{ inputs.environment }}/rbac 2>/dev/null || echo '[]')"
+            python3 -c "import json,sys; c=json.loads(sys.argv[1]); print(json.dumps({'rancher_rbac_cluster_bindings':c}))" "$RBAC_CLUSTER" > /tmp/rancher_rbac_vars.json
+            echo "RANCHER_RBAC_VARS_FILE=/tmp/rancher_rbac_vars.json" >> "$GITHUB_ENV"
+          fi
+
+      - name: Step 1 — Delete cluster object from Rancher
+        run: |
+          ssh-keygen -R "${RANCHER_IP}" || true
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "cluster_id=${CLUSTER_ID}" \
+            ansible/worker-node/delete-rancher-cluster.yml
+
+      - name: Wait for Rancher to settle after cluster deletion (15s)
+        run: sleep 15
+
+      - name: Step 2 — Reset cattle-system on worker node
+        run: |
+          ssh-keygen -R "${NODE_IP}" || true
+          ansible-playbook \
+            -i "${NODE_IP}," -v \
+            --private-key /tmp/worker_node_key \
+            -e "ansible_host=${NODE_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            ansible/worker-node/reset-cattle-system.yml
+
+      - name: Wait for cattle-system to be fully gone (10s)
+        run: sleep 10
+
+      - name: Step 3 — Re-register worker with Rancher
+        run: |
+          ansible-playbook \
+            -i "${NODE_IP}," -v \
+            --private-key /tmp/worker_node_key \
+            -e "ansible_host=${NODE_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "vm_hostname=${VM_HOSTNAME}" \
+            -e "rancher_ip=${RANCHER_IP}" \
+            -e "rancher_hostname=${RANCHER_HOSTNAME}" \
+            -e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}" \
+            ${RANCHER_RBAC_VARS_FILE:+-e "@${RANCHER_RBAC_VARS_FILE}"} \
+            ansible/worker-node-gpu/register-with-rancher.yml
+
+      - name: Cleanup secrets
+        if: always()
+        run: rm -f /tmp/rancher_key /tmp/worker_node_key /tmp/rancher_rbac_vars.json
