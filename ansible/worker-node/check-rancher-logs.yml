@@ -1,0 +1,98 @@
+---
+# Get Rancher pod logs from the Rancher LXC.
+# Looks for connection attempts and errors related to the cluster agent.
+# Runs on the Rancher LXC itself (not the worker node).
+
+- name: Check Rancher server logs
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Get Rancher pod names
+      command: k3s kubectl get pods -n cattle-system -l app=rancher -o jsonpath='{.items[*].metadata.name}'
+      register: rancher_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Print Rancher pod names
+      debug:
+        msg: "{{ rancher_pods.stdout }}"
+
+    - name: Get Rancher logs (last 100 lines) - all pods
+      shell: |
+        for pod in {{ rancher_pods.stdout }}; do
+          echo "=== Logs from pod: $pod ==="
+          k3s kubectl logs -n cattle-system "$pod" --tail=100 2>/dev/null || echo "(no logs)"
+          echo ""
+        done
+      register: rancher_logs_full
+      changed_when: false
+      failed_when: false
+
+    - name: Print Rancher logs filtered for connect/agent/upgrade
+      shell: |
+        for pod in {{ rancher_pods.stdout }}; do
+          echo "=== Filtered logs from pod: $pod ==="
+          k3s kubectl logs -n cattle-system "$pod" --tail=200 2>/dev/null \
+            | grep -iE "(connect|upgrade|c-dj4lv|c-cszqg|websocket|tunnel|agent|error|warn|fatal)" \
+            | tail -50 || echo "(no matching lines)"
+          echo ""
+        done
+      register: rancher_logs_filtered
+      changed_when: false
+      failed_when: false
+
+    - name: Print filtered Rancher logs
+      debug:
+        msg: "{{ rancher_logs_filtered.stdout_lines }}"
+
+    - name: Check cluster-agent token validity in Rancher
+      shell: |
+        TOKEN=$(k3s kubectl get secret -n cattle-system \
+          -l cattle.io/cluster=c-dj4lv -o jsonpath='{.items[0].data.token}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+        if [ -z "$TOKEN" ]; then
+          echo "No token secret found for c-dj4lv in Rancher cattle-system"
+        else
+          echo "Token prefix: ${TOKEN:0:20}..."
+        fi
+      register: token_check
+      changed_when: false
+      failed_when: false
+
+    - name: Print token check
+      debug:
+        msg: "{{ token_check.stdout_lines }}"
+
+    - name: List all cluster-related secrets in cattle-system on Rancher
+      shell: k3s kubectl get secrets -n cattle-system | grep -E "(cattle-credentials|cluster-agent|c-dj4lv|c-cszqg)" || echo "none found"
+      register: rancher_secrets
+      changed_when: false
+      failed_when: false
+
+    - name: Print Rancher secrets
+      debug:
+        msg: "{{ rancher_secrets.stdout_lines }}"
+
+    - name: Check if rancher-webhook is blocking connections
+      shell: |
+        k3s kubectl get pods -n cattle-system -l app=rancher-webhook -o wide 2>/dev/null || echo "no webhook pod"
+        k3s kubectl get pods -n cattle-system -l app.kubernetes.io/name=rancher-webhook -o wide 2>/dev/null || echo ""
+      register: webhook_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Print webhook pods
+      debug:
+        msg: "{{ webhook_pods.stdout_lines }}"
+
+    - name: Check Rancher deployment health
+      command: k3s kubectl get deployment rancher -n cattle-system -o wide
+      register: rancher_deploy
+      changed_when: false
+      failed_when: false
+
+    - name: Print deployment
+      debug:
+        msg: "{{ rancher_deploy.stdout_lines }}"
