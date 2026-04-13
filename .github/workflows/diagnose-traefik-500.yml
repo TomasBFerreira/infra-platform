@@ -1,0 +1,108 @@
+name: Diagnose Traefik 500 for Rancher
+
+# SSHes into the active network-vm and:
+# 1. Curls https://192.168.20.2 directly to see what Traefik's backend gets
+# 2. Checks Traefik container logs for errors on the rancher-dev backend
+# 3. Prints the Traefik access log entries for rancher-dev.databaes.net
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment (dev/prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Resolve network-vm IP
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ inputs.environment }}"
+          SLOT=$(vault kv get -field=slot secret/network-vm/${ENV}/active-slot 2>/dev/null || echo "blue")
+          case "$ENV-$SLOT" in
+            dev-blue)  echo "NETWORK_VM_IP=192.168.20.55" >> $GITHUB_ENV ;;
+            dev-green) echo "NETWORK_VM_IP=192.168.20.56" >> $GITHUB_ENV ;;
+            prod-blue) echo "NETWORK_VM_IP=192.168.10.55" >> $GITHUB_ENV ;;
+            prod-green)echo "NETWORK_VM_IP=192.168.10.56" >> $GITHUB_ENV ;;
+          esac
+          case "$ENV" in
+            dev)  echo "RANCHER_IP=192.168.20.2"  >> $GITHUB_ENV
+                  echo "RANCHER_HOST=rancher-dev.databaes.net" >> $GITHUB_ENV ;;
+            prod) echo "RANCHER_IP=192.168.10.2"  >> $GITHUB_ENV
+                  echo "RANCHER_HOST=rancher.databaes.net" >> $GITHUB_ENV ;;
+          esac
+
+      - name: Fetch network-vm SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
+            > /tmp/network_vm_key
+          chmod 600 /tmp/network_vm_key
+
+      - name: Curl Rancher backend directly from network-vm
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/network_vm_key root@${NETWORK_VM_IP} bash << 'ENDSSH'
+          echo "=== Curl Rancher backend (simulates what Traefik does) ==="
+          echo "--- HTTP status ---"
+          curl -sk -o /dev/null -w '%{http_code}\n' \
+            -H "Host: ${RANCHER_HOST:-rancher-dev.databaes.net}" \
+            https://${RANCHER_IP:-192.168.20.2}/ || echo "CURL_FAILED"
+
+          echo "--- Response headers ---"
+          curl -sk -D - -o /dev/null \
+            -H "Host: ${RANCHER_HOST:-rancher-dev.databaes.net}" \
+            https://${RANCHER_IP:-192.168.20.2}/ 2>&1 | head -20
+
+          echo "--- Curl with verbose TLS info ---"
+          curl -v -k \
+            -H "Host: ${RANCHER_HOST:-rancher-dev.databaes.net}" \
+            https://${RANCHER_IP:-192.168.20.2}/ 2>&1 | grep -E "SSL|TLS|< HTTP|> Host|Connected|certificate|error" | head -20
+          ENDSSH
+        env:
+          RANCHER_IP: ${{ env.RANCHER_IP }}
+          RANCHER_HOST: ${{ env.RANCHER_HOST }}
+
+      - name: Check Traefik container logs for rancher errors
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/network_vm_key root@${NETWORK_VM_IP} bash << 'ENDSSH'
+          echo "=== Traefik container logs (last 100 lines, rancher or error) ==="
+          docker logs traefik 2>&1 | grep -i "rancher\|error\|500\|backend\|dial\|connect\|refused\|timeout" | tail -30 || \
+            docker logs $(docker ps -q --filter name=traefik) 2>&1 | grep -i "rancher\|error\|500\|backend" | tail -30 || \
+            echo "Could not get traefik logs"
+
+          echo "=== Traefik access log for rancher-dev (last 20 entries) ==="
+          # Access log location varies — check common paths
+          for LOG in /var/log/traefik/access.log /data/traefik/access.log /etc/traefik/access.log; do
+            if [ -f "$LOG" ]; then
+              echo "Found access log: $LOG"
+              grep "rancher-dev" "$LOG" | tail -20
+              break
+            fi
+          done
+          # Also check docker volume mounts
+          docker inspect traefik 2>/dev/null | python3 -c "
+          import sys,json
+          c=json.load(sys.stdin)[0]
+          mounts=c.get('Mounts',[])
+          print('Traefik mounts:')
+          for m in mounts:
+              print(' ', m.get('Source',''), '->', m.get('Destination',''))
+          " 2>/dev/null || echo "Could not inspect traefik container"
+          ENDSSH
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/network_vm_key
