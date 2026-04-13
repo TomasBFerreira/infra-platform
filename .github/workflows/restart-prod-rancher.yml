@@ -28,10 +28,26 @@ jobs:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
+          # Debug: check raw vault output format (first line only, no secret data)
           vault kv get -field=private_key secret/ssh_keys/rancher_worker \
-            | python3 -c "import sys,textwrap,re; raw=sys.stdin.read(); raw=raw.replace('\\\\n','\n').replace('\\\\r','').replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; bi=raw.find(B); ei=raw.find(E); body=re.sub(r'\s+','',raw[bi+len(B):ei]); print(B); print(textwrap.fill(body,width=64)); print(E)" \
-            > /tmp/rancher_key
+            | head -1
+
+          # Fetch and format rancher key - try awk first
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | awk 'NF > 0' > /tmp/rancher_key
           chmod 600 /tmp/rancher_key
+
+          # Validate the key file
+          ssh-keygen -l -f /tmp/rancher_key 2>&1 || echo "Key validation failed — trying Python formatter"
+
+          # If awk fails, try Python formatter
+          if ! ssh-keygen -l -f /tmp/rancher_key > /dev/null 2>&1; then
+            vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+              | python3 -c "import sys,textwrap,re; raw=sys.stdin.read(); raw=raw.replace('\\\\n','\n').replace('\\\\r','').replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; bi=raw.find(B); ei=raw.find(E); body=re.sub(r'\s+','',raw[bi+len(B):ei]); print(B); print(textwrap.fill(body,width=64)); print(E)" \
+              > /tmp/rancher_key
+            chmod 600 /tmp/rancher_key
+            ssh-keygen -l -f /tmp/rancher_key 2>&1 || echo "Python formatter also failed"
+          fi
 
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
             | awk 'NF > 0' > /tmp/worker_node_key
