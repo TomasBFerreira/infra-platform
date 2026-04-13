@@ -106,11 +106,14 @@
       debug:
         msg: "{{ all_cattle_pods.stdout_lines }}"
 
-    - name: Check cluster object on management plane (Rancher status from worker)
-      shell: >
-        k3s kubectl get node 2>/dev/null | head -5 &&
-        echo "---" &&
-        k3s kubectl get deployment -n cattle-system 2>/dev/null
+    - name: Check cluster deployments and fleet-agent
+      shell: |
+        echo "=== cattle-system deployments ==="
+        k3s kubectl get deployment -n cattle-system 2>/dev/null || echo "none"
+        echo "=== fleet-system namespaces ==="
+        k3s kubectl get ns | grep -E "(fleet|cattle)" || echo "none"
+        echo "=== fleet-agent pods ==="
+        k3s kubectl get pods -n cattle-fleet-system 2>/dev/null || echo "namespace not found"
       register: cluster_status
       changed_when: false
       failed_when: false
