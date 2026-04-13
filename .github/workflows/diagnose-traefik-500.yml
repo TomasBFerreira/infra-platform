@@ -55,21 +55,54 @@ jobs:
       - name: Curl Rancher backend directly from network-vm
         run: |
           ssh -o StrictHostKeyChecking=no -i /tmp/network_vm_key root@${NETWORK_VM_IP} bash << 'ENDSSH'
-          echo "=== Curl Rancher backend (simulates what Traefik does) ==="
-          echo "--- HTTP status ---"
+          RANCHER_IP="192.168.20.2"
+          RANCHER_HOST="rancher-dev.databaes.net"
+
+          echo "=== 1: bare curl (no browser headers) ==="
           curl -sk -o /dev/null -w '%{http_code}\n' \
-            -H "Host: ${RANCHER_HOST:-rancher-dev.databaes.net}" \
-            https://${RANCHER_IP:-192.168.20.2}/ || echo "CURL_FAILED"
+            -H "Host: $RANCHER_HOST" \
+            "https://$RANCHER_IP/" || echo "CURL_FAILED"
 
-          echo "--- Response headers ---"
-          curl -sk -D - -o /dev/null \
-            -H "Host: ${RANCHER_HOST:-rancher-dev.databaes.net}" \
-            https://${RANCHER_IP:-192.168.20.2}/ 2>&1 | head -20
+          echo "=== 2: with Accept: text/html (browser-like) ==="
+          curl -sk -o /dev/null -w '%{http_code}\n' \
+            -H "Host: $RANCHER_HOST" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            "https://$RANCHER_IP/" || echo "CURL_FAILED"
 
-          echo "--- Curl with verbose TLS info ---"
-          curl -v -k \
-            -H "Host: ${RANCHER_HOST:-rancher-dev.databaes.net}" \
-            https://${RANCHER_IP:-192.168.20.2}/ 2>&1 | grep -E "SSL|TLS|< HTTP|> Host|Connected|certificate|error" | head -20
+          echo "=== 3: with X-Forwarded-Proto: https ==="
+          curl -sk -o /dev/null -w '%{http_code}\n' \
+            -H "Host: $RANCHER_HOST" \
+            -H "X-Forwarded-Proto: https" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            "https://$RANCHER_IP/" || echo "CURL_FAILED"
+
+          echo "=== 4: with Traefik forwarding headers ==="
+          curl -sk -o /dev/null -w '%{http_code}\n' \
+            -H "Host: $RANCHER_HOST" \
+            -H "X-Forwarded-For: 192.168.50.2" \
+            -H "X-Forwarded-Proto: https" \
+            -H "X-Forwarded-Host: $RANCHER_HOST" \
+            -H "X-Real-Ip: 192.168.50.2" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            "https://$RANCHER_IP/" || echo "CURL_FAILED"
+
+          echo "=== 5: response body when status=500 (test 4 with body output) ==="
+          curl -sk \
+            -H "Host: $RANCHER_HOST" \
+            -H "X-Forwarded-For: 192.168.50.2" \
+            -H "X-Forwarded-Proto: https" \
+            -H "X-Forwarded-Host: $RANCHER_HOST" \
+            -H "X-Real-Ip: 192.168.50.2" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            "https://$RANCHER_IP/" 2>&1 | head -c 500
+
+          echo ""
+          echo "=== 6: /dashboard/ path with browser headers ==="
+          curl -sk -o /dev/null -w '%{http_code}\n' \
+            -H "Host: $RANCHER_HOST" \
+            -H "X-Forwarded-Proto: https" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            "https://$RANCHER_IP/dashboard/" || echo "CURL_FAILED"
           ENDSSH
         env:
           RANCHER_IP: ${{ env.RANCHER_IP }}
