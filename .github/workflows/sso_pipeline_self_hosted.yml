@@ -485,22 +485,75 @@ jobs:
           new_ip  = os.environ["NEW_IP"]
           mw_key  = f"authentik-{env}"
           svc_key = f"auth-{env}-outpost-service"
+          auth_svc_key = f"auth-{env}-service"
+          router_key   = f"auth-{env}-router"
 
-          # Update forwardAuth address to new active IP
-          mw = cfg.get("http", {}).get("middlewares", {}).get(mw_key, {})
-          fa = mw.get("forwardAuth", {})
-          old_addr = fa.get("address", "")
-          if old_addr:
-              new_addr = re.sub(r"https?://[^/]+", f"http://{new_ip}:9300", old_addr)
-              fa["address"] = new_addr
-              print(f"forwardAuth: {old_addr} → {new_addr}")
+          AUTH_RESPONSE_HEADERS = [
+              "X-authentik-username", "X-authentik-groups", "X-authentik-email",
+              "X-authentik-name", "X-authentik-uid", "X-authentik-jwt",
+              "X-authentik-meta-jwks", "X-authentik-meta-outpost",
+              "X-authentik-meta-provider", "X-authentik-meta-app",
+              "X-authentik-meta-version",
+          ]
 
-          # Update outpost load-balancer servers to new active IP only
-          svc = cfg.get("http", {}).get("services", {}).get(svc_key, {})
-          lb  = svc.get("loadBalancer", {})
-          old_servers = lb.get("servers", [])
-          lb["servers"] = [{"url": f"http://{new_ip}:9300"}]
-          print(f"outpost servers: {old_servers} → {lb['servers']}")
+          http = cfg.setdefault("http", {})
+          middlewares = http.setdefault("middlewares", {})
+          routers = http.setdefault("routers", {})
+          services = http.setdefault("services", {})
+
+          # --- Middleware: forwardAuth ---
+          if mw_key in middlewares:
+              fa = middlewares[mw_key].get("forwardAuth", {})
+              old_addr = fa.get("address", "")
+              if old_addr:
+                  new_addr = re.sub(r"https?://[^/]+", f"http://{new_ip}:9300", old_addr)
+                  fa["address"] = new_addr
+                  print(f"forwardAuth: {old_addr} → {new_addr}")
+          else:
+              middlewares[mw_key] = {
+                  "forwardAuth": {
+                      "address": f"http://{new_ip}:9300/outpost.goauthentik.io/auth/traefik",
+                      "authResponseHeaders": AUTH_RESPONSE_HEADERS,
+                      "trustForwardHeader": True,
+                  }
+              }
+              print(f"Created middleware {mw_key}")
+
+          # --- Router: auth-{env}-router ---
+          hostname = f"auth-{env}.databaes.net" if env != "prod" else "auth.databaes.net"
+          if router_key not in routers:
+              routers[router_key] = {
+                  "entryPoints": ["web", "websecure"],
+                  "middlewares": ["https-scheme"],
+                  "rule": f"Host(`{hostname}`)",
+                  "service": auth_svc_key,
+              }
+              print(f"Created router {router_key} → {hostname}")
+
+          # --- Service: auth-{env}-service ---
+          if auth_svc_key not in services:
+              services[auth_svc_key] = {
+                  "loadBalancer": {
+                      "healthCheck": {"interval": "10s", "path": "/-/health/ready/", "timeout": "3s"},
+                      "servers": [{"url": f"http://{new_ip}:9000"}],
+                  }
+              }
+              print(f"Created service {auth_svc_key}")
+          else:
+              services[auth_svc_key]["loadBalancer"]["servers"] = [{"url": f"http://{new_ip}:9000"}]
+              print(f"Updated service {auth_svc_key} → {new_ip}")
+
+          # --- Service: auth-{env}-outpost-service ---
+          if svc_key in services:
+              lb = services[svc_key].get("loadBalancer", {})
+              old_servers = lb.get("servers", [])
+              lb["servers"] = [{"url": f"http://{new_ip}:9300"}]
+              print(f"outpost servers: {old_servers} → {lb['servers']}")
+          else:
+              services[svc_key] = {
+                  "loadBalancer": {"servers": [{"url": f"http://{new_ip}:9300"}]}
+              }
+              print(f"Created outpost service {svc_key}")
 
           with open(path, "w") as f:
               yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
