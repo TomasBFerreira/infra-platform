@@ -29,22 +29,8 @@ jobs:
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/rancher_worker \
-            | python3 -c "
-import sys, re, textwrap
-raw = sys.stdin.read()
-# Handle keys stored with literal \\n escape sequences
-raw = raw.replace('\\\\n', '\n').replace('\\\\r', '').replace('\\\\t', '')
-B = '-----BEGIN OPENSSH PRIVATE KEY-----'
-E = '-----END OPENSSH PRIVATE KEY-----'
-bi = raw.find(B)
-ei = raw.find(E)
-if bi == -1 or ei == -1:
-    sys.exit('ERROR: PEM markers not found in key')
-body = re.sub(r'\\s+', '', raw[bi+len(B):ei])
-print(B)
-print(textwrap.fill(body, width=64))
-print(E)
-" > /tmp/rancher_key
+            | python3 -c "import sys,textwrap,re; raw=sys.stdin.read(); raw=raw.replace('\\\\n','\n').replace('\\\\r','').replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; bi=raw.find(B); ei=raw.find(E); body=re.sub(r'\s+','',raw[bi+len(B):ei]); print(B); print(textwrap.fill(body,width=64)); print(E)" \
+            > /tmp/rancher_key
           chmod 600 /tmp/rancher_key
 
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
