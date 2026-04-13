@@ -1,0 +1,87 @@
+name: Patch Rancher Dev DNS
+
+# Adds /etc/hosts + CoreDNS NodeHosts entries on the Rancher LXC so it can
+# resolve internal dev hostnames (auth-dev.databaes.net) for OIDC token exchange.
+#
+# Run this whenever:
+#   - Rancher is redeployed (fresh LXC loses the entries)
+#   - The active network-vm blue/green slot flips (entries point to the wrong IP)
+#
+# The active network-vm IP is resolved from Vault so it always points to the
+# correct Traefik instance regardless of which slot is active.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment (dev/prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  patch-dns:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Resolve active network-vm IP from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ inputs.environment }}"
+          SLOT=$(vault kv get -field=slot secret/network-vm/${ENV}/active-slot 2>/dev/null || echo "blue")
+          echo "Active network-vm slot: $SLOT"
+          case "$ENV-$SLOT" in
+            dev-blue)   NETWORK_VM_IP="192.168.20.55" ;;
+            dev-green)  NETWORK_VM_IP="192.168.20.56" ;;
+            prod-blue)  NETWORK_VM_IP="192.168.10.55" ;;
+            prod-green) NETWORK_VM_IP="192.168.10.56" ;;
+          esac
+          case "$ENV" in
+            dev)  RANCHER_IP="192.168.20.2" ;;
+            prod) RANCHER_IP="192.168.10.2" ;;
+          esac
+          echo "NETWORK_VM_IP=$NETWORK_VM_IP" >> $GITHUB_ENV
+          echo "RANCHER_IP=$RANCHER_IP"       >> $GITHUB_ENV
+          echo "ENV=$ENV"                     >> $GITHUB_ENV
+          echo "Active network-vm IP: $NETWORK_VM_IP"
+          echo "Rancher IP: $RANCHER_IP"
+
+      - name: Fetch Rancher SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
+            > /tmp/rancher_key
+          chmod 600 /tmp/rancher_key
+
+      - name: Patch dev DNS on Rancher LXC
+        run: |
+          ssh-keygen -R "${RANCHER_IP}" || true
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "network_vm_ip=${NETWORK_VM_IP}" \
+            -e "runner_env=${ENV}" \
+            ansible/rancher/patch-dev-dns.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/rancher_key

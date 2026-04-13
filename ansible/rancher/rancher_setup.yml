@@ -410,6 +410,60 @@
             CLUSTER_BINDINGS: "{{ rancher_rbac_cluster_bindings | default([]) | to_json }}"
             CLUSTER_ID:       "local"
 
+    # ── Dev DNS patching ─────────────────────────────────────────────────────
+    # Dev services (auth-dev.databaes.net etc.) are NOT in public DNS — they're
+    # only accessible via Tailscale with a local DNS server. Rancher must resolve
+    # them server-side for the OIDC token exchange step (step 6 of the OIDC flow:
+    # Rancher → POST https://auth-dev.databaes.net/application/o/rancher/token).
+    # Without this, /verify-auth fails silently — no user created, no R_SESS set.
+    #
+    # network_vm_ip must be passed as an extra var from the pipeline (the active
+    # Traefik IP, which routes to Authentik).
+
+    - name: Patch /etc/hosts with dev service hostnames
+      when: network_vm_ip is defined and network_vm_ip | length > 0
+      block:
+        - name: Remove stale dev host entries
+          lineinfile:
+            path: /etc/hosts
+            regexp: ".*{{ item }}.*"
+            state: absent
+          loop:
+            - auth-{{ runner_env }}.databaes.net
+            - "{{ rancher_hostname }}"
+
+        - name: Add dev host entries (network-vm Traefik → Authentik + Rancher)
+          lineinfile:
+            path: /etc/hosts
+            line: "{{ item }}"
+            state: present
+          loop:
+            - "{{ network_vm_ip }} auth-{{ runner_env }}.databaes.net"
+            - "{{ network_vm_ip }} {{ rancher_hostname }}"
+
+    - name: Patch k3s CoreDNS NodeHosts for dev hostnames
+      when: network_vm_ip is defined and network_vm_ip | length > 0
+      shell: |
+        CURRENT=$(k3s kubectl get configmap coredns -n kube-system \
+          -o jsonpath='{.data.NodeHosts}' 2>/dev/null || echo "")
+        CLEANED=$(echo "$CURRENT" \
+          | grep -v "auth-{{ runner_env }}.databaes.net\|{{ rancher_hostname }}" || true)
+        UPDATED="${CLEANED}
+        {{ network_vm_ip }} auth-{{ runner_env }}.databaes.net
+        {{ network_vm_ip }} {{ rancher_hostname }}"
+        k3s kubectl patch configmap coredns -n kube-system --type=merge \
+          -p "{\"data\":{\"NodeHosts\":\"$(echo "$UPDATED" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')\"}}" \
+          2>/dev/null && echo "CoreDNS NodeHosts patched"
+      register: coredns_patch
+      failed_when: false
+
+    - name: Restart CoreDNS after NodeHosts patch
+      when:
+        - network_vm_ip is defined and network_vm_ip | length > 0
+        - "'patched' in coredns_patch.stdout"
+      shell: k3s kubectl rollout restart deployment/coredns -n kube-system
+      failed_when: false
+
     - name: Rancher setup summary
       debug:
         msg: "Rancher {{ rancher_version }} deployed on K3s {{ k3s_version }} at https://{{ rancher_hostname }}"
