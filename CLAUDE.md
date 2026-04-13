@@ -7,7 +7,7 @@
 
 Every new app/service being onboarded must satisfy all of the following before it is considered complete:
 
-3. **Deploy on a worker node or static host** — must be provisioned on a Proxmox worker node (benedict/vladimir/betsy) or a designated static host. Ad-hoc deployments directly on the hypervisor are not allowed.
+3. **Deploy on a worker node or static host** — must be provisioned on a Proxmox worker node (benedict/heaton/betsy) or a designated static host. Ad-hoc deployments directly on the hypervisor are not allowed.
 4. **VMID and IP registration** — claim the next available VMID slot following the `1xx` (prod) / `2xx` (dev) / `3xx` (QA) prefix scheme and update the assignment table in this file. No unregistered or ad-hoc IPs.
 5. **Blue/green pipeline** — every service must have a pipeline with all 6 standard jobs in order: `resolve-slots` → `terraform-staging` → `ansible-staging` → `flip-active` → `teardown-old-active` → `cleanup-on-failure`. Single-slot deployments are not allowed. Pipelines must use the shared env runner via `runs-on: [self-hosted, <env>]` (e.g. `[self-hosted, dev]`). Do not assume a personal dev machine or ad-hoc host. **Exception:** the `github-runner` pipeline uses `runs-on: [self-hosted, management]` (CT 200) so it can rebuild the env runner even after a full env teardown — never change it back to the env runner label.
 6. **Authentik SSO** — the service must be gated behind Authentik via the Traefik `forwardAuth` middleware (`authentik-dev` / `authentik-prod`). Unauthenticated public exposure is not allowed unless explicitly approved.
@@ -29,7 +29,7 @@ Proxmox homelab infrastructure managed via Terraform + Ansible + GitHub Actions 
 | Node      | IP              | Role |
 |-----------|-----------------|------|
 | benedict  | 192.168.50.4    | dev  |
-| vladimir  | 192.168.50.4    | qa   |
+| heaton    | 192.168.50.8    | qa   |
 | betsy     | 192.168.50.2    | prod |
 
 All nodes share the `192.168.50.0/24` management network (gateway `192.168.50.1`). Services run on per-environment subnets (see below).
@@ -56,7 +56,7 @@ Existing assignments:
 **Worker nodes — numbered singletons:**
 - Prod (betsy):  VMID = 110+N, IP = 192.168.10.(10+N)  → 111→.11, 112→.12, 113→.13…
 - Dev (benedict): VMID = 210+N, IP = 192.168.20.(10+N) → 211→.11, 212→.12, 213→.13…
-- QA (vladimir):  VMID = 310+N, IP = 192.168.30.(10+N) → 311→.11, 312→.12, 313→.13…
+- QA (heaton):    VMID = 310+N, IP = 192.168.30.(10+N) → 311→.11, 312→.12, 313→.13…
 
 Current nodes:
 - worker-node-01 (dev):  VMID 211, IP 192.168.20.11 (benedict — pipeline-managed)
@@ -65,7 +65,7 @@ Current nodes:
 **GPU worker nodes — numbered singletons (separate VMID range from regular worker nodes):**
 - Prod (betsy):  VMID = 120+N, IP = 192.168.10.(20+N) → N=1: 121 → .21
 - Dev (benedict): VMID = 220+N, IP = 192.168.20.(20+N) → N=1: 221 → .21
-- QA (vladimir):  VMID = 320+N, IP = 192.168.30.(20+N) → N=1: 321 → .21
+- QA (heaton):    VMID = 320+N, IP = 192.168.30.(20+N) → N=1: 321 → .21
 
 Current GPU nodes:
 - worker-node-gpu-01 (prod): VMID 121, IP 192.168.10.21 (betsy — GTX 970 passthrough, IOMMU group 15, PCI 0000:26:00)
@@ -77,12 +77,12 @@ Current GPU nodes:
 **GitHub Actions runners — env singletons:**
 - github-runner-prod: VMID 101, IP 192.168.10.101 (betsy)
 - github-runner-dev:  VMID 201, IP 192.168.20.101 (benedict)
-- github-runner-qa:   VMID 301, IP 192.168.30.101 (vladimir)
+- github-runner-qa:   VMID 301, IP 192.168.30.101 (heaton)
 
 **Rancher (K3s management plane) — env singletons:**
 - rancher-prod: VMID 102, IP 192.168.10.2 (betsy)
 - rancher-dev:  VMID 202, IP 192.168.20.2 (benedict)
-- rancher-qa:   VMID 302, IP 192.168.30.2 (vladimir)
+- rancher-qa:   VMID 302, IP 192.168.30.2 (heaton)
 
 ## Vault architecture
 
@@ -146,7 +146,7 @@ The Terraform Vault provider always uses the **bootstrap vault** (`VAULT_BOOTSTR
 | VAULT_QA_ROOT_TOKEN   | QA vault root token (vault-ct re-runs)       |
 | VAULT_PROD_ROOT_TOKEN | Prod vault root token (vault-ct re-runs)     |
 | PVE_USER              | Proxmox user (e.g. root@pam)                 |
-| PVE_PASS              | Proxmox password (dev/QA nodes — benedict/vladimir) |
+| PVE_PASS              | Proxmox password (dev/QA nodes — benedict/heaton) |
 | PVE_PROD_PASS         | Proxmox password (prod node — betsy)         |
 | SSH_USER              | Default SSH user for CTs                     |
 | GH_PAT                | GitHub PAT for setting secrets via gh CLI    |

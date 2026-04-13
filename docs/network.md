@@ -5,7 +5,7 @@
 | Node | IP | Role |
 |------|----|------|
 | benedict | 192.168.50.4 | dev |
-| vladimir | 192.168.50.4 | qa |
+| heaton | 192.168.50.8 | qa |
 | betsy | 192.168.50.2 | prod |
 
 Proxmox nodes remain on the management network (`192.168.50.0/24`, gateway `192.168.50.1`). Services run on per-environment subnets.

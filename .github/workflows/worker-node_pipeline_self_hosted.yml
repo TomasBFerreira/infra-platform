@@ -28,7 +28,7 @@ on:
         options:
           - benedict
           - betsy
-          - vladimir
+          - heaton
       template_vmid:
         description: 'VMID of the cloud-init template VM to clone (must exist on target node)'
         required: true
@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   resolve-node:
-    runs-on: [self-hosted, "${{ github.event.inputs.target_node == 'betsy' && 'prod' || github.event.inputs.target_node == 'vladimir' && 'qa' || 'dev' }}"]
+    runs-on: [self-hosted, "${{ github.event.inputs.target_node == 'betsy' && 'prod' || github.event.inputs.target_node == 'heaton' && 'qa' || 'dev' }}"]
     outputs:
       node_number:      ${{ steps.resolve.outputs.node_number }}
       vmid:             ${{ steps.resolve.outputs.vmid }}
@@ -70,7 +70,7 @@ jobs:
             exit 1
           fi
 
-          # VMID/IP scheme: prod(betsy)=110+N, dev(benedict)=210+N, qa(vladimir)=310+N
+          # VMID/IP scheme: prod(betsy)=110+N, dev(benedict)=210+N, qa(heaton)=310+N
           # IP: 192.168.<env_subnet>.<vmid_last_2_digits>
           #   prod=192.168.10.x, dev=192.168.20.x, qa=192.168.30.x
           case "$TARGET_NODE" in
@@ -86,9 +86,9 @@ jobs:
               GATEWAY="192.168.10.55"; NETWORK_BRIDGE="vmbr10"
               RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher-prod.databaes.net"
               ;;
-            vladimir)
+            heaton)
               VMID_BASE=310; ENV=qa; ENV_SUBNET=30
-              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_API_URL="https://192.168.50.8:8006/api2/json"
               GATEWAY="192.168.30.55"; NETWORK_BRIDGE="vmbr30"
               RANCHER_IP="192.168.30.2"; RANCHER_HOSTNAME="rancher-qa.databaes.net"
               ;;
@@ -321,7 +321,7 @@ jobs:
           case "${PVE_NODE}" in
             benedict) ENV=dev ;;
             betsy)    ENV=prod ;;
-            vladimir) ENV=qa ;;
+            heaton) ENV=qa ;;
             *) echo "Unknown pve_node '${PVE_NODE}', skipping env slot write"; exit 0 ;;
           esac
           vault kv put secret/worker-node/${ENV}/active-slot \

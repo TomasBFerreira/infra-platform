@@ -55,8 +55,8 @@ jobs:
             qa)
               BLUE_VMID=355;  BLUE_IP="192.168.30.55"
               GREEN_VMID=356; GREEN_IP="192.168.30.56"
-              PVE_NODE="vladimir"
-              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_NODE="heaton"
+              PVE_API_URL="https://192.168.50.8:8006/api2/json"
               GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
               ;;
             prod)
