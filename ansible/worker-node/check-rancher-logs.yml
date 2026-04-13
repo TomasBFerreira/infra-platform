@@ -31,13 +31,13 @@
       changed_when: false
       failed_when: false
 
-    - name: Print Rancher logs filtered for connect/agent/upgrade
+    - name: Print Rancher logs filtered for connect/agent/upgrade (since 5 min)
       shell: |
         for pod in {{ rancher_pods.stdout }}; do
           echo "=== Filtered logs from pod: $pod ==="
-          k3s kubectl logs -n cattle-system "$pod" --tail=200 2>/dev/null \
-            | grep -iE "(connect|upgrade|c-dj4lv|c-cszqg|websocket|tunnel|agent|error|warn|fatal)" \
-            | tail -50 || echo "(no matching lines)"
+          k3s kubectl logs -n cattle-system "$pod" --since=5m 2>/dev/null \
+            | grep -iE "(connect|upgrade|c-dj4lv|websocket|tunnel|agent|error|warn|fatal|bootstrap|preBootstrap)" \
+            | tail -30 || echo "(no matching lines)"
           echo ""
         done
       register: rancher_logs_filtered
