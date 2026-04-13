@@ -1,0 +1,68 @@
+name: Restart Rancher Only (No Agent Restart)
+
+# Restarts ONLY the Rancher deployment on the Rancher LXC.
+# Does NOT touch the downstream cluster agent.
+# Use when the agent is stuck at "Connecting to proxy" on /v3/connect/register —
+# restarting Rancher unblocks the hung registration goroutine on the server side.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [prod, dev]
+
+jobs:
+  restart-rancher:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Set Rancher IP from environment
+        run: |
+          case "${{ inputs.environment }}" in
+            prod) echo "RANCHER_IP=192.168.10.2" >> $GITHUB_ENV ;;
+            dev)  echo "RANCHER_IP=192.168.20.2" >> $GITHUB_ENV ;;
+          esac
+
+      - name: Fetch Rancher SSH key from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | awk 'NF > 0' > /tmp/rancher_key
+          chmod 600 /tmp/rancher_key
+          ssh-keygen -l -f /tmp/rancher_key > /dev/null 2>&1 || {
+            vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+              | python3 -c "import sys,textwrap,re; raw=sys.stdin.read(); raw=raw.replace('\\\\n','\n').replace('\\\\r','').replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; bi=raw.find(B); ei=raw.find(E); body=re.sub(r'\s+','',raw[bi+len(B):ei]); print(B); print(textwrap.fill(body,width=64)); print(E)" \
+              > /tmp/rancher_key
+            chmod 600 /tmp/rancher_key
+          }
+
+      - name: Restart Rancher deployment
+        run: |
+          ssh-keygen -R "${RANCHER_IP}" || true
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            ansible/worker-node/restart-rancher.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/rancher_key
