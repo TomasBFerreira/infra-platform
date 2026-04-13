@@ -1,7 +1,7 @@
 ---
 # Deletes the cattle-system namespace on a worker node.
-# Forces a clean re-registration slate by removing all cattle-cluster-agent
-# resources, credentials secrets, and Rancher-side certificates from the node.
+# Handles stuck-Terminating namespaces by force-removing all resource finalizers
+# and clearing the namespace-level finalizer via the k8s finalize API.
 #
 # Run AFTER delete-rancher-cluster.yml on the Rancher LXC,
 # and BEFORE re-registering the worker with register-with-rancher.yml.
@@ -36,16 +36,79 @@
       debug:
         msg: "{{ delete_result.stdout }}"
 
-    - name: Verify namespace is fully gone
+    - name: Check if namespace is stuck in Terminating
+      shell: >
+        k3s kubectl get namespace cattle-system
+        -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound"
+      register: ns_phase
+      changed_when: false
+      failed_when: false
+
+    - name: Force-remove resource finalizers in cattle-system (if stuck Terminating)
+      when: ns_phase.stdout == "Terminating"
+      shell: |
+        echo "Namespace stuck Terminating — force-removing all resource finalizers..."
+        # Remove finalizers from all resource types in the namespace
+        for RESOURCE in $(k3s kubectl api-resources --verbs=list --namespaced -o name 2>/dev/null); do
+          ITEMS=$(k3s kubectl get "$RESOURCE" -n cattle-system \
+            -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+          for ITEM in $ITEMS; do
+            FINALIZERS=$(k3s kubectl get "$RESOURCE" "$ITEM" -n cattle-system \
+              -o jsonpath='{.metadata.finalizers}' 2>/dev/null || echo "")
+            if [ -n "$FINALIZERS" ] && [ "$FINALIZERS" != "[]" ]; then
+              echo "  Removing finalizers from $RESOURCE/$ITEM"
+              k3s kubectl patch "$RESOURCE" "$ITEM" -n cattle-system \
+                --type=merge -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
+            fi
+          done
+        done
+        echo "Done removing resource finalizers"
+      register: remove_finalizers
+      failed_when: false
+
+    - name: Print finalizer removal result
+      when: ns_phase.stdout == "Terminating"
+      debug:
+        msg: "{{ remove_finalizers.stdout_lines }}"
+
+    - name: Force-clear namespace finalizer via finalize API (if still stuck)
+      when: ns_phase.stdout == "Terminating"
+      shell: |
+        # Check if still terminating after resource cleanup
+        PHASE=$(k3s kubectl get namespace cattle-system \
+          -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+        if [ "$PHASE" = "Terminating" ]; then
+          echo "Still Terminating — clearing namespace-level finalizers via finalize API..."
+          k3s kubectl get namespace cattle-system -o json \
+            | python3 -c "
+        import sys, json
+        ns = json.load(sys.stdin)
+        ns['spec']['finalizers'] = []
+        print(json.dumps(ns))
+        " \
+            | k3s kubectl replace --raw /api/v1/namespaces/cattle-system/finalize -f -
+          echo "Namespace finalizer cleared"
+        else
+          echo "Namespace is $PHASE — no finalize API call needed"
+        fi
+      register: force_finalize
+      failed_when: false
+
+    - name: Print force finalize result
+      when: ns_phase.stdout == "Terminating"
+      debug:
+        msg: "{{ force_finalize.stdout_lines }}"
+
+    - name: Wait for namespace to be fully gone
       shell: >
         k3s kubectl get namespace cattle-system 2>/dev/null
         && echo "STILL_EXISTS" || echo "DELETED"
       register: ns_check
-      retries: 18
+      retries: 24
       delay: 5
       until: "'DELETED' in ns_check.stdout"
       changed_when: false
-      failed_when: false
+      failed_when: "'STILL_EXISTS' in ns_check.stdout"
 
     - name: Print namespace status
       debug:
