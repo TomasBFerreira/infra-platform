@@ -1,0 +1,97 @@
+---
+# Comprehensive Rancher state diagnostic.
+# Checks all cattle/fleet namespaces and queries the Rancher API for cluster state.
+#
+# Required variables:
+#   rancher_ip            — IP of the Rancher LXC
+#   rancher_hostname      — hostname of Rancher
+#   rancher_bootstrap_password — Rancher admin password
+
+- name: Diagnose Rancher state on worker node
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: List all namespaces
+      command: k3s kubectl get namespaces
+      register: namespaces
+      changed_when: false
+      failed_when: false
+
+    - name: Print namespaces
+      debug:
+        msg: "{{ namespaces.stdout_lines }}"
+
+    - name: Get all pods in cattle-system
+      command: k3s kubectl get pods -n cattle-system -o wide
+      register: cattle_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Print cattle-system pods
+      debug:
+        msg: "{{ cattle_pods.stdout_lines }}"
+
+    - name: Get all pods in cattle-fleet-system
+      command: k3s kubectl get pods -n cattle-fleet-system -o wide
+      register: fleet_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Print cattle-fleet-system pods
+      debug:
+        msg: "{{ fleet_pods.stdout_lines | default(['namespace not found']) }}"
+
+    - name: Get cattle-cluster-agent deployment details
+      command: k3s kubectl get deployment cattle-cluster-agent -n cattle-system -o yaml
+      register: agent_deploy
+      changed_when: false
+      failed_when: false
+
+    - name: Print agent deployment spec (trimmed)
+      debug:
+        msg: "{{ agent_deploy.stdout_lines[:50] }}"
+
+    - name: Get cattle-cluster-agent recent events
+      command: >
+        k3s kubectl get events -n cattle-system
+        --field-selector involvedObject.name=cattle-cluster-agent
+        --sort-by='.lastTimestamp'
+      register: agent_events
+      changed_when: false
+      failed_when: false
+
+    - name: Print events
+      debug:
+        msg: "{{ agent_events.stdout_lines | default(['no events']) }}"
+
+    - name: Query Rancher API — get cluster list
+      environment:
+        RANCHER_IP: "{{ rancher_ip }}"
+        RANCHER_HOST: "{{ rancher_hostname }}"
+        RANCHER_PASS: "{{ rancher_bootstrap_password }}"
+      shell: |
+        TOKEN=$(curl -sk -H "Host: $RANCHER_HOST" \
+          -X POST "https://$RANCHER_IP/v3-public/localProviders/local?action=login" \
+          -H 'Content-Type: application/json' \
+          -d '{"username":"admin","password":"'"$RANCHER_PASS"'","ttl":60000}' \
+          | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])' 2>/dev/null)
+
+        curl -sk -H "Host: $RANCHER_HOST" \
+          -H "Authorization: Bearer $TOKEN" \
+          "https://$RANCHER_IP/v3/clusters" \
+          | python3 -c '
+        import sys, json
+        d = json.load(sys.stdin)
+        for c in d.get("data", []):
+            print(f"  {c[\"id\"]:20} {c[\"name\"]:30} state={c.get(\"state\",\"?\")} transitioning={c.get(\"transitioning\",\"?\")} message={c.get(\"transitioningMessage\",\"\")[:80]}")
+        '
+      register: rancher_clusters
+      changed_when: false
+      failed_when: false
+
+    - name: Print Rancher cluster states
+      debug:
+        msg: "{{ rancher_clusters.stdout_lines }}"
