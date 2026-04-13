@@ -1,0 +1,70 @@
+name: Check Rancher OIDC State
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  check:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Set env
+        run: |
+          case "${{ inputs.environment }}" in
+            dev)  echo "RANCHER_IP=192.168.20.2"  >> $GITHUB_ENV
+                  echo "RANCHER_HOST=rancher-dev.databaes.net" >> $GITHUB_ENV
+                  echo "AUTH_HOST=auth-dev.databaes.net" >> $GITHUB_ENV ;;
+            qa)   echo "RANCHER_IP=192.168.30.2"  >> $GITHUB_ENV
+                  echo "RANCHER_HOST=rancher-qa.databaes.net" >> $GITHUB_ENV
+                  echo "AUTH_HOST=auth-qa.databaes.net" >> $GITHUB_ENV ;;
+            prod) echo "RANCHER_IP=192.168.10.2"  >> $GITHUB_ENV
+                  echo "RANCHER_HOST=rancher.databaes.net" >> $GITHUB_ENV
+                  echo "AUTH_HOST=auth.databaes.net" >> $GITHUB_ENV ;;
+          esac
+
+      - name: Fetch credentials from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
+            > /tmp/rancher_key && chmod 600 /tmp/rancher_key
+          PW=$(vault kv get -field=password secret/rancher/${{ inputs.environment }}/bootstrap 2>/dev/null || echo "")
+          echo "::add-mask::$PW"
+          echo "RANCHER_PW=$PW" >> $GITHUB_ENV
+
+      - name: Check OIDC state
+        run: |
+          ssh-keygen -R "${RANCHER_IP}" || true
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "rancher_host=${RANCHER_HOST}" \
+            -e "auth_host=${AUTH_HOST}" \
+            -e "rancher_admin_password=${RANCHER_PW}" \
+            ansible/rancher/check-oidc-state.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/rancher_key

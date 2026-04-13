@@ -1,0 +1,83 @@
+---
+# Quick targeted check: OIDC enabled state + recent token exchange errors + hostAliases
+- name: Check OIDC state on Rancher LXC
+  hosts: all
+  gather_facts: false
+  become: true
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  vars:
+    rancher_hostname: "{{ rancher_host | default('rancher-dev.databaes.net') }}"
+    auth_hostname: "{{ auth_host | default('auth-dev.databaes.net') }}"
+
+  tasks:
+    - name: Check OIDC enabled state and hostAliases via Rancher API
+      shell: |
+        # Get admin token from localhost
+        LOGIN=$(curl -sk --max-time 10 \
+          -H "Host: {{ rancher_hostname }}" \
+          -X POST "https://localhost/v3-public/localProviders/local?action=login" \
+          -H "Content-Type: application/json" \
+          -d '{"username":"admin","password":"{{ rancher_admin_password | default("") }}","ttl":30000}' 2>/dev/null)
+        TOKEN=$(echo "$LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
+        if [ -z "$TOKEN" ]; then
+          echo "LOGIN_FAILED"
+          exit 0
+        fi
+        echo "=== OIDC config ==="
+        curl -sk --max-time 10 \
+          -H "Host: {{ rancher_hostname }}" \
+          -H "Authorization: Bearer $TOKEN" \
+          "https://localhost/v3/genericOIDCConfigs/genericoidc" 2>/dev/null \
+          | python3 -c "
+        import sys,json
+        d=json.load(sys.stdin)
+        for k in ['enabled','issuer','clientId','rancherUrl','accessMode','scope']:
+          if k in d:
+            v=d[k]; v=str(v)[:16]+'...' if k=='clientId' and len(str(v))>16 else v
+            print(f'{k}: {v}')
+        " 2>/dev/null || echo "OIDC parse failed"
+
+        echo "=== hostAliases on Rancher deployment ==="
+        k3s kubectl get deployment rancher -n cattle-system \
+          -o jsonpath='{.spec.template.spec.hostAliases}' 2>/dev/null || echo "none"
+
+        echo ""
+        echo "=== Rancher pods readiness ==="
+        k3s kubectl get pods -n cattle-system -l app=rancher \
+          -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,AGE:.metadata.creationTimestamp' 2>/dev/null
+
+        echo "=== hostAliases in live pod /etc/hosts ==="
+        POD=$(k3s kubectl get pods -n cattle-system -l app=rancher \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -n "$POD" ]; then
+          k3s kubectl exec "$POD" -n cattle-system -- \
+            grep -E "auth-dev|rancher-dev" /etc/hosts 2>/dev/null \
+            || echo "(no auth-dev/rancher-dev in pod /etc/hosts)"
+        fi
+      register: oidc_state
+      changed_when: false
+      failed_when: false
+
+    - name: Print OIDC state
+      debug:
+        msg: "{{ oidc_state.stdout_lines }}"
+
+    - name: Get recent OIDC errors from Rancher pod logs
+      shell: |
+        for POD in $(k3s kubectl get pods -n cattle-system -l app=rancher \
+          -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "=== $POD ==="
+          k3s kubectl logs "$POD" -n cattle-system --tail=300 2>/dev/null \
+            | grep -iE "genericoidc|verify.auth|oidc|oauth2|token.*exchange|token.*error|error.*token|x509|dial.*timeout|connection refused|tls.*handshake" \
+            | grep -v "^#\|Watching\|certificate CN=\|Rancher version\|Starting\|Info\|INFO" \
+            | tail -20
+        done
+      register: oidc_errors
+      changed_when: false
+      failed_when: false
+
+    - name: Print OIDC errors
+      debug:
+        msg: "{{ oidc_errors.stdout_lines }}"
