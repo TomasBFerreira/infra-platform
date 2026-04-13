@@ -48,6 +48,16 @@ jobs:
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             ansible/worker-node/restart-rancher.yml
 
+      - name: Check Rancher server logs (post-restart)
+        run: |
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            ansible/worker-node/check-rancher-logs.yml
+
       - name: Force-restart cattle-cluster-agent on worker (to reconnect)
         run: |
           ssh-keygen -R "${WORKER_IP}" || true

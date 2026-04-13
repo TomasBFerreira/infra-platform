@@ -110,4 +110,29 @@ jobs:
                   if cond.get("status") != "True":
                       print("    CONDITION " + cond.get("type","") + ": " + cond.get("status","") + " -- " + cond.get("message","")[:80])
 
+          # Detailed info for non-local clusters
+          for c in clusters.get("data", []):
+              if c["id"] == "local":
+                  continue
+              cid = c["id"]
+              print("\n=== Cluster detail: " + cid + " ===")
+              k3s = c.get("k3sConfig", {})
+              if k3s:
+                  print("  k3sConfig.kubernetesVersion: " + str(k3s.get("kubernetesVersion", "not set")))
+              rke2 = c.get("rke2Config", {})
+              if rke2:
+                  print("  rke2Config.kubernetesVersion: " + str(rke2.get("kubernetesVersion", "not set")))
+              print("  version.gitVersion: " + str(c.get("version", {}).get("gitVersion", "unknown")))
+              print("  driver: " + str(c.get("driver", "unknown")))
+              print("  requested: " + str(c.get("requested", {})))
+
+              # Fetch cluster registration tokens
+              reg = curl(
+                  "-H", "Host: " + host,
+                  "-H", "Authorization: Bearer " + token,
+                  "https://" + ip + "/v3/clusterregistrationtokens?clusterId=" + cid)
+              print("  registrationTokens: " + str(len(reg.get("data", []))) + " tokens")
+              for t in reg.get("data", []):
+                  print("    token: " + t.get("token","")[:30] + "... state=" + t.get("state","?"))
+
           PYEOF
