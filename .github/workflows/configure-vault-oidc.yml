@@ -68,6 +68,19 @@ jobs:
           echo "VAULT_IP=$VAULT_IP" >> $GITHUB_ENV
           echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
 
+      - name: Wait for SSH connectivity to vault CT
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          echo "Waiting for SSH on $VAULT_IP..."
+          for i in $(seq 1 30); do
+            if ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes root@"$VAULT_IP" true 2>/dev/null; then
+              echo "SSH ready after $i attempts"
+              break
+            fi
+            echo "  attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
       - name: Generate root token on vault CT
         if: steps.check-sso.outputs.skip != 'true'
         run: |
