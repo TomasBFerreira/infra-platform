@@ -1,0 +1,154 @@
+---
+# Patches /etc/hosts and k3s CoreDNS NodeHosts on the Rancher LXC so that
+# Rancher pods can resolve internal dev hostnames (auth-dev, rancher-dev).
+#
+# Required because dev services are NOT in public DNS — they're accessed
+# via Tailscale with a local DNS. Rancher needs to resolve auth-dev.databaes.net
+# server-side during the OIDC token exchange (step 6 of the OIDC flow):
+#   Rancher → POST https://auth-dev.databaes.net/application/o/rancher/token
+# If this DNS lookup fails, /verify-auth returns a silent 401 with no R_SESS.
+#
+# Run:
+#   network_vm_ip — active network-vm IP (Traefik, which routes to Authentik)
+#   runner_env    — environment label (dev/prod) used for hostname construction
+
+- name: Patch dev DNS on Rancher LXC
+  hosts: all
+  gather_facts: false
+  become: true
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  vars:
+    env: "{{ runner_env | default('dev') }}"
+    traefik_ip: "{{ network_vm_ip }}"
+    # Dev hostnames that Rancher must resolve to reach internal services
+    dev_hosts:
+      - "{{ traefik_ip }} auth-dev.databaes.net"
+      - "{{ traefik_ip }} rancher-dev.databaes.net"
+
+  tasks:
+    - name: Show current /etc/hosts (before)
+      shell: grep -E "databaes|rancher|auth" /etc/hosts || echo "(no databaes entries)"
+      register: hosts_before
+      changed_when: false
+      failed_when: false
+
+    - name: Print current hosts
+      debug:
+        msg: "{{ hosts_before.stdout_lines }}"
+
+    - name: Remove stale dev host entries
+      lineinfile:
+        path: /etc/hosts
+        regexp: ".*{{ item }}.*"
+        state: absent
+      loop:
+        - auth-dev.databaes.net
+        - rancher-dev.databaes.net
+
+    - name: Add dev host entries
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ item }}"
+        state: present
+      loop: "{{ dev_hosts }}"
+
+    - name: Show /etc/hosts (after)
+      shell: grep -E "databaes|rancher|auth" /etc/hosts
+      register: hosts_after
+      changed_when: false
+      failed_when: false
+
+    - name: Print updated hosts
+      debug:
+        msg: "{{ hosts_after.stdout_lines }}"
+
+    - name: Verify DNS resolution from host
+      shell: |
+        for HOST in auth-dev.databaes.net rancher-dev.databaes.net; do
+          IP=$(getent hosts "$HOST" | awk '{print $1}' 2>/dev/null || echo "FAILED")
+          echo "$HOST → $IP"
+        done
+      register: dns_check
+      changed_when: false
+      failed_when: false
+
+    - name: Print DNS check
+      debug:
+        msg: "{{ dns_check.stdout_lines }}"
+
+    - name: Patch k3s CoreDNS NodeHosts for dev hostnames
+      shell: |
+        # CoreDNS NodeHosts is a ConfigMap in kube-system.
+        # We patch the NodeHosts section so k3s pods resolve dev hostnames.
+        CURRENT=$(k3s kubectl get configmap coredns -n kube-system \
+          -o jsonpath='{.data.NodeHosts}' 2>/dev/null || echo "")
+
+        # Remove stale entries for these hostnames
+        CLEANED=$(echo "$CURRENT" | grep -v "auth-dev.databaes.net\|rancher-dev.databaes.net" || true)
+
+        # Add the new entries
+        NEW_ENTRIES="{{ traefik_ip }} auth-dev.databaes.net
+        {{ traefik_ip }} rancher-dev.databaes.net"
+
+        UPDATED="${CLEANED}
+        ${NEW_ENTRIES}"
+
+        # Patch the ConfigMap
+        k3s kubectl patch configmap coredns -n kube-system \
+          --type=merge \
+          -p "{\"data\":{\"NodeHosts\":\"$(echo "$UPDATED" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')\"}}" \
+          2>/dev/null && echo "CoreDNS NodeHosts patched" || echo "CoreDNS patch failed (non-fatal)"
+      register: coredns_patch
+      changed_when: "'patched' in coredns_patch.stdout"
+      failed_when: false
+
+    - name: Print CoreDNS patch result
+      debug:
+        msg: "{{ coredns_patch.stdout_lines }}"
+
+    - name: Restart CoreDNS to apply NodeHosts
+      shell: |
+        k3s kubectl rollout restart deployment/coredns -n kube-system 2>/dev/null \
+          && echo "CoreDNS restarted" \
+          || echo "CoreDNS restart failed (non-fatal)"
+      register: coredns_restart
+      changed_when: "'restarted' in coredns_restart.stdout"
+      failed_when: false
+
+    - name: Wait for CoreDNS to be ready
+      shell: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=60s
+      register: coredns_ready
+      changed_when: false
+      failed_when: false
+
+    - name: Verify DNS from inside a k3s pod
+      shell: |
+        # Use a busybox pod to verify DNS resolution from within the cluster
+        k3s kubectl run dns-test-rancher --image=busybox:1.35 --restart=Never \
+          --rm --timeout=30s -it -- \
+          sh -c 'nslookup auth-dev.databaes.net 2>&1; nslookup rancher-dev.databaes.net 2>&1' \
+          2>/dev/null || echo "Pod DNS test skipped (non-fatal)"
+      register: pod_dns
+      changed_when: false
+      failed_when: false
+
+    - name: Print pod DNS check
+      debug:
+        msg: "{{ pod_dns.stdout_lines }}"
+
+    - name: Test OIDC discovery endpoint reachability
+      shell: |
+        echo "=== Testing OIDC discovery from host ==="
+        curl -sfk --max-time 10 \
+          "https://auth-dev.databaes.net/application/o/rancher/.well-known/openid-configuration" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); print('issuer:', d.get('issuer')); print('token_endpoint:', d.get('token_endpoint'))" \
+          2>/dev/null || echo "OIDC discovery FAILED (check DNS and connectivity)"
+      register: oidc_check
+      changed_when: false
+      failed_when: false
+
+    - name: Print OIDC discovery result
+      debug:
+        msg: "{{ oidc_check.stdout_lines }}"
