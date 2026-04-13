@@ -293,6 +293,10 @@ jobs:
               VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
               VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
               ;;
+            qa)
+              VAULT_ADDR="${{ secrets.VAULT_QA_ADDR }}"
+              VAULT_TOKEN="${{ secrets.VAULT_QA_TOKEN }}"
+              ;;
             prod)
               VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
               VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"

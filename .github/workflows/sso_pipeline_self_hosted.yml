@@ -131,6 +131,10 @@ jobs:
               export VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
               export VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
               ;;
+            qa)
+              export VAULT_ADDR="${{ secrets.VAULT_QA_ADDR }}"
+              export VAULT_TOKEN="${{ secrets.VAULT_QA_TOKEN }}"
+              ;;
             prod)
               export VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
               export VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}"
@@ -277,6 +281,10 @@ jobs:
             dev)
               ENV_VAULT_ADDR="${{ secrets.VAULT_ADDR }}"
               ENV_VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
+              ;;
+            qa)
+              ENV_VAULT_ADDR="${{ secrets.VAULT_QA_ADDR }}"
+              ENV_VAULT_TOKEN="${{ secrets.VAULT_QA_TOKEN }}"
               ;;
             prod)
               ENV_VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}"
