@@ -1,0 +1,109 @@
+---
+# Quick diagnostic: curl Rancher directly on the Rancher LXC to bypass Traefik.
+# Determines whether 500 is from Rancher itself or from Traefik.
+
+- name: Diagnose Rancher 500
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  vars:
+    rancher_hostname: "{{ rancher_host | default('rancher-dev.databaes.net') }}"
+
+  tasks:
+    - name: Check Rancher pods
+      command: k3s kubectl get pods -n cattle-system -o wide
+      register: pods
+      changed_when: false
+      failed_when: false
+
+    - name: Print pods
+      debug:
+        msg: "{{ pods.stdout_lines }}"
+
+    - name: Curl Rancher / directly on localhost (bypasses Traefik)
+      shell: |
+        echo "=== HTTP status ==="
+        curl -sk -o /dev/null -w '%{http_code}' \
+          -H "Host: {{ rancher_hostname }}" \
+          https://localhost/ || echo "CURL_FAILED"
+
+        echo ""
+        echo "=== Response headers ==="
+        curl -sk -I \
+          -H "Host: {{ rancher_hostname }}" \
+          https://localhost/ 2>&1 | head -20
+
+        echo "=== Response body (first 200 chars) ==="
+        curl -sk \
+          -H "Host: {{ rancher_hostname }}" \
+          https://localhost/ 2>&1 | head -c 200
+
+        echo ""
+        echo "=== /v3 API status ==="
+        curl -sk -o /dev/null -w '%{http_code}' \
+          -H "Host: {{ rancher_hostname }}" \
+          https://localhost/v3 || echo "CURL_FAILED"
+
+        echo ""
+        echo "=== /v3-public/authProviders status ==="
+        curl -sk -o /dev/null -w '%{http_code}' \
+          -H "Host: {{ rancher_hostname }}" \
+          https://localhost/v3-public/authProviders || echo "CURL_FAILED"
+      register: curl_result
+      changed_when: false
+      failed_when: false
+
+    - name: Print curl results
+      debug:
+        msg: "{{ curl_result.stdout_lines }}"
+
+    - name: Check Rancher server-url setting
+      shell: |
+        k3s kubectl get settings.management.cattle.io server-url \
+          -o jsonpath='{.value}' 2>/dev/null || echo "NOT_FOUND"
+      register: server_url
+      changed_when: false
+      failed_when: false
+
+    - name: Print server-url
+      debug:
+        msg: "server-url = {{ server_url.stdout }}"
+
+    - name: Check Rancher first-login setting
+      shell: |
+        k3s kubectl get settings.management.cattle.io first-login \
+          -o jsonpath='{.value}' 2>/dev/null || echo "NOT_FOUND"
+      register: first_login
+      changed_when: false
+      failed_when: false
+
+    - name: Print first-login
+      debug:
+        msg: "first-login = {{ first_login.stdout }}"
+
+    - name: Get recent Rancher pod logs (last 30 lines, errors only)
+      shell: |
+        k3s kubectl logs -n cattle-system \
+          -l app=rancher --tail=100 2>/dev/null \
+          | grep -i "error\|panic\|500\|fail" | tail -30 || echo "no error lines"
+      register: error_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Print error logs
+      debug:
+        msg: "{{ error_logs.stdout_lines }}"
+
+    - name: Check Traefik Rancher backend
+      shell: |
+        # Check if Traefik ingress/ingressroute exists for Rancher
+        k3s kubectl get ingressroute,ingress -A 2>/dev/null | grep -i rancher || echo "no rancher ingress found"
+      register: traefik_routes
+      changed_when: false
+      failed_when: false
+
+    - name: Print Traefik routes
+      debug:
+        msg: "{{ traefik_routes.stdout_lines }}"

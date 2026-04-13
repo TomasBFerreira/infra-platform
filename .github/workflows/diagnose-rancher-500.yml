@@ -1,0 +1,68 @@
+name: Diagnose Rancher 500
+
+# Runs directly on the Rancher LXC to determine if the 500 on GET /
+# is coming from Rancher itself (bypassing Traefik) or from Traefik.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment (prod/dev)'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [prod, dev]
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Set Rancher IP from environment
+        run: |
+          case "${{ inputs.environment }}" in
+            prod)
+              echo "RANCHER_IP=192.168.10.2"         >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher.databaes.net" >> $GITHUB_ENV
+              ;;
+            dev)
+              echo "RANCHER_IP=192.168.20.2"             >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-dev.databaes.net" >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Fetch Rancher SSH key from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
+            > /tmp/rancher_key
+          chmod 600 /tmp/rancher_key
+
+      - name: Run Rancher diagnostic
+        run: |
+          ssh-keygen -R "${RANCHER_IP}" || true
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "rancher_host=${RANCHER_HOSTNAME}" \
+            ansible/rancher/diagnose-500.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/rancher_key
