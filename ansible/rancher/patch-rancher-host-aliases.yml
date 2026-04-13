@@ -1,0 +1,119 @@
+---
+# Patches the Rancher Deployment with hostAliases for internal dev service
+# hostnames so Rancher pods can resolve them without depending on CoreDNS
+# NodeHosts (which k3s's HelmChart controller resets on reconciliation).
+#
+# This is the durable fix for the OIDC token exchange problem:
+# - CoreDNS NodeHosts is reset by k3s HelmChart controller → not reliable
+# - /etc/hosts on the LXC host is ignored by k3s pods
+# - hostAliases in the Deployment spec persists through pod restarts and
+#   is only lost if Rancher is fully redeployed (which triggers rancher_setup.yml,
+#   which now passes network_vm_ip to re-apply these fixes)
+#
+# Required vars:
+#   traefik_ip    — active network-vm IP (Traefik, which routes to Authentik)
+#   runner_env    — dev/qa/prod (used for hostname construction)
+#
+# Effect: rolls out a new version of the Rancher deployment (pods restart).
+# The OIDC configure workflow should be re-run after this completes if OIDC
+# settings were lost in the preceding restart.
+
+- name: Patch Rancher Deployment with hostAliases
+  hosts: all
+  gather_facts: false
+  become: true
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  vars:
+    env: "{{ runner_env | default('dev') }}"
+    network_vm_ip: "{{ traefik_ip }}"
+    auth_hostname: "auth-{{ env }}.databaes.net"
+    rancher_hostname: "rancher-{{ env }}.databaes.net"
+
+  tasks:
+    - name: Show current hostAliases on Rancher deployment
+      shell: |
+        k3s kubectl get deployment rancher -n cattle-system \
+          -o jsonpath='{.spec.template.spec.hostAliases}' 2>/dev/null \
+          || echo "(none)"
+      register: current_aliases
+      changed_when: false
+      failed_when: false
+
+    - name: Print current hostAliases
+      debug:
+        msg: "Current hostAliases: {{ current_aliases.stdout }}"
+
+    - name: Patch Rancher deployment with hostAliases
+      shell: |
+        k3s kubectl patch deployment rancher -n cattle-system \
+          --type=merge \
+          -p '{
+            "spec": {
+              "template": {
+                "spec": {
+                  "hostAliases": [
+                    {
+                      "ip": "{{ network_vm_ip }}",
+                      "hostnames": [
+                        "{{ auth_hostname }}",
+                        "{{ rancher_hostname }}"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }' 2>/dev/null && echo "hostAliases patched" || echo "patch failed"
+      register: patch_result
+      changed_when: "'hostAliases patched' in patch_result.stdout"
+      failed_when: false
+
+    - name: Print patch result
+      debug:
+        msg: "{{ patch_result.stdout_lines }}"
+
+    - name: Wait for Rancher rollout (pods restart with new hostAliases)
+      shell: |
+        k3s kubectl rollout status deployment/rancher -n cattle-system --timeout=120s \
+          2>/dev/null && echo "rollout complete" || echo "rollout timed out (non-fatal)"
+      register: rollout_status
+      changed_when: false
+      failed_when: false
+
+    - name: Print rollout status
+      debug:
+        msg: "{{ rollout_status.stdout_lines }}"
+
+    - name: Verify hostAliases in new pods
+      shell: |
+        k3s kubectl get deployment rancher -n cattle-system \
+          -o jsonpath='{.spec.template.spec.hostAliases}' 2>/dev/null
+      register: new_aliases
+      changed_when: false
+      failed_when: false
+
+    - name: Print new hostAliases
+      debug:
+        msg: "hostAliases after patch: {{ new_aliases.stdout }}"
+
+    - name: Verify DNS from inside Rancher pod
+      shell: |
+        POD=$(k3s kubectl get pods -n cattle-system -l app=rancher \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -z "$POD" ]; then
+          echo "No Rancher pod found"
+          exit 0
+        fi
+        echo "Testing from pod: $POD"
+        k3s kubectl exec "$POD" -n cattle-system -- \
+          sh -c "getent hosts {{ auth_hostname }} || nslookup {{ auth_hostname }} 2>/dev/null || echo 'DNS lookup failed'" \
+          2>/dev/null || echo "exec failed (non-fatal)"
+      register: pod_dns
+      changed_when: false
+      failed_when: false
+
+    - name: Print pod DNS verification
+      debug:
+        msg: "{{ pod_dns.stdout_lines }}"
