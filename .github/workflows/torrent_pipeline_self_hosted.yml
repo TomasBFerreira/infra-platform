@@ -360,9 +360,9 @@ jobs:
     if: needs.flip-active.result == 'success'
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
-      ROUTER_NAME:  qbittorrent-router
-      SERVICE_NAME: qbittorrent-service
-      HOSTNAME:     torrent.databaes.net
+      ROUTER_NAME:  ${{ needs.resolve-slots.outputs.environment == 'prod' && 'qbittorrent-router' || format('qbittorrent-{0}-router', needs.resolve-slots.outputs.environment) }}
+      SERVICE_NAME: ${{ needs.resolve-slots.outputs.environment == 'prod' && 'qbittorrent-service' || format('qbittorrent-{0}-service', needs.resolve-slots.outputs.environment) }}
+      HOSTNAME:     ${{ needs.resolve-slots.outputs.environment == 'prod' && 'torrent.databaes.net' || format('torrent-{0}.databaes.net', needs.resolve-slots.outputs.environment) }}
       BACKEND_URL:  "http://${{ needs.resolve-slots.outputs.staging_ip }}:8080"
     steps:
       - name: Checkout traefik-gitops
