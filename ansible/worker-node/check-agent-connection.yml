@@ -1,0 +1,73 @@
+---
+# Check the current cattle-cluster-agent connection status.
+# Gets current pod logs (not just startup) to see if there are errors.
+
+- name: Check cattle-cluster-agent connection
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Get current agent pod name
+      shell: >
+        k3s kubectl get pods -n cattle-system -l app=cattle-cluster-agent
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo ""
+      register: pod_name
+      changed_when: false
+
+    - name: Get full agent logs (last 50 lines)
+      shell: "k3s kubectl logs -n cattle-system {{ pod_name.stdout }} --tail=50 2>/dev/null || echo 'no logs'"
+      register: agent_logs
+      changed_when: false
+      when: pod_name.stdout | length > 0
+
+    - name: Print agent logs
+      debug:
+        msg: "{{ agent_logs.stdout_lines | default(['pod not found']) }}"
+
+    - name: Check cattle-credentials secret
+      shell: >
+        k3s kubectl get secret -n cattle-system cattle-credentials-$(
+          k3s kubectl get deployment cattle-cluster-agent -n cattle-system
+          -o jsonpath='{.spec.template.spec.volumes[0].secret.secretName}'
+          | sed 's/cattle-credentials-//') 2>/dev/null
+        || echo "credential secret not found"
+      register: cred_check
+      changed_when: false
+      failed_when: false
+
+    - name: Print credential status
+      debug:
+        msg: "{{ cred_check.stdout_lines }}"
+
+    - name: Test direct connectivity to Rancher from node
+      shell: |
+        curl -sk -o /dev/null -w '%{http_code}' \
+          https://{{ rancher_ip }}/ping \
+          -H "Host: {{ rancher_hostname }}"
+      register: ping_result
+      changed_when: false
+      failed_when: false
+
+    - name: Print ping result
+      debug:
+        msg: "Rancher ping HTTP status: {{ ping_result.stdout }}"
+
+    - name: Test WebSocket upgrade to Rancher
+      shell: |
+        curl -sk -o /dev/null -w '%{http_code}' \
+          --http1.1 \
+          -H "Upgrade: websocket" \
+          -H "Connection: Upgrade" \
+          -H "Sec-WebSocket-Version: 13" \
+          -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+          -H "Host: {{ rancher_hostname }}" \
+          "https://{{ rancher_ip }}/v3/connect"
+      register: ws_result
+      changed_when: false
+      failed_when: false
+
+    - name: Print WebSocket upgrade result
+      debug:
+        msg: "WebSocket upgrade HTTP status: {{ ws_result.stdout }} (101=switching protocols OK, 401=auth failure, 403=forbidden)"
