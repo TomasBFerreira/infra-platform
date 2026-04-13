@@ -51,9 +51,10 @@
       # HelmChart controller cannot revert them (unlike kubectl patch which is undone
       # by Helm reconciliation within ~20 minutes).
       #
-      # Pin to the currently installed chart version (read from helm history) to
-      # avoid accidentally upgrading Rancher while applying the alias patch.
-      become_user: appadm
+      # Run as root (no become_user) to avoid Ansible temp-file permission issues.
+      # KUBECONFIG points to /etc/rancher/k3s/k3s.yaml which k3s installs with
+      # mode 644 (--write-kubeconfig-mode 644), so root can always read it.
+      # Pin to the currently installed chart version to avoid accidental upgrades.
       shell: |
         /usr/local/bin/helm repo update rancher-stable 2>/dev/null || true
         # Get the currently installed chart version to avoid accidental upgrades
@@ -75,7 +76,7 @@
       changed_when: "'hostAliases patched' in patch_result.stdout"
       failed_when: false
       environment:
-        KUBECONFIG: /home/appadm/.kube/config
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
 
     - name: Print patch result
       debug:
