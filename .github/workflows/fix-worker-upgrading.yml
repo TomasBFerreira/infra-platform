@@ -1,0 +1,116 @@
+name: Fix Worker Node Stuck in Upgrading
+
+# Clears a Rancher cluster stuck in "Upgrading" state on an existing worker node.
+#
+# What this does (non-destructive — does NOT re-provision the VM):
+#   1. Deletes all SUC Plan CRDs from cattle-system (stops the upgrade loop)
+#   2. Deletes stuck upgrade Jobs in cattle-system
+#   3. Re-patches cattle-cluster-agent with hostAliases for Rancher
+#   4. Force-restarts the cattle-cluster-agent deployment
+#
+# If the cluster is still stuck after this, run the appropriate registration
+# workflow (register-gpu-worker-rancher.yml or register-worker-rancher.yml)
+# to do a full re-registration.
+#
+# Usage:
+#   gh workflow run fix-worker-upgrading.yml \
+#     --field node_ip=192.168.10.21 \
+#     --field vm_type=gpu \
+#     --field environment=prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_ip:
+        description: 'IP address of the worker node stuck in Upgrading'
+        required: true
+        default: '192.168.10.21'
+        type: string
+      vm_type:
+        description: 'Worker node type (for display/logging only — fix is the same for both)'
+        required: true
+        default: 'gpu'
+        type: choice
+        options:
+          - gpu
+          - regular
+      environment:
+        description: 'Target environment (determines Rancher IP + SSH runner)'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - prod
+          - dev
+          - qa
+
+jobs:
+  fix-upgrading:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      NODE_IP: ${{ inputs.node_ip }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git reset --hard origin/${{ github.ref_name }}
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Resolve Rancher address for environment
+        run: |
+          case "${{ inputs.environment }}" in
+            prod)
+              echo "RANCHER_IP=192.168.10.2"                >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher.databaes.net"  >> $GITHUB_ENV
+              ;;
+            dev)
+              echo "RANCHER_IP=192.168.20.2"                    >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-dev.databaes.net"  >> $GITHUB_ENV
+              ;;
+            qa)
+              echo "RANCHER_IP=192.168.30.2"                   >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-qa.databaes.net"  >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Fetch SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${NODE_IP}..."
+          timeout 60 bash -c "until nc -z ${NODE_IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+      - name: Fix stuck Rancher upgrade state
+        run: |
+          ssh-keygen -R "${NODE_IP}" || true
+          ansible-playbook \
+            -i "${NODE_IP}," \
+            -v \
+            --private-key /tmp/worker_node_key \
+            -e "ansible_host=${NODE_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "rancher_ip=${RANCHER_IP}" \
+            -e "rancher_hostname=${RANCHER_HOSTNAME}" \
+            ansible/worker-node/fix-rancher-upgrade.yml
+
+      - name: Cleanup secrets
+        if: always()
+        run: rm -f /tmp/worker_node_key

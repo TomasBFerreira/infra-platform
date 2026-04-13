@@ -1,0 +1,141 @@
+---
+# Clears a stuck "Upgrading" state on a Rancher-imported k3s cluster.
+#
+# What gets cleared:
+#   - All Plan CRDs in cattle-system (system-upgrade-controller upgrade plans)
+#   - All stuck Jobs in cattle-system (SUC upgrade job pods)
+#   - cattle-cluster-agent deployment is force-restarted
+#   - hostAliases patch is re-applied (can be lost after agent restarts)
+#
+# Required variables (passed as -e from workflow):
+#   rancher_ip       — IP of the Rancher LXC
+#   rancher_hostname — hostname of Rancher (must match TLS SAN)
+
+- name: Fix stuck Rancher upgrade state on worker node
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Check that k3s kubectl is available
+      command: k3s kubectl version --client
+      changed_when: false
+
+    - name: Show current cattle-system pod state
+      command: k3s kubectl get pods -n cattle-system -o wide
+      register: pods_before
+      changed_when: false
+      failed_when: false
+
+    - name: Print current pod state
+      debug:
+        msg: "{{ pods_before.stdout_lines }}"
+
+    # ── Clear SUC upgrade plans ───────────────────────────────────────────────
+    # system-upgrade-controller creates Plan CRDs when Rancher pushes a k3s
+    # version upgrade. Deleting them stops the upgrade loop immediately.
+
+    - name: Check if Plan CRD exists
+      command: k3s kubectl get crd plans.upgrade.cattle.io
+      register: plan_crd_check
+      changed_when: false
+      failed_when: false
+
+    - name: Delete all SUC upgrade plans from cattle-system
+      command: k3s kubectl delete plans.upgrade.cattle.io --all -n cattle-system
+      register: delete_plans
+      when: plan_crd_check.rc == 0
+      failed_when: false
+      changed_when: "'deleted' in (delete_plans.stdout | default(''))"
+
+    - name: Show plan deletion result
+      debug:
+        msg: "{{ delete_plans.stdout | default('Plan CRD not present — skipped') }}"
+
+    # ── Clear stuck upgrade Jobs ──────────────────────────────────────────────
+    # SUC creates one-shot Jobs to run the k3s upgrade. They can get stuck in
+    # Pending or Running if the node is unschedulable or the image can't be pulled.
+
+    - name: Delete stuck upgrade jobs in cattle-system
+      shell: |
+        JOBS=$(k3s kubectl get jobs -n cattle-system \
+          --field-selector=status.successful!=1 \
+          -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+        if [ -n "$JOBS" ]; then
+          echo "$JOBS" | tr ' ' '\n' | xargs -I{} k3s kubectl delete job {} -n cattle-system --ignore-not-found
+          echo "Deleted stuck jobs: $JOBS"
+        else
+          echo "No stuck jobs found"
+        fi
+      register: delete_jobs
+      changed_when: "'Deleted stuck jobs' in delete_jobs.stdout"
+      failed_when: false
+
+    - name: Show job deletion result
+      debug:
+        msg: "{{ delete_jobs.stdout_lines }}"
+
+    # ── Re-patch cattle-cluster-agent hostAliases ─────────────────────────────
+    # The hostAliases patch is applied outside the registration manifest, so it
+    # is lost whenever Rancher pushes a new agent image and rolls the deployment.
+    # Re-applying it ensures the agent can resolve Rancher by hostname.
+
+    - name: Wait for cattle-cluster-agent deployment to exist
+      command: k3s kubectl get deployment cattle-cluster-agent -n cattle-system
+      register: agent_check
+      retries: 6
+      delay: 5
+      until: agent_check.rc == 0
+      failed_when: false
+
+    - name: Patch cattle-cluster-agent with hostAliases for Rancher
+      shell: |
+        k3s kubectl patch deployment cattle-cluster-agent -n cattle-system \
+          --type=strategic \
+          -p='{"spec":{"template":{"spec":{"hostAliases":[{"ip":"{{ rancher_ip }}","hostnames":["{{ rancher_hostname }}"]}]}}}}'
+      when: agent_check.rc == 0
+      register: patch_result
+      changed_when: "'patched' in patch_result.stdout"
+      failed_when: false
+
+    # ── Force-restart cattle-cluster-agent ────────────────────────────────────
+
+    - name: Force-restart cattle-cluster-agent deployment
+      command: k3s kubectl rollout restart deployment/cattle-cluster-agent -n cattle-system
+      when: agent_check.rc == 0
+      changed_when: true
+      failed_when: false
+
+    - name: Wait for cattle-cluster-agent rollout
+      command: >
+        k3s kubectl rollout status deployment/cattle-cluster-agent
+        -n cattle-system --timeout=180s
+      when: agent_check.rc == 0
+      register: rollout_status
+      failed_when: false
+      changed_when: false
+
+    - name: Show rollout status
+      debug:
+        msg: "{{ rollout_status.stdout_lines | default(['cattle-cluster-agent deployment not found — may need full re-registration']) }}"
+
+    # ── Final state ───────────────────────────────────────────────────────────
+
+    - name: Show final cattle-system pod state
+      command: k3s kubectl get pods -n cattle-system -o wide
+      register: pods_after
+      changed_when: false
+      failed_when: false
+
+    - name: Print final pod state
+      debug:
+        msg: "{{ pods_after.stdout_lines }}"
+
+    - name: Summary
+      debug:
+        msg: >-
+          Rancher upgrade fix complete on {{ inventory_hostname }}.
+          If cluster still shows Upgrading after ~2 min, run
+          register-gpu-worker-rancher.yml (or register-worker-rancher.yml)
+          to do a full re-registration.
