@@ -1,0 +1,80 @@
+---
+# Fixes a k3s cluster stuck in "upgrading" state due to a version mismatch.
+#
+# Rancher stores the DESIRED k3s version in the cluster's k3sConfig.kubernetesVersion.
+# When this differs from what's actually installed, Rancher enters "upgrading" state
+# and blocks the WebSocket tunnel — preventing the agent from ever connecting.
+#
+# This playbook patches the cluster object to match the CURRENTLY INSTALLED version,
+# clearing the deadlock. Run on the Rancher LXC (not the worker node).
+#
+# Required variables:
+#   cluster_id          — Rancher cluster ID (e.g. c-dj4lv)
+#   current_k3s_version — Version currently installed on the worker (e.g. v1.32.3+k3s1)
+
+- name: Fix k3s version mismatch in Rancher cluster spec
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Show current cluster spec (k3sConfig)
+      shell: >
+        k3s kubectl get clusters.management.cattle.io {{ cluster_id }}
+        -o jsonpath='{.spec.k3sConfig.kubernetesVersion}' 2>/dev/null || echo "not found"
+      register: current_desired
+      changed_when: false
+      failed_when: false
+
+    - name: Print current desired k3s version
+      debug:
+        msg: "Rancher desired k3s version: {{ current_desired.stdout }} | Patching to: {{ current_k3s_version }}"
+
+    - name: Patch cluster to match installed k3s version
+      shell: >
+        k3s kubectl patch clusters.management.cattle.io {{ cluster_id }}
+        --type=merge
+        -p '{"spec":{"k3sConfig":{"kubernetesVersion":"{{ current_k3s_version }}"}}}'
+      register: patch_result
+      changed_when: "'patched' in patch_result.stdout or 'configured' in patch_result.stdout"
+      failed_when: patch_result.rc != 0
+
+    - name: Print patch result
+      debug:
+        msg: "{{ patch_result.stdout }}"
+
+    - name: Wait for Rancher to reconcile cluster state
+      pause:
+        seconds: 15
+
+    - name: Check cluster conditions after patch
+      shell: >
+        k3s kubectl get clusters.management.cattle.io {{ cluster_id }}
+        -o jsonpath='{.status.conditions}' 2>/dev/null
+        | python3 -c "
+        import sys, json
+        conds = json.load(sys.stdin)
+        for c in conds:
+            print(c.get('type','') + ': ' + c.get('status','') + ' -- ' + c.get('message','')[:80])
+        " || echo "failed to get conditions"
+      register: conditions
+      changed_when: false
+      failed_when: false
+
+    - name: Print conditions after patch
+      debug:
+        msg: "{{ conditions.stdout_lines }}"
+
+    - name: Check cluster state (transitioning field)
+      shell: >
+        k3s kubectl get clusters.management.cattle.io {{ cluster_id }}
+        -o jsonpath='state={.metadata.annotations.field\.cattle\.io/state} transitioning={.metadata.annotations.field\.cattle\.io/transitioning}'
+        2>/dev/null || echo "not found"
+      register: cluster_state
+      changed_when: false
+      failed_when: false
+
+    - name: Print cluster state
+      debug:
+        msg: "{{ cluster_state.stdout }}"

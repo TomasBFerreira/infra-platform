@@ -1,0 +1,82 @@
+name: Fix k3s Version Mismatch (Rancher Upgrading Deadlock)
+
+# Clears a cluster stuck in "upgrading" state by patching its desired k3s version
+# to match what is actually installed on the worker node.
+#
+# Use when: cluster state=upgrading, Connected=False, and k3sConfig.kubernetesVersion
+# differs from the version installed on the worker.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [prod, dev]
+      cluster_id:
+        description: 'Rancher cluster ID (e.g. c-dj4lv)'
+        required: true
+        default: 'c-dj4lv'
+      current_k3s_version:
+        description: 'k3s version currently installed on the worker (e.g. v1.32.3+k3s1)'
+        required: true
+        default: 'v1.32.3+k3s1'
+
+jobs:
+  fix-version-mismatch:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Set Rancher IP from environment
+        run: |
+          case "${{ inputs.environment }}" in
+            prod) echo "RANCHER_IP=192.168.10.2" >> $GITHUB_ENV ;;
+            dev)  echo "RANCHER_IP=192.168.20.2" >> $GITHUB_ENV ;;
+          esac
+
+      - name: Fetch Rancher SSH key from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | awk 'NF > 0' > /tmp/rancher_key
+          chmod 600 /tmp/rancher_key
+
+          # Validate the key loaded correctly
+          ssh-keygen -l -f /tmp/rancher_key > /dev/null 2>&1 || {
+            echo "awk key invalid, retrying with Python formatter"
+            vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+              | python3 -c "import sys,textwrap,re; raw=sys.stdin.read(); raw=raw.replace('\\\\n','\n').replace('\\\\r','').replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; bi=raw.find(B); ei=raw.find(E); body=re.sub(r'\s+','',raw[bi+len(B):ei]); print(B); print(textwrap.fill(body,width=64)); print(E)" \
+              > /tmp/rancher_key
+            chmod 600 /tmp/rancher_key
+          }
+
+      - name: Patch cluster k3s version on Rancher LXC
+        run: |
+          ssh-keygen -R "${RANCHER_IP}" || true
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "cluster_id=${{ inputs.cluster_id }}" \
+            -e "current_k3s_version=${{ inputs.current_k3s_version }}" \
+            ansible/worker-node/fix-k3s-version-mismatch.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/rancher_key
