@@ -1,0 +1,52 @@
+name: Diagnose Prod Rancher State
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, prod]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      NODE_IP: 192.168.10.21
+      RANCHER_IP: 192.168.10.2
+      RANCHER_HOSTNAME: rancher.databaes.net
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Fetch credentials from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+          RANCHER_PASS=$(vault kv get -field=password secret/rancher/prod/bootstrap)
+          echo "::add-mask::$RANCHER_PASS"
+          echo "RANCHER_BOOTSTRAP_PASSWORD=$RANCHER_PASS" >> $GITHUB_ENV
+
+      - name: Run Rancher state diagnostic
+        run: |
+          ssh-keygen -R "${NODE_IP}" || true
+          ansible-playbook \
+            -i "${NODE_IP}," -v \
+            --private-key /tmp/worker_node_key \
+            -e "ansible_host=${NODE_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "rancher_ip=${RANCHER_IP}" \
+            -e "rancher_hostname=${RANCHER_HOSTNAME}" \
+            -e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}" \
+            ansible/worker-node/diagnose-rancher-state.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/worker_node_key
