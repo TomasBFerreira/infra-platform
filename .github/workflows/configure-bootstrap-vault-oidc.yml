@@ -19,7 +19,7 @@ on:
 
 jobs:
   configure:
-    runs-on: [self-hosted, "${{ inputs.environment || 'dev' }}"]
+    runs-on: [self-hosted, management]
     steps:
       - name: Check SSO is deployed — skip if not
         id: check-sso
