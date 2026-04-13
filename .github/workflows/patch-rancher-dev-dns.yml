@@ -46,11 +46,14 @@ jobs:
           case "$ENV-$SLOT" in
             dev-blue)   NETWORK_VM_IP="192.168.20.55" ;;
             dev-green)  NETWORK_VM_IP="192.168.20.56" ;;
+            qa-blue)    NETWORK_VM_IP="192.168.30.55" ;;
+            qa-green)   NETWORK_VM_IP="192.168.30.56" ;;
             prod-blue)  NETWORK_VM_IP="192.168.10.55" ;;
             prod-green) NETWORK_VM_IP="192.168.10.56" ;;
           esac
           case "$ENV" in
             dev)  RANCHER_IP="192.168.20.2" ;;
+            qa)   RANCHER_IP="192.168.30.2" ;;
             prod) RANCHER_IP="192.168.10.2" ;;
           esac
           echo "NETWORK_VM_IP=$NETWORK_VM_IP" >> $GITHUB_ENV

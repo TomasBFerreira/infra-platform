@@ -54,6 +54,11 @@ jobs:
               SSO_IP=$(vault kv get -field=ip secret/sso/dev/active-slot)
               echo "VAULT_ADDR=http://${VAULT_IP}:8200" >> $GITHUB_ENV
               ;;
+            qa)
+              VAULT_IP=$(vault kv get -field=ip secret/vault-ct/qa/active-slot)
+              SSO_IP=$(vault kv get -field=ip secret/sso/qa/active-slot)
+              echo "VAULT_ADDR=http://${VAULT_IP}:8200" >> $GITHUB_ENV
+              ;;
             prod)
               VAULT_IP=$(vault kv get -field=ip secret/vault-ct/prod/active-slot)
               SSO_IP=$(vault kv get -field=ip secret/sso/prod/active-slot)
@@ -112,6 +117,7 @@ jobs:
         run: |
           case "${{ inputs.environment }}" in
             dev)  PUBLIC_SSO_URL="https://auth-dev.databaes.net" ;;
+            qa)   PUBLIC_SSO_URL="https://auth-qa.databaes.net"  ;;
             prod) PUBLIC_SSO_URL="https://auth.databaes.net"     ;;
           esac
           # Vault validates the discovery_url by fetching it server-to-server.

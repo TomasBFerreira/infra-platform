@@ -35,6 +35,10 @@ jobs:
               echo "RANCHER_IP=192.168.10.2"         >> $GITHUB_ENV
               echo "RANCHER_HOSTNAME=rancher.databaes.net" >> $GITHUB_ENV
               ;;
+            qa)
+              echo "RANCHER_IP=192.168.30.2"             >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-qa.databaes.net" >> $GITHUB_ENV
+              ;;
             dev)
               echo "RANCHER_IP=192.168.20.2"             >> $GITHUB_ENV
               echo "RANCHER_HOSTNAME=rancher-dev.databaes.net" >> $GITHUB_ENV

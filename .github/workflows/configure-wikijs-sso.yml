@@ -49,6 +49,7 @@ jobs:
 
           case "${{ inputs.environment }}" in
             dev)  EXTERNAL_HOST="https://wikijs-dev.databaes.net" ;;
+            qa)   EXTERNAL_HOST="https://wikijs-qa.databaes.net"  ;;
             prod) EXTERNAL_HOST="https://wikijs.databaes.net"     ;;
           esac
           echo "EXTERNAL_HOST=$EXTERNAL_HOST" >> $GITHUB_ENV
