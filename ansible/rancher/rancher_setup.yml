@@ -464,6 +464,37 @@
       shell: k3s kubectl rollout restart deployment/coredns -n kube-system
       failed_when: false
 
+    # hostAliases on the Deployment spec is the DURABLE DNS fix for Rancher pods.
+    # k3s's HelmChart controller resets CoreDNS NodeHosts on reconciliation, making
+    # the CoreDNS approach unreliable. hostAliases bypass CoreDNS entirely — they're
+    # injected directly into Rancher pod /etc/hosts and survive CoreDNS resets.
+    # The patch triggers a rolling restart of Rancher pods (1-by-1, ~2min total).
+    - name: Patch Rancher Deployment with hostAliases for OIDC DNS resolution
+      when: network_vm_ip is defined and network_vm_ip | length > 0
+      shell: |
+        k3s kubectl patch deployment rancher -n cattle-system \
+          --type=merge \
+          -p '{
+            "spec": {
+              "template": {
+                "spec": {
+                  "hostAliases": [
+                    {
+                      "ip": "{{ network_vm_ip }}",
+                      "hostnames": [
+                        "auth-{{ runner_env }}.databaes.net",
+                        "{{ rancher_hostname }}"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }' 2>/dev/null && echo "hostAliases patched" || echo "hostAliases patch failed (non-fatal)"
+      register: hostalias_patch
+      changed_when: "'hostAliases patched' in hostalias_patch.stdout"
+      failed_when: false
+
     - name: Rancher setup summary
       debug:
         msg: "Rancher {{ rancher_version }} deployed on K3s {{ k3s_version }} at https://{{ rancher_hostname }}"
