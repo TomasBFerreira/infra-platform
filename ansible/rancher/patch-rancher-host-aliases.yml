@@ -55,15 +55,15 @@
       # avoid accidentally upgrading Rancher while applying the alias patch.
       become_user: appadm
       shell: |
-        helm repo update rancher-stable 2>/dev/null || true
+        /usr/local/bin/helm repo update rancher-stable 2>/dev/null || true
         # Get the currently installed chart version to avoid accidental upgrades
-        CHART_VER=$(helm history rancher -n cattle-system --max 1 -o json 2>/dev/null \
+        CHART_VER=$(/usr/local/bin/helm history rancher -n cattle-system --max 1 -o json 2>/dev/null \
           | python3 -c "import sys,json; h=json.load(sys.stdin); print(h[0]['chart'].replace('rancher-',''))" \
           2>/dev/null || echo "")
         VERSION_FLAG=""
         [ -n "$CHART_VER" ] && VERSION_FLAG="--version $CHART_VER"
         echo "Pinning helm upgrade to chart version: ${CHART_VER:-latest}"
-        helm upgrade rancher rancher-stable/rancher \
+        /usr/local/bin/helm upgrade rancher rancher-stable/rancher \
           --namespace cattle-system \
           --reuse-values \
           $VERSION_FLAG \
