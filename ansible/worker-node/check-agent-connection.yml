@@ -95,3 +95,26 @@
     - name: Print WebSocket upgrade result
       debug:
         msg: "WebSocket upgrade HTTP status: {{ ws_result.stdout }} (101=switching protocols OK, 401=auth failure, 403=forbidden)"
+
+    - name: Check all cattle-system pods (look for pending/crashlooping)
+      shell: k3s kubectl get pods -n cattle-system -o wide 2>/dev/null || echo "no pods"
+      register: all_cattle_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Print all cattle-system pods
+      debug:
+        msg: "{{ all_cattle_pods.stdout_lines }}"
+
+    - name: Check cluster object on management plane (Rancher status from worker)
+      shell: >
+        k3s kubectl get node 2>/dev/null | head -5 &&
+        echo "---" &&
+        k3s kubectl get deployment -n cattle-system 2>/dev/null
+      register: cluster_status
+      changed_when: false
+      failed_when: false
+
+    - name: Print cluster status
+      debug:
+        msg: "{{ cluster_status.stdout_lines }}"
