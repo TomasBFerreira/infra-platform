@@ -71,14 +71,13 @@
       debug:
         msg: "{{ remove_finalizers.stdout_lines }}"
 
-    - name: Force-clear namespace finalizer via finalize API (if still stuck)
+    - name: Force-clear namespace finalizers (spec + metadata) via finalize API (if still stuck)
       when: ns_phase.stdout == "Terminating"
       shell: |
-        # Check if still terminating after resource cleanup
         PHASE=$(k3s kubectl get namespace cattle-system \
           -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
         if [ "$PHASE" = "Terminating" ]; then
-          echo "Still Terminating — clearing namespace-level finalizers via finalize API..."
+          echo "Still Terminating — clearing namespace spec.finalizers via finalize API..."
           k3s kubectl get namespace cattle-system -o json \
             | python3 -c "
         import sys, json
@@ -86,8 +85,15 @@
         ns['spec']['finalizers'] = []
         print(json.dumps(ns))
         " \
-            | k3s kubectl replace --raw /api/v1/namespaces/cattle-system/finalize -f -
-          echo "Namespace finalizer cleared"
+            | k3s kubectl replace --raw /api/v1/namespaces/cattle-system/finalize -f - \
+            > /dev/null
+          echo "spec.finalizers cleared"
+
+          echo "Clearing metadata.finalizers via patch..."
+          k3s kubectl patch namespace cattle-system \
+            --type=merge -p '{"metadata":{"finalizers":null}}' 2>/dev/null \
+            && echo "metadata.finalizers cleared" \
+            || echo "metadata.finalizers patch not needed or failed (non-fatal)"
         else
           echo "Namespace is $PHASE — no finalize API call needed"
         fi
