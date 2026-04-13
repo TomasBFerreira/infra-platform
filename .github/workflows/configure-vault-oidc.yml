@@ -84,7 +84,10 @@ jobs:
       - name: Generate root token on vault CT
         if: steps.check-sso.outputs.skip != 'true'
         run: |
-          ROOT_TOKEN=$(ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no root@"$VAULT_IP" bash <<'ENDSSH'
+          # Retry SSH up to 3 times with 30s between — the async network-vm
+          # services restart can briefly disrupt connectivity.
+          for attempt in 1 2 3; do
+            ROOT_TOKEN=$(ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no -o ConnectTimeout=60 root@"$VAULT_IP" bash <<'ENDSSH'
           export VAULT_ADDR=http://127.0.0.1:8200
 
           # Fast path: root token still in init file from first deploy
@@ -105,7 +108,10 @@ jobs:
           ENCODED=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['encoded_root_token'])")
           vault operator generate-root -decode="$ENCODED" -otp="$OTP"
           ENDSSH
-          )
+          ) && break
+            echo "SSH attempt $attempt failed, retrying in 30s..."
+            sleep 30
+          done
           echo "::add-mask::$ROOT_TOKEN"
           echo "VAULT_TOKEN=$ROOT_TOKEN" >> $GITHUB_ENV
 
