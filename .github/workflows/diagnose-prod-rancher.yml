@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  diagnose:
+  diagnose-node:
     runs-on: [self-hosted, prod]
     env:
       LC_ALL: C.UTF-8
@@ -33,7 +33,7 @@ jobs:
           echo "::add-mask::$RANCHER_PASS"
           echo "RANCHER_BOOTSTRAP_PASSWORD=$RANCHER_PASS" >> $GITHUB_ENV
 
-      - name: Run Rancher state diagnostic
+      - name: Run Rancher state diagnostic on node
         run: |
           ssh-keygen -R "${NODE_IP}" || true
           ansible-playbook \
@@ -50,3 +50,68 @@ jobs:
       - name: Cleanup
         if: always()
         run: rm -f /tmp/worker_node_key
+
+  query-rancher-api:
+    runs-on: [self-hosted, prod]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      RANCHER_IP: 192.168.10.2
+      RANCHER_HOSTNAME: rancher.databaes.net
+    steps:
+      - name: Fetch Rancher password from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          RANCHER_PASS=$(vault kv get -field=password secret/rancher/prod/bootstrap)
+          echo "::add-mask::$RANCHER_PASS"
+          echo "RANCHER_PASS=$RANCHER_PASS" >> $GITHUB_ENV
+
+      - name: Query Rancher API for cluster states
+        run: |
+          python3 - << 'PYEOF'
+          import subprocess, json, os
+
+          ip   = os.environ["RANCHER_IP"]
+          host = os.environ["RANCHER_HOSTNAME"]
+          pw   = os.environ["RANCHER_PASS"]
+
+          def curl(*args):
+              r = subprocess.run(["curl", "-sk"] + list(args), capture_output=True, text=True)
+              try:
+                  return json.loads(r.stdout)
+              except Exception:
+                  print("raw:", r.stdout[:500])
+                  return {}
+
+          login = curl(
+              "-H", "Host: " + host,
+              "-X", "POST", "https://" + ip + "/v3-public/localProviders/local?action=login",
+              "-H", "Content-Type: application/json",
+              "-d", json.dumps({"username": "admin", "password": pw, "ttl": 60000}))
+          token = login.get("token", "")
+          if not token:
+              print("ERROR: login failed:", login)
+              exit(1)
+
+          clusters = curl(
+              "-H", "Host: " + host,
+              "-H", "Authorization: Bearer " + token,
+              "https://" + ip + "/v3/clusters")
+
+          print("\n=== Cluster states ===")
+          for c in clusters.get("data", []):
+              cid   = c["id"]
+              name  = c["name"]
+              state = c.get("state", "?")
+              trans = c.get("transitioning", "?")
+              msg   = c.get("transitioningMessage", "")[:120]
+              print("  " + cid.ljust(20) + " " + name.ljust(30) + " state=" + state.ljust(15) + " transitioning=" + trans)
+              if msg:
+                  print("    message: " + msg)
+              for cond in c.get("conditions", []):
+                  if cond.get("status") != "True":
+                      print("    CONDITION " + cond.get("type","") + ": " + cond.get("status","") + " -- " + cond.get("message","")[:80])
+
+          PYEOF
