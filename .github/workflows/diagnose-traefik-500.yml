@@ -9,11 +9,11 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment (dev/prod)'
+        description: 'Environment (dev/qa/prod)'
         required: true
         default: 'dev'
         type: choice
-        options: [dev, prod]
+        options: [dev, qa, prod]
 
 jobs:
   diagnose:
@@ -32,12 +32,16 @@ jobs:
           case "$ENV-$SLOT" in
             dev-blue)  echo "NETWORK_VM_IP=192.168.20.55" >> $GITHUB_ENV ;;
             dev-green) echo "NETWORK_VM_IP=192.168.20.56" >> $GITHUB_ENV ;;
+            qa-blue)   echo "NETWORK_VM_IP=192.168.30.55" >> $GITHUB_ENV ;;
+            qa-green)  echo "NETWORK_VM_IP=192.168.30.56" >> $GITHUB_ENV ;;
             prod-blue) echo "NETWORK_VM_IP=192.168.10.55" >> $GITHUB_ENV ;;
             prod-green)echo "NETWORK_VM_IP=192.168.10.56" >> $GITHUB_ENV ;;
           esac
           case "$ENV" in
             dev)  echo "RANCHER_IP=192.168.20.2"  >> $GITHUB_ENV
                   echo "RANCHER_HOST=rancher-dev.databaes.net" >> $GITHUB_ENV ;;
+            qa)   echo "RANCHER_IP=192.168.30.2"  >> $GITHUB_ENV
+                  echo "RANCHER_HOST=rancher-qa.databaes.net" >> $GITHUB_ENV ;;
             prod) echo "RANCHER_IP=192.168.10.2"  >> $GITHUB_ENV
                   echo "RANCHER_HOST=rancher.databaes.net" >> $GITHUB_ENV ;;
           esac

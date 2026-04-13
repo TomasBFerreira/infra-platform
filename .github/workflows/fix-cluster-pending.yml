@@ -28,7 +28,7 @@ on:
         required: true
         default: 'dev'
         type: choice
-        options: [dev, prod]
+        options: [dev, qa, prod]
       worker_ip:
         description: 'Worker node IP'
         required: true

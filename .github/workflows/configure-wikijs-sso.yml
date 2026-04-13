@@ -8,7 +8,7 @@ on:
         required: true
         default: 'dev'
         type: choice
-        options: [dev, prod]
+        options: [dev, qa, prod]
   workflow_call:
     inputs:
       environment:

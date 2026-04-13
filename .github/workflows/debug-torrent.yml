@@ -8,7 +8,7 @@ on:
         required: true
         default: 'prod'
         type: choice
-        options: [dev, prod]
+        options: [dev, qa, prod]
 
 jobs:
   debug:

@@ -15,7 +15,7 @@ on:
         required: true
         default: 'dev'
         type: choice
-        options: [dev, prod]
+        options: [dev, qa, prod]
       worker_ip:
         description: 'Worker node IP (e.g. 192.168.50.211)'
         required: true

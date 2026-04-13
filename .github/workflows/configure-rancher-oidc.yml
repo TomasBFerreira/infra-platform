@@ -15,7 +15,7 @@ on:
         required: true
         default: 'dev'
         type: choice
-        options: [dev, prod]
+        options: [dev, qa, prod]
 
 jobs:
   configure:
@@ -34,6 +34,10 @@ jobs:
               RANCHER_IP="192.168.20.2"
               RANCHER_HOSTNAME="rancher-dev.databaes.net"
               ;;
+            qa)
+              RANCHER_IP="192.168.30.2"
+              RANCHER_HOSTNAME="rancher-qa.databaes.net"
+              ;;
             prod)
               RANCHER_IP="192.168.10.2"
               RANCHER_HOSTNAME="rancher.databaes.net"
@@ -50,6 +54,7 @@ jobs:
           # login redirects to the correct public address.
           case "$ENV" in
             dev)  PUBLIC_SSO_URL="https://auth-dev.databaes.net" ;;
+            qa)   PUBLIC_SSO_URL="https://auth-qa.databaes.net"  ;;
             prod) PUBLIC_SSO_URL="https://auth.databaes.net"     ;;
           esac
           OIDC_DISCOVERY_URL="${PUBLIC_SSO_URL}/application/o/rancher/"
