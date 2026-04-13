@@ -96,21 +96,26 @@ jobs:
           echo "::add-mask::$ROOT_TOKEN"
           echo "VAULT_TOKEN=$ROOT_TOKEN" >> $GITHUB_ENV
 
-      - name: Add DNS resolution for Authentik on Vault LXC (dev only)
-        if: steps.check-sso.outputs.skip != 'true' && inputs.environment == 'dev'
+      - name: Add DNS resolution for Authentik on Vault LXC (dev/qa)
+        if: steps.check-sso.outputs.skip != 'true' && (inputs.environment == 'dev' || inputs.environment == 'qa')
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
-          # The dev Vault LXC can't resolve auth-dev.databaes.net via external DNS.
-          # Add a /etc/hosts entry pointing to the Traefik network-vm (192.168.20.55)
-          # so Vault can fetch the OIDC discovery URL server-to-server.
-          NW_IP=$(vault kv get -field=ip secret/network_vm/dev/active-slot 2>/dev/null || echo "192.168.20.55")
+          # Non-prod Vault LXCs can't resolve auth hostnames via external DNS.
+          # Add a /etc/hosts entry pointing to the Traefik network-vm so Vault
+          # can fetch the OIDC discovery URL server-to-server.
+          ENV="${{ inputs.environment }}"
+          case "$ENV" in
+            dev) AUTH_HOST="auth-dev.databaes.net"; NW_FALLBACK="192.168.20.55" ;;
+            qa)  AUTH_HOST="auth-qa.databaes.net";  NW_FALLBACK="192.168.30.55" ;;
+          esac
+          NW_IP=$(vault kv get -field=ip secret/network-vm/${ENV}/active-slot 2>/dev/null || echo "$NW_FALLBACK")
           ssh -i /tmp/vault_ct_key -o StrictHostKeyChecking=no root@"$VAULT_IP" \
-            "grep -q 'auth-dev.databaes.net' /etc/hosts \
-              || echo '$NW_IP auth-dev.databaes.net' >> /etc/hosts \
-              && grep 'auth-dev.databaes.net' /etc/hosts"
-          echo "Ensured auth-dev.databaes.net resolves to $NW_IP on Vault LXC"
+            "grep -q '$AUTH_HOST' /etc/hosts \
+              || echo '$NW_IP $AUTH_HOST' >> /etc/hosts \
+              && grep '$AUTH_HOST' /etc/hosts"
+          echo "Ensured $AUTH_HOST resolves to $NW_IP on Vault LXC"
 
       - name: Patch discovery_url to public HTTPS URL
         if: steps.check-sso.outputs.skip != 'true'

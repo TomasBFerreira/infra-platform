@@ -20,3 +20,12 @@ adguard_dev_rewrites:
   - domain: radarr-dev.databaes.net
   - domain: sonarr-dev.databaes.net
   - domain: dev.databaes.net
+
+adguard_qa_rewrites:
+  - domain: auth-qa.databaes.net
+  - domain: grafana-qa.databaes.net
+  - domain: rancher-qa.databaes.net
+  - domain: vault-qa.databaes.net
+  - domain: semaphore-qa.databaes.net
+  - domain: devops-portal-qa.databaes.net
+  - domain: qa.databaes.net

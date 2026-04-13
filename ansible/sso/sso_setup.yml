@@ -89,7 +89,7 @@
           AUTHENTIK_HOST=http://{{ ansible_host }}:9000
           # Used by Traefik forward auth — the externally reachable URL of this Authentik instance
           # Must use https:// — Cloudflare terminates TLS, browser enforces mixed-content if this is http://
-          AUTHENTIK_HOST_BROWSER={% if vault_env == 'prod' %}https://auth.databaes.net{% else %}https://auth-dev.databaes.net{% endif %}
+          AUTHENTIK_HOST_BROWSER={% if vault_env == 'prod' %}https://auth.databaes.net{% elif vault_env == 'qa' %}https://auth-qa.databaes.net{% else %}https://auth-dev.databaes.net{% endif %}
 
     - name: Deploy Authentik docker-compose
       copy:

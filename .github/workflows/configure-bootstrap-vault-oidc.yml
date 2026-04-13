@@ -1,8 +1,21 @@
 name: Configure Bootstrap Vault OIDC
 
 on:
-  workflow_dispatch: {}
-  workflow_call: {}
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: false
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: false
+        default: 'dev'
+        type: string
 
 jobs:
   configure:
@@ -14,7 +27,8 @@ jobs:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
-          if ! vault kv get secret/authentik/dev/vault-oidc > /dev/null 2>&1; then
+          ENV="${{ inputs.environment || 'dev' }}"
+          if ! vault kv get secret/authentik/${ENV}/vault-oidc > /dev/null 2>&1; then
             echo "SSO OIDC credentials not yet seeded — skipping bootstrap vault OIDC config"
             echo "skip=true" >> $GITHUB_OUTPUT
           else
@@ -28,13 +42,18 @@ jobs:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
-          CLIENT_ID=$(vault kv get -field=client_id secret/authentik/dev/vault-oidc)
-          CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/dev/vault-oidc)
+          ENV="${{ inputs.environment || 'dev' }}"
+          CLIENT_ID=$(vault kv get -field=client_id secret/authentik/${ENV}/vault-oidc)
+          CLIENT_SECRET=$(vault kv get -field=client_secret secret/authentik/${ENV}/vault-oidc)
           echo "::add-mask::$CLIENT_SECRET"
           echo "client_id=$CLIENT_ID"    >> $GITHUB_OUTPUT
           echo "client_secret=$CLIENT_SECRET" >> $GITHUB_OUTPUT
-          # Bootstrap vault is always dev-aligned — use dev SSO public URL
-          echo "discovery_url=https://auth-dev.databaes.net/application/o/vault/" >> $GITHUB_OUTPUT
+          case "$ENV" in
+            dev)  AUTH_HOST="auth-dev.databaes.net" ;;
+            qa)   AUTH_HOST="auth-qa.databaes.net"  ;;
+            prod) AUTH_HOST="auth.databaes.net"     ;;
+          esac
+          echo "discovery_url=https://${AUTH_HOST}/application/o/vault/" >> $GITHUB_OUTPUT
 
       - name: Obtain root token via pct exec on bootstrap vault CT
         if: steps.check-sso.outputs.skip != 'true'
@@ -113,18 +132,24 @@ jobs:
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
           PVE_USER:    ${{ secrets.PVE_USER }}
         run: |
-          # The bootstrap vault CT (192.168.50.200) has no route to auth-dev.databaes.net
-          # (management subnet has no direct path to Cloudflare edge or dev subnet).
-          # Resolve auth-dev.databaes.net using the active dev network-VM IP so Traefik
+          # The bootstrap vault CT (192.168.50.200) has no route to auth hostnames
+          # (management subnet has no direct path to Cloudflare edge or service subnets).
+          # Resolve the auth hostname using the active network-VM IP so Traefik
           # serves HTTPS for the domain at a reachable internal address.
-          NETWORK_VM_IP=$(vault kv get -field=ip secret/network-vm/dev/active-slot 2>/dev/null || echo "")
+          ENV="${{ inputs.environment || 'dev' }}"
+          case "$ENV" in
+            dev) AUTH_HOST="auth-dev.databaes.net"; NW_FALLBACK="192.168.20.55" ;;
+            qa)  AUTH_HOST="auth-qa.databaes.net";  NW_FALLBACK="192.168.30.55" ;;
+            *)   AUTH_HOST="auth.databaes.net";     NW_FALLBACK="" ;;
+          esac
+          NETWORK_VM_IP=$(vault kv get -field=ip secret/network-vm/${ENV}/active-slot 2>/dev/null || echo "$NW_FALLBACK")
           if [ -z "$NETWORK_VM_IP" ]; then
-            echo "Could not resolve active dev network-VM IP — skipping hosts injection"
+            echo "Could not resolve active ${ENV} network-VM IP — skipping hosts injection"
           else
             PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-            echo "Injecting $NETWORK_VM_IP auth-dev.databaes.net into CT 200 /etc/hosts"
+            echo "Injecting $NETWORK_VM_IP $AUTH_HOST into CT 200 /etc/hosts"
             ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
-              "pct exec 200 -- bash -c 'grep -q auth-dev.databaes.net /etc/hosts && sed -i \"/auth-dev.databaes.net/d\" /etc/hosts; echo \"${NETWORK_VM_IP} auth-dev.databaes.net\" >> /etc/hosts'"
+              "pct exec 200 -- bash -c 'grep -q $AUTH_HOST /etc/hosts && sed -i \"/$AUTH_HOST/d\" /etc/hosts; echo \"${NETWORK_VM_IP} $AUTH_HOST\" >> /etc/hosts'"
           fi
 
       - name: Configure OIDC auth method on bootstrap vault
@@ -177,6 +202,12 @@ jobs:
         env:
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
+          ENV="${{ inputs.environment || 'dev' }}"
+          case "$ENV" in
+            dev) AUTH_HOST="auth-dev.databaes.net" ;;
+            qa)  AUTH_HOST="auth-qa.databaes.net"  ;;
+            *)   AUTH_HOST="auth.databaes.net"     ;;
+          esac
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
-            "pct exec 200 -- sed -i '/auth-dev.databaes.net/d' /etc/hosts" 2>/dev/null || true
+            "pct exec 200 -- sed -i '/$AUTH_HOST/d' /etc/hosts" 2>/dev/null || true

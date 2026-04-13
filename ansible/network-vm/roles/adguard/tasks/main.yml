@@ -72,9 +72,9 @@
   when: adguard_username != '' and adguard_password != ''
   no_log: true
 
-# Register dev hostnames as DNS rewrites pointing to this network-vm's IP.
+# Register hostnames as DNS rewrites pointing to this network-vm's IP.
 # Traefik (websecure) handles TLS + routing. Tailscale peers resolve these
-# hostnames via AdGuard instead of public Cloudflare DNS — so dev services
+# hostnames via AdGuard instead of public Cloudflare DNS — so services
 # are never exposed on the internet.
 - name: Upsert AdGuard DNS rewrites for dev hostnames
   uri:
@@ -89,5 +89,21 @@
     force_basic_auth: yes
     status_code: [200, 409]
   loop: "{{ adguard_dev_rewrites }}"
-  when: adguard_username != '' and adguard_password != ''
+  when: deploy_env == 'dev' and adguard_username != '' and adguard_password != ''
+  no_log: true
+
+- name: Upsert AdGuard DNS rewrites for QA hostnames
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
+    method: POST
+    body_format: json
+    body:
+      domain: "{{ item.domain }}"
+      answer: "{{ adguard_dev_rewrite_ip }}"
+    url_username: "{{ adguard_username }}"
+    url_password: "{{ adguard_password }}"
+    force_basic_auth: yes
+    status_code: [200, 409]
+  loop: "{{ adguard_qa_rewrites }}"
+  when: deploy_env == 'qa' and adguard_username != '' and adguard_password != ''
   no_log: true

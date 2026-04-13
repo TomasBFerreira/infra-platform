@@ -390,9 +390,11 @@ jobs:
     secrets: inherit
 
   configure-bootstrap-vault-oidc:
-    needs: [flip-active, configure-vault-oidc]
+    needs: [resolve-slots, flip-active, configure-vault-oidc]
     if: always() && needs.flip-active.result == 'success'
     uses: ./.github/workflows/configure-bootstrap-vault-oidc.yml
+    with:
+      environment: ${{ needs.resolve-slots.outputs.environment }}
     secrets: inherit
 
   backup-db:
