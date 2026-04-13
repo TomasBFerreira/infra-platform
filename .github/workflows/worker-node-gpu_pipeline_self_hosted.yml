@@ -8,7 +8,7 @@ name: Worker Node (GPU) Pipeline (Self-Hosted)
 # VMID scheme (GPU worker nodes):
 #   prod (betsy):     VMID = 120+N, IP = 192.168.10.(20+N) → N=1: 121 → .21
 #   dev  (benedict):  VMID = 220+N, IP = 192.168.20.(20+N) → N=1: 221 → .21
-#   qa   (vladimir):  VMID = 320+N, IP = 192.168.30.(20+N) → N=1: 321 → .21
+#   qa   (heaton):    VMID = 320+N, IP = 192.168.30.(20+N) → N=1: 321 → .21
 #
 # 6-job structure (mirroring worker-node pipeline):
 #   resolve-node  → resolve-slots equivalent
@@ -34,7 +34,7 @@ on:
         options:
           - betsy
           - benedict
-          - vladimir
+          - heaton
       template_vmid:
         description: 'VMID of the cloud-init template VM to clone (must exist on target node)'
         required: true
@@ -47,7 +47,7 @@ concurrency:
 
 jobs:
   resolve-node:
-    runs-on: [self-hosted, "${{ github.event.inputs.target_node == 'betsy' && 'prod' || github.event.inputs.target_node == 'vladimir' && 'qa' || 'dev' }}"]
+    runs-on: [self-hosted, "${{ github.event.inputs.target_node == 'betsy' && 'prod' || github.event.inputs.target_node == 'heaton' && 'qa' || 'dev' }}"]
     outputs:
       node_number:      ${{ steps.resolve.outputs.node_number }}
       vmid:             ${{ steps.resolve.outputs.vmid }}
@@ -75,7 +75,7 @@ jobs:
             exit 1
           fi
 
-          # GPU worker VMID/IP scheme: prod(betsy)=120+N, dev(benedict)=220+N, qa(vladimir)=320+N
+          # GPU worker VMID/IP scheme: prod(betsy)=120+N, dev(benedict)=220+N, qa(heaton)=320+N
           # IP: 192.168.<env_subnet>.(20+N)
           case "$TARGET_NODE" in
             benedict)
@@ -90,9 +90,9 @@ jobs:
               GATEWAY="192.168.10.55"; NETWORK_BRIDGE="vmbr10"
               RANCHER_IP="192.168.10.2"; RANCHER_HOSTNAME="rancher.databaes.net"
               ;;
-            vladimir)
+            heaton)
               VMID_BASE=320; ENV=qa; ENV_SUBNET=30
-              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              PVE_API_URL="https://192.168.50.8:8006/api2/json"
               GATEWAY="192.168.30.55"; NETWORK_BRIDGE="vmbr30"
               RANCHER_IP="192.168.30.2"; RANCHER_HOSTNAME="rancher-qa.databaes.net"
               ;;
@@ -336,7 +336,7 @@ jobs:
           case "${PVE_NODE}" in
             benedict) ENV=dev ;;
             betsy)    ENV=prod ;;
-            vladimir) ENV=qa ;;
+            heaton) ENV=qa ;;
             *) echo "Unknown pve_node '${PVE_NODE}', skipping env slot write"; exit 0 ;;
           esac
           vault kv put secret/worker-node-gpu/${ENV}/active-slot \

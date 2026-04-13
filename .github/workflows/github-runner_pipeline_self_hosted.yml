@@ -41,7 +41,7 @@ jobs:
           ENV="${{ github.event.inputs.environment || 'dev' }}"
 
           # github-runner uses singleton scheme (no blue/green):
-          # prod=101 on betsy, dev=201 on benedict, qa=301 on vladimir
+          # prod=101 on betsy, dev=201 on benedict, qa=301 on heaton
           # IP last-octet = 101 (not .1 to avoid gateway conflict)
           case "$ENV" in
             dev)
@@ -52,8 +52,8 @@ jobs:
               ;;
             qa)
               VMID=301; IP="192.168.30.101"
-              PVE_API_URL="https://192.168.50.4:8006/api2/json"
-              PVE_NODE="vladimir"
+              PVE_API_URL="https://192.168.50.8:8006/api2/json"
+              PVE_NODE="heaton"
               GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
               ;;
             prod)

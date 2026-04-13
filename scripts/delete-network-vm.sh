@@ -15,8 +15,8 @@ if [[ -z "$PVE_API_URL" || -z "$PVE_USER" || -z "$PVE_PASS" ]]; then
   exit 0  # Don't fail the workflow, just skip
 fi
 
-# Try to delete the LXC on all nodes (benedict, betsy, vladimir)
-nodes=(benedict betsy vladimir)
+# Try to delete the LXC on all nodes (benedict, betsy, heaton)
+nodes=(benedict betsy heaton)
 for node in "${nodes[@]}"; do
   echo "Checking for LXC $VMID on node $node..."
   curl -sk -u "$PVE_USER:$PVE_PASS" "$PVE_API_URL/api2/json/nodes/$node/lxc/$VMID/status/current" | grep -q 'status' || continue

@@ -14,7 +14,7 @@ GitHub Actions (two-tier self-hosted runner setup)
 
 Proxmox (3 nodes)
     ├── benedict  192.168.50.4   dev node
-    ├── vladimir  192.168.50.4   qa node
+    ├── heaton    192.168.50.8   qa node
     └── betsy     192.168.50.2   prod node
 
 Services (all LXC containers, Debian 12)
