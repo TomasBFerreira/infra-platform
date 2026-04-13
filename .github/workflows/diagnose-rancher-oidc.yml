@@ -1,0 +1,105 @@
+name: Diagnose Rancher OIDC
+
+# Diagnoses OIDC token exchange failures where users can reach Rancher but
+# get 401 after the OIDC callback (/v3/users?me=true returns 401, no R_SESS).
+#
+# Tests:
+# 1. CoreDNS NodeHosts (is auth-dev in there?)
+# 2. TLS test from inside a k3s pod — strict and insecure curl to auth endpoint
+# 3. Rancher pod logs filtered for OIDC/token/auth errors
+# 4. Current genericOIDC config (issuer, rancherUrl, insecureSkipVerify)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment (dev/qa/prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code
+        run: |
+          cd /app/infra-platform
+          git fetch origin && git checkout main && git reset --hard origin/main
+
+      - name: Set environment variables
+        run: |
+          case "${{ inputs.environment }}" in
+            dev)
+              echo "RANCHER_IP=192.168.20.2"                   >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-dev.databaes.net" >> $GITHUB_ENV
+              echo "AUTH_HOSTNAME=auth-dev.databaes.net"       >> $GITHUB_ENV
+              ;;
+            qa)
+              echo "RANCHER_IP=192.168.30.2"                    >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher-qa.databaes.net"  >> $GITHUB_ENV
+              echo "AUTH_HOSTNAME=auth-qa.databaes.net"        >> $GITHUB_ENV
+              ;;
+            prod)
+              echo "RANCHER_IP=192.168.10.2"                   >> $GITHUB_ENV
+              echo "RANCHER_HOSTNAME=rancher.databaes.net"     >> $GITHUB_ENV
+              echo "AUTH_HOSTNAME=auth.databaes.net"           >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Fetch Rancher SSH key and admin password from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/rancher_worker \
+            | python3 -c "import sys,textwrap; raw=sys.stdin.read().strip().replace('\r',''); B='-----BEGIN OPENSSH PRIVATE KEY-----'; E='-----END OPENSSH PRIVATE KEY-----'; body=raw[raw.find(B)+len(B):raw.find(E)].replace(' ','').replace('\n','').replace('\t',''); print(B); print(textwrap.fill(body,width=70)); print(E)" \
+            > /tmp/rancher_key
+          chmod 600 /tmp/rancher_key
+
+          # Get admin password for OIDC config API call
+          ENV="${{ inputs.environment }}"
+          RANCHER_PW=$(vault kv get -field=password secret/rancher/${ENV}/bootstrap 2>/dev/null || echo "")
+          echo "::add-mask::$RANCHER_PW"
+          echo "RANCHER_PASSWORD=$RANCHER_PW" >> $GITHUB_ENV
+
+      - name: Get Rancher admin token
+        run: |
+          LOGIN_RESP=$(curl -sk \
+            -H "Host: ${RANCHER_HOSTNAME}" \
+            -X POST "https://${RANCHER_IP}/v3-public/localProviders/local?action=login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"admin\", \"password\": \"${RANCHER_PASSWORD}\", \"ttl\": 60000}")
+          TOKEN=$(echo "$LOGIN_RESP" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
+          if [ -z "$TOKEN" ]; then
+            echo "WARNING: Could not get Rancher token — OIDC config check will be skipped"
+          else
+            echo "::add-mask::$TOKEN"
+            echo "RANCHER_TOKEN=$TOKEN" >> $GITHUB_ENV
+          fi
+
+      - name: Diagnose OIDC on Rancher LXC
+        run: |
+          ssh-keygen -R "${RANCHER_IP}" || true
+          ansible-playbook \
+            -i "${RANCHER_IP}," -v \
+            --private-key /tmp/rancher_key \
+            -e "ansible_host=${RANCHER_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "rancher_host=${RANCHER_HOSTNAME}" \
+            -e "auth_host=${AUTH_HOSTNAME}" \
+            -e "rancher_token=${RANCHER_TOKEN:-}" \
+            ansible/rancher/diagnose-oidc.yml
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/rancher_key

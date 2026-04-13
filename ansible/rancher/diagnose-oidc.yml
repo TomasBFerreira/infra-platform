@@ -1,0 +1,107 @@
+---
+# Diagnoses Rancher OIDC token exchange failures.
+# Run this when users can reach Rancher but get 401 after OIDC callback
+# (/v3/users?me=true returns 401, no R_SESS cookie set).
+#
+# Checks:
+# 1. Current OIDC config in Rancher API
+# 2. Rancher pod logs filtered for OIDC/auth errors
+# 3. TLS test: can Rancher pods actually reach auth endpoint over HTTPS?
+# 4. CoreDNS NodeHosts state
+#
+# Required vars: rancher_ip, rancher_admin_token (or admin_password)
+
+- name: Diagnose Rancher OIDC
+  hosts: all
+  gather_facts: false
+  become: true
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  vars:
+    rancher_hostname: "{{ rancher_host | default('rancher-dev.databaes.net') }}"
+    auth_hostname: "{{ auth_host | default('auth-dev.databaes.net') }}"
+
+  tasks:
+    - name: Get CoreDNS NodeHosts
+      shell: |
+        k3s kubectl get configmap coredns -n kube-system \
+          -o jsonpath='{.data.NodeHosts}' 2>/dev/null || echo "(not found)"
+      register: coredns_hosts
+      changed_when: false
+      failed_when: false
+
+    - name: Print CoreDNS NodeHosts
+      debug:
+        msg: "{{ coredns_hosts.stdout_lines }}"
+
+    - name: Test HTTPS TLS from inside a k3s pod (no -k)
+      shell: |
+        k3s kubectl run oidc-tls-test --image=curlimages/curl:7.88.1 --restart=Never \
+          --rm --timeout=30s -it -- \
+          sh -c '
+            echo "=== TLS test (strict) ===";
+            curl -sv --max-time 10 \
+              "https://{{ auth_hostname }}/application/o/rancher/.well-known/openid-configuration" \
+              2>&1 | grep -E "SSL|TLS|certificate|issuer|subject|expire|error|Could not|Failed|200|301|302|400|401|403|404|500" | head -20;
+            echo "=== TLS exit code: $? ===";
+            echo "=== TLS test (insecure -k) ===";
+            curl -sk --max-time 10 \
+              "https://{{ auth_hostname }}/application/o/rancher/.well-known/openid-configuration" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(\"issuer:\", d.get(\"issuer\"))" 2>/dev/null \
+              || echo "insecure curl also failed"
+          ' 2>/dev/null || echo "Pod test skipped (non-fatal)"
+      register: tls_test
+      changed_when: false
+      failed_when: false
+
+    - name: Print TLS test result
+      debug:
+        msg: "{{ tls_test.stdout_lines }}"
+
+    - name: Get Rancher pod logs filtered for OIDC errors
+      shell: |
+        for POD in $(k3s kubectl get pods -n cattle-system -l app=rancher \
+          -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "=== Pod: $POD ==="
+          k3s kubectl logs "$POD" -n cattle-system --tail=200 2>/dev/null \
+            | grep -iE "oidc|verify.auth|token|oauth|genericoidc|tls|certificate|x509|ssl|principal|login|auth.*error|error.*auth" \
+            | tail -30
+        done
+      register: oidc_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Print OIDC logs
+      debug:
+        msg: "{{ oidc_logs.stdout_lines }}"
+
+    - name: Get current OIDC config from Rancher API
+      shell: |
+        # Quick curl to see what the genericOIDC config looks like right now
+        curl -sk --max-time 10 \
+          -H "Host: {{ rancher_hostname }}" \
+          "https://localhost/v3/genericOIDCConfigs/genericoidc" \
+          -H "Authorization: Bearer {{ rancher_token | default('') }}" \
+          2>/dev/null | python3 -c "
+        import sys, json
+        try:
+            d = json.load(sys.stdin)
+            keys = ['enabled','issuer','clientId','rancherUrl','accessMode','insecureSkipVerify','scope']
+            for k in keys:
+                if k in d:
+                    v = d[k]
+                    if k == 'clientId':
+                        v = str(v)[:8] + '...' if len(str(v)) > 8 else v
+                    print(f'{k}: {v}')
+        except Exception as e:
+            print('Parse error:', e)
+            print('Raw (first 200):', sys.stdin.read()[:200] if not sys.stdin.closed else '(closed)')
+        " 2>/dev/null || echo "Could not get OIDC config (no token)"
+      register: oidc_config
+      changed_when: false
+      failed_when: false
+
+    - name: Print OIDC config
+      debug:
+        msg: "{{ oidc_config.stdout_lines }}"
