@@ -1,0 +1,63 @@
+---
+# Deletes the current cattle-cluster-agent pod to reset an exponential backoff loop.
+# The deployment controller immediately recreates it with a fresh backoff counter.
+# Run this on the worker node when the agent pod is Running but not connecting
+# (i.e., stuck in a long backoff after multiple Rancher restarts).
+
+- name: Bounce cattle-cluster-agent pod
+  hosts: all
+  gather_facts: false
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  tasks:
+    - name: Show current agent pod
+      command: k3s kubectl get pods -n cattle-system -l app=cattle-cluster-agent -o wide
+      register: pod_before
+      changed_when: false
+      failed_when: false
+
+    - name: Print current pod
+      debug:
+        msg: "{{ pod_before.stdout_lines }}"
+
+    - name: Delete agent pod (deployment will recreate immediately)
+      command: k3s kubectl delete pod -n cattle-system -l app=cattle-cluster-agent
+      register: delete_result
+      changed_when: "'deleted' in delete_result.stdout"
+      failed_when: delete_result.rc != 0
+
+    - name: Print delete result
+      debug:
+        msg: "{{ delete_result.stdout }}"
+
+    - name: Wait for new pod to be ready (30s)
+      command: >
+        k3s kubectl rollout status deployment/cattle-cluster-agent
+        -n cattle-system --timeout=30s
+      register: rollout_result
+      changed_when: false
+      failed_when: false
+
+    - name: Show new pod
+      command: k3s kubectl get pods -n cattle-system -l app=cattle-cluster-agent -o wide
+      register: pod_after
+      changed_when: false
+      failed_when: false
+
+    - name: Print new pod
+      debug:
+        msg: "{{ pod_after.stdout_lines }}"
+
+    - name: Get initial agent logs (last 20 lines)
+      shell: >
+        POD=$(k3s kubectl get pods -n cattle-system -l app=cattle-cluster-agent
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null);
+        k3s kubectl logs -n cattle-system "$POD" --tail=20 2>/dev/null || echo "no logs yet"
+      register: agent_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Print agent logs
+      debug:
+        msg: "{{ agent_logs.stdout_lines }}"
