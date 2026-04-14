@@ -461,8 +461,8 @@ jobs:
           yq -i '
             .http.routers[env(ROUTER_NAME)].rule        = "Host(`" + env(HOSTNAME) + "`)" |
             .http.routers[env(ROUTER_NAME)].service     = env(SERVICE_NAME) |
-            .http.routers[env(ROUTER_NAME)].entryPoints = ["websecure"] |
-            .http.routers[env(ROUTER_NAME)].tls         = {} |
+            .http.routers[env(ROUTER_NAME)].entryPoints        = ["websecure"] |
+            .http.routers[env(ROUTER_NAME)].tls.certResolver   = "letsencrypt" |
             .http.services[env(SERVICE_NAME)].loadBalancer.servers          = [{"url": env(BACKEND_URL)}] |
             .http.services[env(SERVICE_NAME)].loadBalancer.serversTransport = env(SERVERS_TRANSPORT) |
             .http.serversTransports[env(SERVERS_TRANSPORT)].insecureSkipVerify = true
