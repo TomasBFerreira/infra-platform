@@ -249,6 +249,23 @@ jobs:
           timeout 120 bash -c "until nc -z ${IP} 22; do sleep 5; done"
           echo "SSH is up"
 
+      - name: Resolve active network-vm IP from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          SLOT=$(vault kv get -field=slot secret/network-vm/${ENV}/active-slot 2>/dev/null || echo "blue")
+          case "$ENV-$SLOT" in
+            dev-blue)   NETWORK_VM_IP="192.168.20.55" ;;
+            dev-green)  NETWORK_VM_IP="192.168.20.56" ;;
+            qa-blue)    NETWORK_VM_IP="192.168.30.55" ;;
+            qa-green)   NETWORK_VM_IP="192.168.30.56" ;;
+            prod-blue)  NETWORK_VM_IP="192.168.10.55" ;;
+            prod-green) NETWORK_VM_IP="192.168.10.56" ;;
+          esac
+          echo "Active network-vm slot=${SLOT}, ip=${NETWORK_VM_IP}"
+          echo "NETWORK_VM_IP=$NETWORK_VM_IP" >> "$GITHUB_ENV"
+
       - name: Ensure Rancher bootstrap password and fetch OIDC config
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -305,6 +322,7 @@ jobs:
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "runner_env=${ENV}" \
             -e "rancher_hostname=${RANCHER_HOSTNAME}" \
+            -e "network_vm_ip=${NETWORK_VM_IP}" \
             -e "rancher_bootstrap_password=${RANCHER_BOOTSTRAP_PASSWORD}" \
             ${RANCHER_OIDC_CLIENT_ID:+-e "rancher_oidc_client_id=${RANCHER_OIDC_CLIENT_ID}"} \
             ${RANCHER_OIDC_CLIENT_SECRET:+-e "rancher_oidc_client_secret=${RANCHER_OIDC_CLIENT_SECRET}"} \
