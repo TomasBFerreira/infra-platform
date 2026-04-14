@@ -17,11 +17,12 @@ AUTH="Authorization: Bearer ${TAILSCALE_API_KEY}"
 
 # Fetch devices tagged tag:subnet-router that are authorized.
 # Take the first IPv4 address of each (Tailscale IP, 100.x.x.x).
-devices_json=$(curl -sS -f -H "$AUTH" "${API}/devices")
+curl -sS -f -H "$AUTH" "${API}/devices" > /tmp/ts_devices.json
 
-ips_json=$(printf '%s' "$devices_json" | python3 - <<'PY'
-import json, sys
-data = json.load(sys.stdin)
+ips_json=$(python3 <<'PY'
+import json
+with open("/tmp/ts_devices.json") as f:
+    data = json.load(f)
 ips = []
 for d in data.get("devices", []):
     tags = d.get("tags") or []
@@ -30,13 +31,11 @@ for d in data.get("devices", []):
     if d.get("authorized") is False:
         continue
     for a in d.get("addresses", []):
-        # Skip IPv6 — split-DNS nameservers are IPv4
         if ":" in a:
             continue
         ips.append(a)
         break
-ips = sorted(set(ips))
-print(json.dumps(ips))
+print(json.dumps(sorted(set(ips))))
 PY
 )
 
