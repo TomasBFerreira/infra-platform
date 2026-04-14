@@ -99,6 +99,17 @@ jobs:
             "tailscale up --advertise-routes=${SUBNETS} --advertise-exit-node || true"
           echo "Tailscale routes + exit node updated"
 
+      - name: Cleanup
+        if: always()
+        run: rm -f ${SSH_KEY_PATH} /tmp/network_vm_key_* 2>/dev/null || true
+
+  update-tailscale-dns:
+    needs: update-services
+    # Runs on GitHub-hosted to reach api.tailscale.com without hitting the
+    # outbound TLS quirk on env-runner → network-vm egress path.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Refresh Tailscale split-DNS for databaes.net
         env:
           TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
@@ -106,7 +117,3 @@ jobs:
         run: |
           chmod +x scripts/update-tailscale-split-dns.sh
           scripts/update-tailscale-split-dns.sh
-
-      - name: Cleanup
-        if: always()
-        run: rm -f ${SSH_KEY_PATH} /tmp/network_vm_key_* 2>/dev/null || true

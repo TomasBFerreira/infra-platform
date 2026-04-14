@@ -441,7 +441,9 @@ jobs:
 
   update-tailscale-dns:
     needs: [resolve-slots, flip-active]
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    # Runs on GitHub-hosted to reach api.tailscale.com without hitting the
+    # outbound TLS quirk on env-runner → network-vm egress path.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Refresh Tailscale split-DNS for databaes.net
