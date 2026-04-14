@@ -1,0 +1,65 @@
+name: Diagnose network-vm tcpdump
+
+# Captures tailscale0 + eth0 traffic on the active network-vm for 30 seconds.
+# Run this, then from your Mac: ping <LAN_IP> and dig @<LAN_IP> <hostname>
+# during the capture window. Compare inbound vs reply packets to find where
+# the asymmetric flow breaks.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options: [dev, qa, prod]
+        default: qa
+      duration:
+        description: 'Capture duration (seconds)'
+        default: '30'
+
+jobs:
+  tcpdump:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENV: ${{ inputs.environment }}
+      DUR: ${{ inputs.duration }}
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - name: Resolve active network-vm IP
+        run: |
+          ACTIVE_IP=$(vault kv get -field=ip secret/network-vm/${ENV}/active-slot)
+          echo "ACTIVE_IP=${ACTIVE_IP}" >> $GITHUB_ENV
+
+      - name: Fetch SSH key
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nvm_tcpdump_key
+          chmod 600 /tmp/nvm_tcpdump_key
+
+      - name: Run tcpdump (you have DUR seconds to ping from your Mac)
+        run: |
+          echo "Starting capture on ${ACTIVE_IP} for ${DUR}s."
+          echo "FROM YOUR MAC NOW, run: ping ${ACTIVE_IP}   and   dig @${ACTIVE_IP} rancher-qa.databaes.net"
+          cat > /tmp/tcpdump_script.sh <<EOF
+          set +e
+          apt-get install -y tcpdump >/dev/null 2>&1
+          echo "===== Capturing on tailscale0 (inbound) ====="
+          timeout ${DUR} tcpdump -n -i tailscale0 -c 40 -tt \
+            '(icmp or (udp port 53) or (tcp port 443)) and host ${ACTIVE_IP}' 2>&1 &
+          TS_PID=\$!
+          echo "===== Capturing on eth0 (reply path) ====="
+          timeout ${DUR} tcpdump -n -i eth0 -c 40 -tt \
+            '(icmp or (udp port 53) or (tcp port 443))' 2>&1 &
+          ETH_PID=\$!
+          wait \$TS_PID \$ETH_PID
+          echo "===== Post-capture: conntrack ====="
+          conntrack -L -p icmp 2>&1 | head -10
+          conntrack -L -p udp --dport 53 2>&1 | head -10
+          EOF
+          ssh -o StrictHostKeyChecking=no -i /tmp/nvm_tcpdump_key \
+              root@${ACTIVE_IP} 'bash -s' < /tmp/tcpdump_script.sh
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/nvm_tcpdump_key /tmp/tcpdump_script.sh
