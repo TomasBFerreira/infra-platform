@@ -1,0 +1,75 @@
+name: Diagnose network-vm subnet routing
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options: [dev, qa, prod]
+        default: qa
+
+jobs:
+  diag:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENV: ${{ inputs.environment }}
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - name: Resolve active network-vm IP
+        run: |
+          ACTIVE_IP=$(vault kv get -field=ip secret/network-vm/${ENV}/active-slot)
+          echo "ACTIVE_IP=${ACTIVE_IP}" >> $GITHUB_ENV
+          echo "Active network-vm IP for ${ENV}: ${ACTIVE_IP}"
+
+      - name: Fetch SSH key from Vault
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/nvm_diag_key
+          chmod 600 /tmp/nvm_diag_key
+
+      - name: Write diagnostic script
+        run: |
+          cat > /tmp/nvm_diag.sh <<'EOF'
+          set +e
+          echo "========== HOSTNAME + IPs =========="
+          hostname; hostname -I
+          echo "========== ip -4 addr =========="
+          ip -4 addr show
+          echo "========== ip route =========="
+          ip route show
+          echo "========== ip rule =========="
+          ip rule show
+          echo "========== ip route show table all =========="
+          ip route show table all | head -80
+          echo "========== sysctl =========="
+          for k in net.ipv4.ip_forward net.ipv4.conf.all.rp_filter net.ipv4.conf.all.accept_local net.ipv4.conf.default.rp_filter net.ipv4.conf.tailscale0.rp_filter net.ipv4.conf.tailscale0.accept_local net.ipv4.conf.all.forwarding net.ipv4.conf.tailscale0.forwarding; do
+            echo "$k = $(sysctl -n $k 2>/dev/null)"
+          done
+          echo "========== tailscale status =========="
+          tailscale status 2>&1 | head -20
+          echo "========== tailscale ip -4 =========="
+          tailscale ip -4
+          echo "========== iptables INPUT =========="
+          iptables -L INPUT -v -n --line-numbers
+          echo "========== iptables FORWARD =========="
+          iptables -L FORWARD -v -n --line-numbers
+          echo "========== iptables MANGLE =========="
+          iptables -t mangle -L -v -n --line-numbers
+          echo "========== iptables NAT =========="
+          iptables -t nat -L -v -n --line-numbers
+          echo "========== ufw status =========="
+          ufw status verbose 2>&1 | head -40
+          echo "========== ss :53 :443 =========="
+          ss -tulnp 2>/dev/null | grep -E ':(53|443) '
+          EOF
+
+      - name: Run diagnostic on active network-vm
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/nvm_diag_key \
+              root@${ACTIVE_IP} 'bash -s' < /tmp/nvm_diag.sh
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/nvm_diag_key /tmp/nvm_diag.sh
