@@ -27,6 +27,8 @@ vault kv get secret/some/path
 
 ## How to add a new external service/domain
 
+> **Pipeline-managed services** (rancher, sso/authentik, semaphore, torrent) upsert their own `<service>-<env>-router` / `<service>-<env>-service` entries into `services.yml` via their pipelines' `update-traefik` job — do not add them by hand. Rancher's route is skipped for `prod` (prod keeps its hand-placed entry + Cloudflare tunnel path).
+
 1. Open `traefik-gitops/config/dynamic/services.yml`
 2. Add a router and service:
 ```yaml
