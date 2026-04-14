@@ -44,18 +44,19 @@ jobs:
           cat > /tmp/tcpdump_script.sh <<EOF
           set +e
           apt-get install -y tcpdump >/dev/null 2>&1
-          echo "===== Capturing on tailscale0 (inbound) ====="
-          timeout ${DUR} tcpdump -n -i tailscale0 -c 40 -tt \
-            '(icmp or (udp port 53) or (tcp port 443)) and host ${ACTIVE_IP}' 2>&1 &
+          echo "===== Capturing on tailscale0 (ICMP + incoming DNS only) ====="
+          timeout ${DUR} tcpdump -n -i tailscale0 -tt \
+            'icmp or (udp and (port 53 or port 5353))' 2>&1 &
           TS_PID=\$!
-          echo "===== Capturing on eth0 (reply path) ====="
-          timeout ${DUR} tcpdump -n -i eth0 -c 40 -tt \
-            '(icmp or (udp port 53) or (tcp port 443))' 2>&1 &
+          echo "===== Capturing on eth0 (ICMP only, filtering runner noise) ====="
+          timeout ${DUR} tcpdump -n -i eth0 -tt 'icmp' 2>&1 &
           ETH_PID=\$!
-          wait \$TS_PID \$ETH_PID
-          echo "===== Post-capture: conntrack ====="
-          conntrack -L -p icmp 2>&1 | head -10
-          conntrack -L -p udp --dport 53 2>&1 | head -10
+          echo "===== Capturing on any (everything from Mac's Tailscale IP) ====="
+          timeout ${DUR} tcpdump -n -i any -tt 'host 100.118.165.47' 2>&1 &
+          ANY_PID=\$!
+          wait \$TS_PID \$ETH_PID \$ANY_PID
+          echo "===== Post-capture: tailscale status quick ====="
+          tailscale status 2>&1 | grep higa || echo "(mac not in peer list)"
           EOF
           ssh -o StrictHostKeyChecking=no -i /tmp/nvm_tcpdump_key \
               root@${ACTIVE_IP} 'bash -s' < /tmp/tcpdump_script.sh
