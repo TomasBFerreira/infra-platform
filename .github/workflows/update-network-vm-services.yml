@@ -99,6 +99,14 @@ jobs:
             "tailscale up --advertise-routes=${SUBNETS} --advertise-exit-node || true"
           echo "Tailscale routes + exit node updated"
 
+      - name: Refresh Tailscale split-DNS for databaes.net
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+          TAILSCALE_TAILNET: ${{ secrets.TAILSCALE_TAILNET }}
+        run: |
+          chmod +x scripts/update-tailscale-split-dns.sh
+          scripts/update-tailscale-split-dns.sh
+
       - name: Cleanup
         if: always()
         run: rm -f ${SSH_KEY_PATH} /tmp/network_vm_key_* 2>/dev/null || true
