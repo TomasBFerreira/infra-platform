@@ -411,6 +411,56 @@ jobs:
             hostname="${{ needs.resolve-rancher.outputs.hostname }}" \
             provisioned_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+  update-traefik:
+    needs: [resolve-rancher, configure-oidc]
+    if: needs.resolve-rancher.outputs.environment != 'prod'
+    runs-on: [self-hosted, "${{ needs.resolve-rancher.outputs.environment }}"]
+    env:
+      ROUTER_NAME:       rancher-${{ needs.resolve-rancher.outputs.environment }}-router
+      SERVICE_NAME:      rancher-${{ needs.resolve-rancher.outputs.environment }}-service
+      SERVERS_TRANSPORT: rancher-${{ needs.resolve-rancher.outputs.environment }}-transport
+      HOSTNAME:          ${{ needs.resolve-rancher.outputs.rancher_hostname }}
+      BACKEND_URL:       "https://${{ needs.resolve-rancher.outputs.rancher_ip }}:443"
+    steps:
+      - name: Checkout traefik-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: TomasBFerreira/traefik-gitops
+          ref: main
+          token: ${{ secrets.GH_PAT }}
+          path: traefik-gitops
+
+      - name: Install yq if missing
+        run: |
+          if ! command -v yq &>/dev/null; then
+            curl -fsSL "https://github.com/mikefarah/yq/releases/download/v4.44.6/yq_linux_amd64" \
+              -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Upsert rancher route in services.yml
+        working-directory: traefik-gitops
+        run: |
+          yq -i '
+            .http.routers[env(ROUTER_NAME)].rule        = "Host(`" + env(HOSTNAME) + "`)" |
+            .http.routers[env(ROUTER_NAME)].service     = env(SERVICE_NAME) |
+            .http.routers[env(ROUTER_NAME)].entryPoints = ["websecure"] |
+            .http.routers[env(ROUTER_NAME)].tls         = {} |
+            .http.services[env(SERVICE_NAME)].loadBalancer.servers          = [{"url": env(BACKEND_URL)}] |
+            .http.services[env(SERVICE_NAME)].loadBalancer.serversTransport = env(SERVERS_TRANSPORT) |
+            .http.serversTransports[env(SERVERS_TRANSPORT)].insecureSkipVerify = true
+          ' config/dynamic/services.yml
+
+      - name: Commit and push
+        working-directory: traefik-gitops
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git add config/dynamic/services.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: upsert ${ROUTER_NAME} → ${BACKEND_URL}"
+            git push
+          fi
+
   cleanup-on-failure:
     needs: [resolve-rancher, terraform-rancher, ansible-rancher, configure-oidc]
     if: failure()
