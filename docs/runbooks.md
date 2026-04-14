@@ -25,6 +25,30 @@ vault kv get secret/some/path
 
 ---
 
+## Accessing internal QA services from a new device
+
+All `*-qa.databaes.net` hostnames (rancher-qa, auth-qa, grafana-qa, vault-qa, semaphore-qa, devops-portal-qa, qa) are Tailscale-only — no public CNAME exists for them. Tailscale split-DNS is configured to answer these via AdGuard on the QA network-vm, which returns the VM's Tailscale IPv4.
+
+In practice, browsers (Chrome especially) aggressively cache a connection to the public `*.databaes.net` wildcard (via HTTP/3 QUIC sessions + `alt-svc` headers, TTL 24h) and will keep hitting Cloudflare even after clearing the host cache and flushing socket pools. The reliable way to force a new device's browser onto the Tailscale path is a `/etc/hosts` override that changes the destination IP — this invalidates any cached connection state.
+
+**Setup on a new Mac / Linux client:**
+
+1. Make sure Tailscale is running and the QA subnet `192.168.30.0/24` is accepted.
+2. Find the current QA network-vm Tailscale IP:
+   - Tailscale admin → Machines → `qa-network-vm-<slot>` → copy the `100.x.x.x` address
+   - (Or any machine: `dig @100.100.100.100 rancher-qa.databaes.net` and take the returned `100.x` IP)
+3. Add to `/etc/hosts`:
+   ```
+   100.123.3.27 rancher-qa.databaes.net auth-qa.databaes.net grafana-qa.databaes.net vault-qa.databaes.net semaphore-qa.databaes.net devops-portal-qa.databaes.net
+   ```
+   (Replace `100.123.3.27` with whatever the current QA Tailscale IP is.)
+4. Clear browser DNS cache (Chrome: `chrome://net-internals/#dns` → Clear host cache; `chrome://net-internals/#sockets` → Flush socket pools).
+5. `https://rancher-qa.databaes.net` should now load to Rancher's Authentik-QA SSO.
+
+**When the QA network-vm is rebuilt (new Tailscale IP):** update your `/etc/hosts` line with the new IP. The Tailscale split-DNS config in the admin is kept in sync automatically by the network-vm pipeline (`scripts/update-tailscale-split-dns.sh`), so the source of truth is always Tailscale admin's split-DNS entry for `databaes.net`.
+
+---
+
 ## How to add a new external service/domain
 
 > **Pipeline-managed services** (rancher, sso/authentik, semaphore, torrent) upsert their own `<service>-<env>-router` / `<service>-<env>-service` entries into `services.yml` via their pipelines' `update-traefik` job — do not add them by hand. Rancher's route is skipped for `prod` (prod keeps its hand-placed entry + Cloudflare tunnel path).
