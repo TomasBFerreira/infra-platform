@@ -46,11 +46,11 @@ if [[ "$ips_json" == "[]" ]]; then
   exit 1
 fi
 
-# POST upserts the domains specified without touching others.
+# PATCH upserts the domains specified without touching others; POST replaces all.
 payload=$(printf '{"databaes.net": %s}' "$ips_json")
-echo "POSTing: $payload"
+echo "PATCHing: $payload"
 
-curl -sS -f -X POST -H "$AUTH" -H "Content-Type: application/json" \
+curl -sS -f -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
   -d "$payload" \
   "${API}/dns/split-dns"
 
