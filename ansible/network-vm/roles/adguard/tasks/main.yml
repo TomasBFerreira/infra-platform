@@ -72,10 +72,59 @@
   when: adguard_username != '' and adguard_password != ''
   no_log: true
 
-# Register hostnames as DNS rewrites pointing to this network-vm's IP.
-# Traefik (websecure) handles TLS + routing. Tailscale peers resolve these
-# hostnames via AdGuard instead of public Cloudflare DNS — so services
-# are never exposed on the internet.
+# Register hostnames as DNS rewrites pointing to this network-vm's Tailscale IP.
+# Using the Tailscale IP (not the LAN IP) sidesteps an asymmetric-source-address
+# issue where a Tailscale client addressing the VM by its LAN IP gets replies
+# sourced from tailscale0's 100.x address, which the client then discards.
+# Traefik listens on 0.0.0.0:443 so it accepts connections on either IP.
+- name: Resolve this network-vm's Tailscale IP
+  command: tailscale ip -4
+  register: ts_ipv4
+  changed_when: false
+
+- name: Set adguard_rewrite_answer_ip to the Tailscale IP
+  set_fact:
+    adguard_rewrite_answer_ip: "{{ ts_ipv4.stdout_lines[0] }}"
+
+- name: Fetch current AdGuard rewrites
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/list"
+    method: GET
+    url_username: "{{ adguard_username }}"
+    url_password: "{{ adguard_password }}"
+    force_basic_auth: yes
+    return_content: yes
+  register: adguard_rewrite_list
+  when: adguard_username != '' and adguard_password != ''
+  no_log: true
+
+- name: Set managed domains list for this env
+  set_fact:
+    adguard_managed_domains: >-
+      {% if deploy_env == 'dev' %}
+      {{ adguard_dev_rewrites | map(attribute='domain') | list }}
+      {% elif deploy_env == 'qa' %}
+      {{ adguard_qa_rewrites | map(attribute='domain') | list }}
+      {% else %}
+      []
+      {% endif %}
+
+- name: Delete stale AdGuard rewrites for managed domains (clears duplicates + old LAN-IP entries)
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/delete"
+    method: POST
+    body_format: json
+    body:
+      domain: "{{ item.domain }}"
+      answer: "{{ item.answer }}"
+    url_username: "{{ adguard_username }}"
+    url_password: "{{ adguard_password }}"
+    force_basic_auth: yes
+    status_code: [200, 400, 404]
+  loop: "{{ adguard_rewrite_list.json | default([]) | selectattr('domain', 'in', adguard_managed_domains) | list }}"
+  when: adguard_rewrite_list is defined and adguard_rewrite_list.json is defined
+  no_log: true
+
 - name: Upsert AdGuard DNS rewrites for dev hostnames
   uri:
     url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
@@ -83,7 +132,7 @@
     body_format: json
     body:
       domain: "{{ item.domain }}"
-      answer: "{{ adguard_dev_rewrite_ip }}"
+      answer: "{{ adguard_rewrite_answer_ip }}"
     url_username: "{{ adguard_username }}"
     url_password: "{{ adguard_password }}"
     force_basic_auth: yes
@@ -99,7 +148,7 @@
     body_format: json
     body:
       domain: "{{ item.domain }}"
-      answer: "{{ adguard_dev_rewrite_ip }}"
+      answer: "{{ adguard_rewrite_answer_ip }}"
     url_username: "{{ adguard_username }}"
     url_password: "{{ adguard_password }}"
     force_basic_auth: yes
