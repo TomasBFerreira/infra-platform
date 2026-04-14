@@ -152,3 +152,5 @@ The Terraform Vault provider always uses the **bootstrap vault** (`VAULT_BOOTSTR
 | PVE_PROD_PASS         | Proxmox password (prod node — betsy)         |
 | SSH_USER              | Default SSH user for CTs                     |
 | GH_PAT                | GitHub PAT for setting secrets via gh CLI    |
+| TAILSCALE_API_KEY     | Tailscale API key (DNS write scope) — used by network-vm pipeline to auto-refresh split-DNS for databaes.net |
+| TAILSCALE_TAILNET     | Tailscale tailnet name (e.g. `taild7df92.ts.net`) |

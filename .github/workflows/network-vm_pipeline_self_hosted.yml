@@ -439,8 +439,21 @@ jobs:
             netplan apply 2>/dev/null || true
           done
 
-  teardown-old-active:
+  update-tailscale-dns:
     needs: [resolve-slots, flip-active]
+    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refresh Tailscale split-DNS for databaes.net
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+          TAILSCALE_TAILNET: ${{ secrets.TAILSCALE_TAILNET }}
+        run: |
+          chmod +x scripts/update-tailscale-split-dns.sh
+          scripts/update-tailscale-split-dns.sh
+
+  teardown-old-active:
+    needs: [resolve-slots, flip-active, update-tailscale-dns]
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
