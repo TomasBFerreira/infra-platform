@@ -77,14 +77,20 @@
 # issue where a Tailscale client addressing the VM by its LAN IP gets replies
 # sourced from tailscale0's 100.x address, which the client then discards.
 # Traefik listens on 0.0.0.0:443 so it accepts connections on either IP.
-- name: Resolve this network-vm's Tailscale IP
+- name: Resolve this network-vm's Tailscale IPv4
   command: tailscale ip -4
   register: ts_ipv4
   changed_when: false
 
-- name: Set adguard_rewrite_answer_ip to the Tailscale IP
+- name: Resolve this network-vm's Tailscale IPv6
+  command: tailscale ip -6
+  register: ts_ipv6
+  changed_when: false
+
+- name: Set adguard_rewrite_answer_ip{,_v6} to the Tailscale IPs
   set_fact:
-    adguard_rewrite_answer_ip: "{{ ts_ipv4.stdout_lines[0] }}"
+    adguard_rewrite_answer_ip:    "{{ ts_ipv4.stdout_lines[0] }}"
+    adguard_rewrite_answer_ip_v6: "{{ ts_ipv6.stdout_lines[0] }}"
 
 - name: Fetch current AdGuard rewrites
   uri:
@@ -125,7 +131,7 @@
   when: adguard_rewrite_list is defined and adguard_rewrite_list.json is defined
   no_log: true
 
-- name: Upsert AdGuard DNS rewrites for dev hostnames
+- name: Upsert AdGuard DNS A rewrites for dev hostnames
   uri:
     url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
     method: POST
@@ -141,7 +147,23 @@
   when: deploy_env == 'dev' and adguard_username != '' and adguard_password != ''
   no_log: true
 
-- name: Upsert AdGuard DNS rewrites for QA hostnames
+- name: Upsert AdGuard DNS AAAA rewrites for dev hostnames (prevent Happy-Eyeballs fallback to public AAAA)
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
+    method: POST
+    body_format: json
+    body:
+      domain: "{{ item.domain }}"
+      answer: "{{ adguard_rewrite_answer_ip_v6 }}"
+    url_username: "{{ adguard_username }}"
+    url_password: "{{ adguard_password }}"
+    force_basic_auth: yes
+    status_code: [200, 409]
+  loop: "{{ adguard_dev_rewrites }}"
+  when: deploy_env == 'dev' and adguard_username != '' and adguard_password != ''
+  no_log: true
+
+- name: Upsert AdGuard DNS A rewrites for QA hostnames
   uri:
     url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
     method: POST
@@ -149,6 +171,22 @@
     body:
       domain: "{{ item.domain }}"
       answer: "{{ adguard_rewrite_answer_ip }}"
+    url_username: "{{ adguard_username }}"
+    url_password: "{{ adguard_password }}"
+    force_basic_auth: yes
+    status_code: [200, 409]
+  loop: "{{ adguard_qa_rewrites }}"
+  when: deploy_env == 'qa' and adguard_username != '' and adguard_password != ''
+  no_log: true
+
+- name: Upsert AdGuard DNS AAAA rewrites for QA hostnames (prevent Happy-Eyeballs fallback to public AAAA)
+  uri:
+    url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
+    method: POST
+    body_format: json
+    body:
+      domain: "{{ item.domain }}"
+      answer: "{{ adguard_rewrite_answer_ip_v6 }}"
     url_username: "{{ adguard_username }}"
     url_password: "{{ adguard_password }}"
     force_basic_auth: yes
