@@ -1,0 +1,67 @@
+---
+# Sets up an NFS export on benedict (192.168.50.4) for ops-portal dev
+# persistent storage (per-service Postgres, etc).
+#
+# Consumes the existing /mnt/nfs-monitoring-data mount (492G ext4 on an NVMe
+# that was provisioned for monitoring). We do NOT touch the disk — only add
+# a new top-level subdirectory (ops-portal/) and a new export line.
+#
+# Run once before bringing up any ops-portal service that needs persistence:
+#   ansible-playbook -i 192.168.50.4, -u root ansible/benedict_ops_portal_nfs_setup.yml
+#
+# After this, install nfs-subdir-external-provisioner on the dev k3s cluster
+# pointed at <benedict-ip>:/mnt/nfs-monitoring-data/ops-portal/dev to get a
+# dynamic StorageClass.
+
+- name: Configure NFS export on benedict for ops-portal dev storage
+  hosts: all
+  gather_facts: false
+  become: yes
+
+  vars:
+    nfs_base: /mnt/nfs-monitoring-data/ops-portal
+    nfs_allowed_network: 192.168.0.0/16
+    nfs_export_opts: "rw,sync,no_subtree_check,no_root_squash"
+    environments:
+      - dev
+
+  tasks:
+    - name: Ensure nfs-kernel-server is installed
+      apt:
+        name: nfs-kernel-server
+        state: present
+        update_cache: yes
+
+    - name: Create ops-portal NFS base directory
+      file:
+        path: "{{ nfs_base }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create per-environment subdirectories
+      file:
+        path: "{{ nfs_base }}/{{ item }}"
+        state: directory
+        # 0777 so the nfs-subdir-external-provisioner (running as non-root
+        # in the cluster) can mkdir per-PV subdirs without uid mapping on
+        # the NFS server — same pattern the monitoring exports use.
+        mode: '0777'
+      loop: "{{ environments }}"
+
+    - name: Add ops-portal NFS export to /etc/exports
+      lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_base }} {{ nfs_allowed_network }}({{ nfs_export_opts }})"
+        regexp: "^{{ nfs_base | regex_escape() }}\\s"
+        state: present
+      notify: reload exports
+
+    - name: Ensure NFS server is enabled and started
+      systemd:
+        name: nfs-kernel-server
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: reload exports
+      command: exportfs -ra
