@@ -176,27 +176,7 @@
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
-    - name: Install Rancher with lower-env Authentik host aliases (no-wait)
-      become_user: appadm
-      shell: |
-        /usr/local/bin/helm upgrade --install rancher rancher-stable/rancher \
-          --namespace cattle-system \
-          --version "{{ rancher_version }}" \
-          --set hostname="{{ rancher_hostname }}" \
-          --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
-          --set ingress.tls.source=secret \
-          --set privateCA=true \
-          --set extraHostAliases[0].ip="{{ network_vm_ip }}" \
-          --set extraHostAliases[0].hostnames[0]="{{ auth_hostname }}" \
-          --set extraHostAliases[0].hostnames[1]="{{ rancher_hostname }}"
-      when:
-        - runner_env != 'prod'
-        - network_vm_ip is defined
-        - network_vm_ip | length > 0
-      environment:
-        KUBECONFIG: /home/appadm/.kube/config
-
-    - name: Install Rancher without private Authentik host aliases (no-wait)
+    - name: Install Rancher (no-wait)
       become_user: appadm
       shell: |
         /usr/local/bin/helm upgrade --install rancher rancher-stable/rancher \
@@ -206,7 +186,6 @@
           --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
           --set ingress.tls.source=secret \
           --set privateCA=true
-      when: runner_env == 'prod' or (network_vm_ip | default('') | length == 0)
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
@@ -238,6 +217,24 @@
         - name: Fail
           fail:
             msg: "Rancher deployment did not become ready within 10 minutes"
+
+    - name: Patch lower-env Rancher deployment with Authentik hostAliases
+      when:
+        - runner_env != 'prod'
+        - network_vm_ip is defined
+        - network_vm_ip | length > 0
+      shell: |
+        k3s kubectl patch deployment rancher -n cattle-system --type='strategic' \
+          -p='{"spec":{"template":{"spec":{"hostAliases":[{"ip":"{{ network_vm_ip }}","hostnames":["{{ auth_hostname }}","{{ rancher_hostname }}"]}]}}}}'
+      register: lower_env_host_alias_patch
+      changed_when: "'patched' in lower_env_host_alias_patch.stdout or 'configured' in lower_env_host_alias_patch.stdout"
+
+    - name: Wait for lower-env Rancher rollout after hostAliases patch
+      when:
+        - runner_env != 'prod'
+        - network_vm_ip is defined
+        - network_vm_ip | length > 0
+      shell: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout=600s
 
     # ── Rancher OIDC (Authentik) ──────────────────────────────────────────────
     # Idempotent — skipped if OIDC credentials were not passed (SSO not yet deployed).
@@ -434,8 +431,9 @@
 
     # ── Lower-env OIDC reachability validation ────────────────────────────────
     # Dev/QA Rancher pods cannot rely on the same public Authentik path prod uses.
-    # Fail the deploy here if the lower-env Helm release did not actually persist
-    # the private hostAliases needed for the backend token exchange.
+    # Rancher chart 2.11.3 does not expose a hostAliases value, so lower envs need
+    # an explicit Deployment patch after Helm install. Fail the deploy here if that
+    # patch did not stick or the pod still cannot reach Authentik privately.
 
     - name: Assert Rancher deployment includes lower-env hostAliases
       when:

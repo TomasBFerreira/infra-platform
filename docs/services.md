@@ -39,7 +39,7 @@
 
 **Known quirks:**
 - Rancher's OIDC code exchange happens from inside the Rancher pod, not from the browser. Lower envs (`dev`, `qa`) cannot rely on the public Authentik path the way prod does; they must resolve `auth-<env>.databaes.net` to the active network-vm privately from inside the pod.
-- The durable fix for lower envs is Helm-managed `extraHostAliases`, not CoreDNS drift patches or a raw `kubectl patch` on the Deployment. `ansible/rancher/rancher_setup.yml` now treats this as a deploy-time requirement and fails the lower-env rollout if the Rancher pod cannot reach `https://auth-<env>.databaes.net/application/o/token/`.
+- Rancher chart `2.11.3` does **not** expose a `hostAliases` / `extraHostAliases` value, so Helm `--set extraHostAliases...` is a no-op. The working lower-env fix is a deploy-time `kubectl patch` of the Rancher Deployment template, followed by a rollout and an in-pod Authentik reachability check.
 - Prod intentionally stays on the public path (`auth.databaes.net`) by default because the prod Rancher pod can already reach the real Authentik endpoint without private host aliases.
 
 ---

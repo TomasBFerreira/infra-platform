@@ -1,21 +1,7 @@
 ---
 # Patches the live Rancher Deployment with hostAliases so Rancher pods can
-# resolve internal hostnames (auth-*.databaes.net) for the OIDC token exchange
-# step without depending on CoreDNS NodeHosts.
-#
-# Rancher chart 2.11.3 does not expose a hostAliases/extraHostAliases value, so
-# a Helm upgrade cannot persist these entries. The reliable operational repair is
-# to patch the Deployment template directly and let Kubernetes roll the pods.
-#
-# Required vars:
-#   traefik_ip    — active network-vm IP (Traefik, which routes to Authentik)
-#   runner_env    — dev/qa/prod (used for hostname construction)
-#
-# Effect: the Deployment patch triggers a rolling restart of Rancher pods
-# (~2 min total). The OIDC configure workflow should be re-run after this if
-# OIDC settings
-# were lost in the preceding restart.
-
+# resolve the env-specific Authentik and Rancher hostnames for the OIDC token
+# exchange step without depending on CoreDNS NodeHosts.
 - name: Patch Rancher Deployment with hostAliases
   hosts: all
   gather_facts: false
@@ -26,8 +12,8 @@
   vars:
     env: "{{ runner_env | default('dev') }}"
     network_vm_ip: "{{ traefik_ip }}"
-    auth_hostname: "auth-{{ env }}.databaes.net"
-    rancher_hostname: "rancher-{{ env }}.databaes.net"
+    auth_hostname: "{% if env == 'prod' %}auth.databaes.net{% else %}auth-{{ env }}.databaes.net{% endif %}"
+    rancher_hostname: "{% if env == 'prod' %}rancher.databaes.net{% else %}rancher-{{ env }}.databaes.net{% endif %}"
 
   tasks:
     - name: Show current hostAliases on Rancher deployment
@@ -54,7 +40,7 @@
       debug:
         msg: "{{ patch_result.stdout_lines }}"
 
-    - name: Wait for Rancher rollout (pods restart with new hostAliases)
+    - name: Wait for Rancher rollout
       shell: |
         k3s kubectl rollout status deployment/rancher -n cattle-system --timeout=120s \
           2>/dev/null && echo "rollout complete" || echo "rollout timed out (non-fatal)"
