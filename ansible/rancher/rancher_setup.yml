@@ -444,11 +444,10 @@
         - network_vm_ip | length > 0
       shell: |
         set -e
-        HOST_ALIASES_JSON=$(k3s kubectl get deployment rancher -n cattle-system \
-          -o jsonpath='{.spec.template.spec.hostAliases}')
-        echo "$HOST_ALIASES_JSON" | python3 -c '
+        k3s kubectl get deployment rancher -n cattle-system -o json | python3 -c '
         import json, sys
-        host_aliases = json.load(sys.stdin)
+        deployment = json.load(sys.stdin)
+        host_aliases = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("hostAliases", [])
         expected_ip = "{{ network_vm_ip }}"
         expected_hosts = {"{{ auth_hostname }}", "{{ rancher_hostname }}"}
         for alias in host_aliases:
