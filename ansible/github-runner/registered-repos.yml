@@ -1,0 +1,48 @@
+# Source of truth for which repos have a self-hosted runner registered
+# on each env's runner LXC (dev=CT 201 on benedict, qa=CT 301 on heaton,
+# prod=CT 101 on betsy).
+#
+# Why this file exists: each runner registration lives only on the LXC
+# filesystem (/opt/github-runners/<repo-slug>/ + a systemd unit). When
+# the LXC is reprovisioned, every registration is lost and every repo's
+# deploy pipeline sits queued on [self-hosted, <env>] until someone
+# manually re-runs register-runner.yml for each repo. The runner
+# pipeline reads this file after provisioning and replays the list so
+# recovery is one re-run instead of N manual dispatches.
+#
+# Onboarding a new repo:
+#   1. Add it to the right env list below and merge.
+#   2. Run register-runner.yml once to register it immediately.
+#      (Adding it here does not register until the next reprovision.)
+#
+# Retiring a repo:
+#   1. Remove it from the list.
+#   2. Optionally SSH to the runner LXC and delete /opt/github-runners/<slug>.
+
+dev:
+  - TomasBFerreira/infra-platform
+  - TomasBFerreira/databaes-status-api
+  - TomasBFerreira/devops-portal
+  - TomasBFerreira/landing-page
+  - TomasBFerreira/media-stack
+  - TomasBFerreira/nextcloud
+  - TomasBFerreira/ops-portal-audit
+  - TomasBFerreira/ops-portal-cmdb
+  - TomasBFerreira/ops-portal-deployments
+  - TomasBFerreira/ops-portal-domain
+  - TomasBFerreira/ops-portal-identity
+  - TomasBFerreira/ops-portal-incidents
+  - TomasBFerreira/ops-portal-infrastructure
+  - TomasBFerreira/ops-portal-shell
+  - TomasBFerreira/otel-monitoring
+  - TomasBFerreira/streambox
+  - TomasBFerreira/wikijs
+
+qa:
+  - TomasBFerreira/infra-platform
+  - TomasBFerreira/otel-monitoring
+  # Extend as qa parity grows. Only repos with a qa deploy target should go here.
+
+prod:
+  - TomasBFerreira/infra-platform
+  # Populate as prod rollout continues. Mirror dev for any app that has a prod deploy.

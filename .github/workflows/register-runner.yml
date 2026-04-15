@@ -4,6 +4,11 @@ name: Register GitHub Actions Runner
 # Run this once when onboarding a new repo that needs its own runner.
 # Each repo gets an isolated directory + systemd service on the shared LXC.
 #
+# IMPORTANT: also add the repo to ansible/github-runner/registered-repos.yml
+# under the right env. The runner pipeline replays that list when the LXC
+# is reprovisioned — repos missing from it will silently lose their runner
+# on the next reprovision.
+#
 # Usage:
 #   gh workflow run register-runner.yml \
 #     --field repo=TomasBFerreira/media-stack \
