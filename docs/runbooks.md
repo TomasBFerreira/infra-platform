@@ -186,7 +186,11 @@ ip route replace default via $ACTIVE dev eth0
 
 Edit `/etc/netplan/*.yaml`, set `gateway4` (or, since gateway4 is deprecated, the equivalent `routes: [{to: default, via: <ip>}]`) to the active slot IP. Run `netplan apply`. The dev worker LXC's netplan was already correct (192.168.20.56) the night this was written — only the runtime route had drifted.
 
-**Proper fix (open follow-up):** the worker provisioning playbook (`ansible/worker-node/`, `ansible/worker-node-gpu/`) should read `active-slot` from Vault on each apply and write the correct gateway, AND a small systemd boot-time service should re-check Vault and `ip route replace` on every boot so a slot flip eventually heals all consumers without a manual touch. Currently flagged for the prod GPU worker too — see CLAUDE.md "Note (2026-04-10) Issue 7" for the same class of bug on `worker-node-gpu_setup.yml`.
+**Proper fix (now landed):** both `ansible/worker-node/worker-node_setup.yml` and `ansible/worker-node-gpu/worker-node-gpu_setup.yml` install a systemd timer (`network-vm-gateway-heal.timer`) that runs at boot + every 5 minutes. The script (`/usr/local/sbin/network-vm-gateway-heal`) probes the two known network-vm slot IPs (`<subnet>.55` and `.56`) and `ip route replace`s the default if it's pointing somewhere else. No Vault auth needed — the candidate IPs are predictable from the homelab IP scheme (any env's network-vm sits at `.55`/`.56` of the worker's own /24).
+
+If you find a worker without the timer, re-run its provisioning playbook or apply the unit ad-hoc — the script + units are in `ansible/_shared/network-vm-gateway-heal.yml`.
+
+Same fix covers the prod GPU worker (CLAUDE.md "Note 2026-04-10 Issue 7"); re-run `ansible/worker-node-gpu/worker-node-gpu_setup.yml` against `192.168.10.21` to install it there. (Don't re-run k3s install — guard with `--tags` if you need to scope.)
 
 ### Env runner disk is full
 

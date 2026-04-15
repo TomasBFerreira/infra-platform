@@ -1,0 +1,90 @@
+---
+# Boot-time + periodic self-heal for the worker's default route.
+#
+# The network-vm runs in a blue/green slot (e.g. dev = .55 blue / .56 green).
+# When the slot flips, the worker's static gateway (set at provisioning time
+# from `network_vm_gateway`) becomes stale and outbound traffic dies.
+#
+# Strategy: probe the two known candidate IPs (.55, .56 in the worker's own
+# /24), point the default route at whichever responds, idempotently. No Vault
+# auth needed — the candidates are predictable from the homelab IP scheme.
+#
+# Pulled in from worker-node and worker-node-gpu setup playbooks via
+# include_tasks. The single source of truth lives here.
+
+- name: Install network-vm-gateway-heal script
+  copy:
+    dest: /usr/local/sbin/network-vm-gateway-heal
+    mode: '0755'
+    content: |
+      #!/bin/bash
+      # Re-pin the default route at the active network-vm slot.
+      # network-vm always runs at .55 (blue) or .56 (green) of the
+      # worker's /24, by the homelab IP scheme. Probe both, pick the
+      # one that answers, replace default route if needed.
+      set -eu
+      SUBNET_PREFIX=$(ip -4 addr show eth0 | awk '/inet /{split($2,a,"."); print a[1]"."a[2]"."a[3]; exit}')
+      [ -n "$SUBNET_PREFIX" ] || { echo "ERROR: no IPv4 on eth0" >&2; exit 1; }
+      for OCTET in 55 56; do
+        CAND="${SUBNET_PREFIX}.${OCTET}"
+        if ping -c 1 -W 2 "$CAND" >/dev/null 2>&1; then
+          CURRENT=$(ip route show default | awk '/default/{print $3; exit}')
+          if [ "$CURRENT" != "$CAND" ]; then
+            ip route replace default via "$CAND"
+            echo "Default route: ${CURRENT:-<none>} -> $CAND"
+          else
+            echo "Default route already $CAND"
+          fi
+          exit 0
+        fi
+      done
+      echo "ERROR: neither ${SUBNET_PREFIX}.55 nor ${SUBNET_PREFIX}.56 responded to ICMP" >&2
+      exit 1
+
+- name: Install network-vm-gateway-heal.service
+  copy:
+    dest: /etc/systemd/system/network-vm-gateway-heal.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Heal default route to active network-vm slot
+      Documentation=https://github.com/TomasBFerreira/infra-platform/blob/main/docs/runbooks.md
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/network-vm-gateway-heal
+      RemainAfterExit=no
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Install network-vm-gateway-heal.timer (boot + every 5 min)
+  copy:
+    dest: /etc/systemd/system/network-vm-gateway-heal.timer
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Periodic recheck of network-vm gateway (slot-flip self-heal)
+
+      [Timer]
+      # Boot: 90s after boot completes, to give cloud-init / netplan time to settle.
+      OnBootSec=90s
+      # Steady state: every 5 minutes. Cheap (one ICMP per slot, two slots).
+      OnUnitActiveSec=5min
+      Unit=network-vm-gateway-heal.service
+
+      [Install]
+      WantedBy=timers.target
+
+- name: Enable and start network-vm-gateway-heal.timer
+  systemd:
+    name: network-vm-gateway-heal.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Run network-vm-gateway-heal once now (immediate effect on apply)
+  command: /usr/local/sbin/network-vm-gateway-heal
+  changed_when: false

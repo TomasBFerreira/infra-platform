@@ -59,6 +59,13 @@
       when: network_vm_gateway is defined
       ignore_errors: yes
 
+    # ── Boot+timer self-heal for the default route ──────────────────────────
+    # Re-pins the default route at the active network-vm slot so a blue/green
+    # flip self-heals on its own (no re-provisioning, no manual fix).
+    # See ansible/_shared/network-vm-gateway-heal.yml.
+    - name: Install network-vm gateway self-heal (boot + 5min timer)
+      include_tasks: ../_shared/network-vm-gateway-heal.yml
+
     # ── System prerequisites ─────────────────────────────────────────────────
 
     - name: Wait for cloud-init to finish
