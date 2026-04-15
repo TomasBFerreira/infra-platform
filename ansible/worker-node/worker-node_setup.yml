@@ -59,6 +59,14 @@
       when: network_vm_gateway is defined
       ignore_errors: yes
 
+    # ── Boot+timer self-heal for the default route ──────────────────────────
+    # The two tasks above set the gateway at provisioning time. After a
+    # network-vm blue/green slot flip the gateway becomes stale and the
+    # tasks above don't re-run. The shared snippet installs a probe-based
+    # systemd unit (boot + every 5 min) that re-pins the route.
+    - name: Install network-vm gateway self-heal (boot + 5min timer)
+      include_tasks: ../_shared/network-vm-gateway-heal.yml
+
     # ── System prerequisites ─────────────────────────────────────────────────
 
     - name: Wait for cloud-init to finish
