@@ -1,0 +1,146 @@
+name: Deploy ops-portal (meta)
+
+# Fans out to each ops-portal-<svc>'s deploy.yml via gh CLI.
+# Each per-repo workflow already has its own workflow_dispatch — this just
+# orchestrates them in dependency order (or in parallel for redeploys).
+#
+# See docs/ops-portal-deploy.md for when order matters and what the
+# bootstrap pre-reqs are.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        type: choice
+        options: [dev, prod]
+        default: dev
+        description: Target environment
+      worker_node_ip:
+        required: false
+        description: Override worker node IP (blank = each repo resolves from Vault)
+      mode:
+        type: choice
+        options: [ordered, parallel]
+        default: ordered
+        description: |
+          ordered = sequential, waits for each (use for fresh env / when bootstrap order matters).
+          parallel = fire all at once, no waiting (use for redeploys to a healthy env).
+      services:
+        required: false
+        default: "identity,cmdb,audit,infrastructure,domain,deployments,incidents,shell"
+        description: |
+          Comma-separated subset to deploy. Default: all 8 in dependency order.
+          Examples: "incidents,shell"  •  "audit"  •  "identity,cmdb"
+
+# Concurrency: one meta-deploy per env at a time. Cancelling a previous run
+# does NOT cancel the per-repo runs already kicked off — those continue in
+# their own repos. This guard just prevents two ordered chains from
+# interleaving and stomping on each other's `gh run watch` polling.
+concurrency:
+  group: deploy-ops-portal-${{ inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  fanout:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      OWNER: TomasBFerreira
+    steps:
+      - name: Validate service list
+        run: |
+          ALLOWED="identity cmdb audit infrastructure domain deployments incidents shell"
+          IFS=',' read -ra SVCS <<< "${{ inputs.services }}"
+          for svc in "${SVCS[@]}"; do
+            svc=$(echo "$svc" | xargs)  # trim
+            if ! echo " $ALLOWED " | grep -q " $svc "; then
+              echo "::error::unknown service '$svc' — allowed: $ALLOWED"
+              exit 1
+            fi
+          done
+          echo "Services to deploy: ${{ inputs.services }}"
+          echo "Mode: ${{ inputs.mode }}"
+          echo "Env:  ${{ inputs.env }}"
+
+      - name: Dispatch deploys
+        run: |
+          set -uo pipefail
+          IFS=',' read -ra SVCS <<< "${{ inputs.services }}"
+
+          # Build the field args once. worker_node_ip is only forwarded if
+          # provided — passing an empty string would still set the input,
+          # which the per-repo workflow treats as "no override needed" but
+          # also pollutes the run's input record. Cleaner to omit it.
+          extra_fields=()
+          if [ -n "${{ inputs.worker_node_ip }}" ]; then
+            extra_fields+=(-f "worker_node_ip=${{ inputs.worker_node_ip }}")
+          fi
+
+          dispatch_one() {
+            local svc="$1"
+            local repo="$OWNER/ops-portal-$svc"
+            echo ""
+            echo "──────────────────────────────────────────────────────────"
+            echo "▶ ops-portal-$svc"
+            echo "──────────────────────────────────────────────────────────"
+
+            # Stamp the time BEFORE dispatch so we can find the new run
+            # without racing against the cron-triggered deploys that
+            # might be in flight.
+            local before_iso
+            before_iso=$(date -u -d '5 seconds ago' +"%Y-%m-%dT%H:%M:%SZ")
+
+            gh workflow run deploy.yml \
+              --repo "$repo" \
+              -f env="${{ inputs.env }}" \
+              "${extra_fields[@]}"
+
+            if [ "${{ inputs.mode }}" = "parallel" ]; then
+              echo "  dispatched (parallel mode — not waiting)"
+              return 0
+            fi
+
+            # Ordered mode: find the run we just kicked off and watch it.
+            # gh dispatch is fire-and-forget; the run id isn't returned, so
+            # we poll for the most recent run created after `before_iso`.
+            local run_id=""
+            for attempt in 1 2 3 4 5 6; do
+              sleep 5
+              run_id=$(gh run list \
+                --repo "$repo" \
+                --workflow=deploy.yml \
+                --event=workflow_dispatch \
+                --created=">$before_iso" \
+                --limit=1 \
+                --json databaseId \
+                -q '.[0].databaseId' 2>/dev/null || true)
+              if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
+                break
+              fi
+              echo "  waiting for run to appear (attempt $attempt/6)..."
+            done
+
+            if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+              echo "::warning::could not find a fresh deploy run for $repo — moving on"
+              return 0
+            fi
+
+            echo "  watching run https://github.com/$repo/actions/runs/$run_id"
+            if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval=15; then
+              echo "::error::ops-portal-$svc deploy failed — aborting chain"
+              echo "  (later services in the list were NOT triggered)"
+              exit 1
+            fi
+            echo "  ✓ ops-portal-$svc deployed"
+          }
+
+          for svc in "${SVCS[@]}"; do
+            svc=$(echo "$svc" | xargs)
+            dispatch_one "$svc"
+          done
+
+          echo ""
+          echo "All requested services dispatched."
+          if [ "${{ inputs.mode }}" = "parallel" ]; then
+            echo "Watch progress in each repo's Actions tab — they're all running concurrently."
+          fi
