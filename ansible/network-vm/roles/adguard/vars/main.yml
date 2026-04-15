@@ -29,4 +29,5 @@ adguard_qa_rewrites:
   - domain: vault-qa.databaes.net
   - domain: semaphore-qa.databaes.net
   - domain: devops-portal-qa.databaes.net
+  - domain: ops-qa.databaes.net
   - domain: qa.databaes.net
