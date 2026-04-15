@@ -12,9 +12,9 @@ on:
     inputs:
       env:
         type: choice
-        options: [dev, prod]
+        options: [dev, qa, prod]
         default: dev
-        description: Target environment
+        description: Target environment (qa mirrors dev — same overlay shape, separate worker on heaton)
       worker_node_ip:
         required: false
         description: Override worker node IP (blank = each repo resolves from Vault)
