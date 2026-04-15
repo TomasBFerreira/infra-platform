@@ -104,6 +104,57 @@ Traefik runs inside Docker on the network-vm (all four containers use `network_m
 
 AdGuard runs on the network-vm and serves as the internal DNS resolver for the homelab. Credentials are seeded from the bootstrap vault (`secret/adguard`) at deploy time.
 
+## k3s cluster DNS — trailing-dot gotcha
+
+Pods on the dev k3s worker get a `/etc/resolv.conf` search path ending with `databaes.net`:
+
+```
+search <ns>.svc.cluster.local svc.cluster.local cluster.local databaes.net
+nameserver 10.43.0.10
+options ndots:5
+```
+
+The `databaes.net` entry is injected from the worker host's DNS config (via AdGuard / the dev network-vm) and it matters because **Cloudflare serves a wildcard on `*.databaes.net`**:
+
+```
+$ dig +short anything.databaes.net
+104.21.82.172
+172.67.160.61
+```
+
+Any name the resolver falls through on — including a fully-qualified cluster service name that happens to have fewer than `ndots:5` dots — eventually hits `<name>.databaes.net` and gets a Cloudflare public IP back, pointing your in-cluster client at the public internet. The pod then sees "network unreachable" because there is no egress to that Cloudflare IP from the worker subnet.
+
+### Rule: use absolute FQDNs for in-cluster service URLs
+
+Always include the trailing dot when a service config file (Vault secret, k8s ConfigMap, env var) stores a `*.svc.cluster.local` hostname:
+
+```
+nats://nats.ops-portal-nats.svc.cluster.local.:4222    # CORRECT (absolute, stops search expansion)
+nats://nats.ops-portal-nats.svc.cluster.local:4222     # WRONG — resolver walks the search path, hits Cloudflare
+```
+
+The trailing dot makes the name absolute, so `ndots:5` logic doesn't trigger search expansion at all. Equivalent fixes: (a) use just the service name `nats` (resolves via the first search entry), but that only works for pods in the same namespace; (b) add `options ndots:0` to the pod's `dnsConfig`, but that's cluster-wide surgery and not worth it for a few service URLs.
+
+**Checked-in URLs that follow this rule:**
+- `secret/ops-portal/<env>/nats` in Vault — `url` field MUST end with a dot.
+- Any future service-to-service URL we add.
+
+See `ops-portal-cmdb/cluster-bootstrap/nats/README.md` for the originating incident (slice 2, 2026-04-15).
+
+## Worker-to-Proxmox NFS routing
+
+The dev k3s worker (`192.168.20.11`) lives on `192.168.20.0/24` and does **not** have a route to `192.168.50.0/24`. That means:
+
+| From worker to… | IP to use | Why |
+|---|---|---|
+| benedict (the worker's Proxmox host) | `192.168.20.1` (benedict's vmbr20 interface) | benedict is the gateway for vmbr20; same host, different IP. |
+| benedict over management | `192.168.50.4` | ❌ unreachable from the worker — management subnet isn't routed over. |
+| bootstrap vault | `192.168.50.200` | ❌ unreachable from pods; only the runner LXC (on management-adjacent routing) can reach it. |
+
+NFS exports from benedict are bound to `192.168.0.0/16` so they listen on both `192.168.50.4` *and* `192.168.20.1`. When a cluster workload mounts NFS (e.g. the `nfs-subdir-external-provisioner` Deployment), its `server:` field **must** be `192.168.20.1`, not `192.168.50.4`.
+
+See `ansible/benedict_ops_portal_nfs_setup.yml` for the export definition and `ops-portal-identity/cluster-bootstrap/nfs-subdir-provisioner/deployment.yaml` for the consumer side that uses `192.168.20.1`.
+
 ## WireGuard
 
 WireGuard is configured on the **prod** network-vm only, providing a VPN tunnel for secure access. Keys are stored in `secret/wireguard` in the prod env vault and seeded from the bootstrap vault at deploy time. Dev network-vm does not use WireGuard.

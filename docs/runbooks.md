@@ -160,6 +160,49 @@ gh workflow run github-runner_pipeline_self_hosted.yml \
   --field environment=dev
 ```
 
+### Env runner disk is full
+
+**Symptom:** `register-runner.yml` fails at step "Set up job" with `##[error]No space left on device`, or any deploy fails trying to extract an image tar. The env runner LXC (`github-runner-dev` on CT 201, `github-runner-prod` on CT 101) has a 20 GB root disk and it fills up over time with Docker images and build cache.
+
+```bash
+# SSH into the env runner (dev example)
+ssh -J root@192.168.50.4 root@192.168.20.101
+
+df -h /                           # confirm 100% or near-100%
+
+# The two big reclaimables are the Docker image store and the builder cache.
+sudo docker system prune -af      # stopped containers + unused images — ~1-2 GB
+sudo docker builder prune -af     # build cache — can be another 1-2 GB
+sudo rm -f /tmp/actions-runner-linux-x64-*.tar.gz   # stale runner installer
+
+df -h /                           # should drop well under 90%
+```
+
+After clean-up, re-trigger whatever workflow hit the error. The same cleanup works on the prod runner (CT 101 on betsy), but **verify you're on the right CT before pruning**.
+
+**Prevention:** Add a weekly `docker system prune -af` systemd timer on each env runner (tracked as a `TODO` — not yet automated; see `/app/pickup.md`). Alternative: bump the LXC root disk from 20 GB to 40 GB in the Terraform module for runner CTs.
+
+---
+
+## GitHub token permissions: repo creation needs a classic PAT
+
+**Symptom:** `gh repo create TomasBFerreira/<new>` fails with:
+
+```
+GraphQL: Resource not accessible by personal access token (createRepository)
+```
+
+even though `gh auth status` shows you're authenticated. GitHub's **fine-grained PATs** cannot create repositories on behalf of a user account — the permission doesn't exist in the fine-grained permission model as of April 2026. Day-to-day work (pushing, merging PRs, setting repo secrets, triggering workflows) does work with a fine-grained token.
+
+**Workaround:** keep a **classic** PAT with `repo` + `workflow` + `write:packages` scopes available for the narrow set of operations that require it:
+
+- `gh repo create …` (creating a new repo)
+- `gh secret set …` on a brand-new repo (occasionally needs classic too depending on scope config)
+
+Use per-command via `GH_TOKEN=ghp_… gh repo create …` so the classic token never becomes the default. The fine-grained token stays the default for every other operation.
+
+Track classic-vs-fine-grained rotation separately — rotating the fine-grained token is frequent (scoped, short-lived); the classic should be kept to a minimum and rotated on a slower cycle.
+
 ---
 
 ## Vault is sealed after a reboot
