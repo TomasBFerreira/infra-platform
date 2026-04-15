@@ -145,7 +145,7 @@ See `ops-portal-cmdb/cluster-bootstrap/nats/README.md` for the originating incid
 
 The same Cloudflare wildcard catches **external** hostnames that have fewer than `ndots:5` dots and get search-expanded. Example: `api.anthropic.com` has 2 dots; with `ndots:5`, the resolver tries every search-path suffix first, and `api.anthropic.com.databaes.net` matches the wildcard and returns the Cloudflare IP — so the pod tries to dial `104.21.82.172` for Anthropic and gets "host is unreachable".
 
-Fix per pod: lower `ndots` to 2 in the deployment's `dnsConfig`:
+Fix per pod: lower `ndots` to **1** in the deployment's `dnsConfig`:
 
 ```yaml
 spec:
@@ -155,14 +155,16 @@ spec:
       dnsConfig:
         options:
           - name: ndots
-            value: "2"
+            value: "1"
 ```
 
-With `ndots: 2`, names that contain at least 2 dots (api.anthropic.com qualifies) are tried as-is first, so external resolution wins. Cluster-internal short names (e.g. `nats` for the same-namespace NATS service) still go through the search path because they have 0 dots.
+With `ndots: 1`, any name containing at least one dot is tried as-is first, so external resolution wins. Cluster-internal short names (e.g. `nats` or `postgres` for same-namespace services) have zero dots and still walk the search path correctly.
 
-The `ops-portal-incidents` deployment carries this dnsConfig; copy it into any service that calls a public API (Anthropic, GitHub, Cloudflare, Tailscale, etc.). Long-term the cleanest fix is a CoreDNS rewrite/ndots tweak at the cluster level — tracked but not implemented.
+**Don't use `ndots: 2`** — that was the first fix attempt during slice 4 (only `api.anthropic.com`-shaped 2-dot names worked), and it bit slice 6 the moment a service tried to reach `github.com` (1 dot, falls into the search path again). The deployments service standardised on `ndots: 1`; backport to any pod that talks to short external hostnames.
 
-See `ops-portal-incidents/manifests/base/deployment.yaml` for the live reference.
+The `ops-portal-deployments` and `ops-portal-incidents` deployments carry this dnsConfig. Copy it into any service that calls a public API (Anthropic, GitHub, Cloudflare, Tailscale, etc.). Long-term the cleanest fix is a CoreDNS rewrite/ndots tweak at the cluster level — tracked but not implemented.
+
+See `ops-portal-deployments/manifests/base/deployment.yaml` for the live reference (which also documents the rationale inline).
 
 ## Worker-to-Proxmox NFS routing
 

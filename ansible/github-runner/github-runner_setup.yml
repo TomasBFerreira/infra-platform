@@ -275,40 +275,66 @@
     # without touching anything an active CI job depends on. See
     # docs/runbooks.md → "Env runner disk is full".
 
-    - name: Install docker-prune.service (weekly LXC disk hygiene)
+    - name: Install runner-disk-prune.service (weekly LXC disk hygiene)
       copy:
-        dest: /etc/systemd/system/docker-prune.service
+        dest: /etc/systemd/system/runner-disk-prune.service
         mode: '0644'
         content: |
           [Unit]
-          Description=Prune unused Docker images and build cache (runner LXC disk hygiene)
+          Description=Prune Docker artifacts + stale runner self-update directories (LXC disk hygiene)
           Documentation=https://github.com/TomasBFerreira/infra-platform/blob/main/docs/runbooks.md
 
           [Service]
           Type=oneshot
+          # Docker images + build cache — the original prune target.
           ExecStart=/usr/bin/docker system prune -af
           ExecStart=/usr/bin/docker builder prune -af
+          # Runner self-update artifacts. Each registered runner caches the
+          # next version under _work/_update/ when it tries to self-update;
+          # if disk pressure aborts the update mid-way the dir stays around
+          # and leaks ~600 MB per runner. Slice 6's deploy was blocked on
+          # this — reclaimed ~5 GB in one sweep. The runner re-downloads on
+          # the next legitimate update attempt, so this is safe.
+          ExecStart=/bin/sh -c 'rm -rf /opt/github-runners/*/_work/_update'
 
-    - name: Install docker-prune.timer
+    - name: Install runner-disk-prune.timer
       copy:
-        dest: /etc/systemd/system/docker-prune.timer
+        dest: /etc/systemd/system/runner-disk-prune.timer
         mode: '0644'
         content: |
           [Unit]
-          Description=Weekly Docker prune to keep the runner LXC's 20 GB root disk from filling
+          Description=Weekly LXC-disk prune (Docker + runner self-update leftovers)
 
           [Timer]
           # Every Sunday at 04:00 — quiet hours, not in the middle of business-day CI pushes.
           OnCalendar=Sun *-*-* 04:00:00
           Persistent=true
           RandomizedDelaySec=15min
+          Unit=runner-disk-prune.service
 
           [Install]
           WantedBy=timers.target
 
-    - name: Enable and start docker-prune.timer
+    # Migration: the timer was previously called docker-prune; remove the
+    # old units so we don't run two timers covering the same job.
+    - name: Disable and remove legacy docker-prune.timer
       systemd:
         name: docker-prune.timer
+        enabled: no
+        state: stopped
+      ignore_errors: yes
+    - name: Remove legacy docker-prune unit files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/docker-prune.service
+        - /etc/systemd/system/docker-prune.timer
+        - /etc/systemd/system/timers.target.wants/docker-prune.timer
+
+    - name: Enable and start runner-disk-prune.timer
+      systemd:
+        name: runner-disk-prune.timer
         enabled: yes
         state: started
         daemon_reload: yes
