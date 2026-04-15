@@ -268,6 +268,51 @@
         enabled: yes
         state: started
 
+    # ── Weekly docker prune timer ─────────────────────────────────────────────
+    # The env runner LXC has a 20 GB root disk; Docker images + build cache
+    # accumulate from every CI run and can fill the disk within weeks. A
+    # weekly prune of unused images and build cache keeps the disk healthy
+    # without touching anything an active CI job depends on. See
+    # docs/runbooks.md → "Env runner disk is full".
+
+    - name: Install docker-prune.service (weekly LXC disk hygiene)
+      copy:
+        dest: /etc/systemd/system/docker-prune.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Prune unused Docker images and build cache (runner LXC disk hygiene)
+          Documentation=https://github.com/TomasBFerreira/infra-platform/blob/main/docs/runbooks.md
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/docker system prune -af
+          ExecStart=/usr/bin/docker builder prune -af
+
+    - name: Install docker-prune.timer
+      copy:
+        dest: /etc/systemd/system/docker-prune.timer
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Weekly Docker prune to keep the runner LXC's 20 GB root disk from filling
+
+          [Timer]
+          # Every Sunday at 04:00 — quiet hours, not in the middle of business-day CI pushes.
+          OnCalendar=Sun *-*-* 04:00:00
+          Persistent=true
+          RandomizedDelaySec=15min
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable and start docker-prune.timer
+      systemd:
+        name: docker-prune.timer
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
     # ── Runner binary ─────────────────────────────────────────────────────────
 
     - name: Create runner directory
