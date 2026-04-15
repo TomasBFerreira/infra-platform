@@ -1,0 +1,150 @@
+name: Seed ops-portal QA Authentik creds
+
+# One-time-ish bootstrap helper:
+# 1. Reads the QA env vault's secret/sso/bootstrap_token (the akadmin API token
+#    written by the SSO pipeline).
+# 2. Writes it + the QA Authentik URL into bootstrap vault at
+#    secret/devops-portal/qa/authentik so the per-service ops-portal deploys
+#    can fetch it via their existing VAULT_BOOTSTRAP_* secret handles.
+# 3. Creates a superuser (input-driven username/email/name) via the QA
+#    Authentik API so the operator can log in.
+#
+# Runs on the qa self-hosted runner because only it can reach the QA env
+# vault (192.168.30.46:8200) and the QA Authentik (192.168.30.75:9000).
+#
+# Idempotent: re-runs overwrite the bootstrap-vault write with the same
+# value; the user create step is guarded by a "does it already exist" probe.
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: 'Username to create as QA Authentik superuser'
+        required: true
+        default: 'tomas'
+      email:
+        description: 'Email for the user'
+        required: true
+        default: 'all@tomasbrazao.com'
+      name:
+        description: 'Full display name'
+        required: true
+        default: 'Tomas Ferreira'
+      skip_user_create:
+        description: 'Only write Vault; skip user creation'
+        type: boolean
+        default: false
+
+jobs:
+  seed:
+    runs-on: [self-hosted, qa]
+    env:
+      QA_VAULT_ADDR:  ${{ secrets.VAULT_QA_ADDR }}
+      QA_VAULT_TOKEN: ${{ secrets.VAULT_QA_ROOT_TOKEN }}
+      BOOTSTRAP_VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      BOOTSTRAP_VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - name: Ensure vault CLI + jq
+        run: |
+          if ! command -v vault >/dev/null 2>&1; then
+            curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+            sudo apt-get update -qq && sudo apt-get install -y vault jq
+          fi
+
+      - name: Fetch Authentik bootstrap_token from QA env vault
+        run: |
+          T=$(VAULT_ADDR="$QA_VAULT_ADDR" VAULT_TOKEN="$QA_VAULT_TOKEN" \
+              vault kv get -field=bootstrap_token secret/sso)
+          if [ -z "$T" ]; then echo "::error::bootstrap_token missing in QA vault secret/sso"; exit 1; fi
+          echo "AK_TOKEN=$T" >> $GITHUB_ENV
+          # Also SSO_IP for reference — 192.168.30.75 per active-slot
+          SSO_IP=$(VAULT_ADDR="$BOOTSTRAP_VAULT_ADDR" VAULT_TOKEN="$BOOTSTRAP_VAULT_TOKEN" \
+                   vault kv get -field=ip secret/sso/qa/active-slot)
+          echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
+          echo "Resolved QA Authentik at $SSO_IP:9000"
+
+      - name: Verify token reaches QA Authentik
+        run: |
+          HTTP=$(curl -s -o /tmp/me.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${AK_TOKEN}" \
+            "http://${SSO_IP}:9000/api/v3/core/users/me/")
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::Authentik /me returned HTTP $HTTP"
+            cat /tmp/me.json
+            exit 1
+          fi
+          echo "Authentik reachable; akadmin confirmed:"
+          jq -r '.user | .username + " (pk=" + (.pk|tostring) + ")"' /tmp/me.json
+
+      - name: Write bootstrap-vault devops-portal/qa/authentik
+        run: |
+          VAULT_ADDR="$BOOTSTRAP_VAULT_ADDR" VAULT_TOKEN="$BOOTSTRAP_VAULT_TOKEN" \
+            vault kv put secret/devops-portal/qa/authentik \
+              url="http://${SSO_IP}:9000" \
+              token="${AK_TOKEN}"
+          echo "Wrote secret/devops-portal/qa/authentik (token sha1: $(echo -n $AK_TOKEN | sha1sum | cut -c1-10))"
+
+      - name: Create superuser in QA Authentik
+        if: ${{ !inputs.skip_user_create }}
+        env:
+          AK_USERNAME: ${{ inputs.username }}
+          AK_EMAIL:    ${{ inputs.email }}
+          AK_NAME:     ${{ inputs.name }}
+        run: |
+          # 1. Does this username already exist?
+          EXIST=$(curl -s -H "Authorization: Bearer ${AK_TOKEN}" \
+            "http://${SSO_IP}:9000/api/v3/core/users/?username=${AK_USERNAME}" \
+            | jq -r '.results | length')
+          if [ "$EXIST" -gt 0 ]; then
+            echo "User ${AK_USERNAME} already exists; looking up PK"
+            USER_PK=$(curl -s -H "Authorization: Bearer ${AK_TOKEN}" \
+              "http://${SSO_IP}:9000/api/v3/core/users/?username=${AK_USERNAME}" \
+              | jq -r '.results[0].pk')
+          else
+            echo "Creating user ${AK_USERNAME}..."
+            USER_PK=$(curl -sf -H "Authorization: Bearer ${AK_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "http://${SSO_IP}:9000/api/v3/core/users/" \
+              -d "$(jq -nc --arg u "$AK_USERNAME" --arg e "$AK_EMAIL" --arg n "$AK_NAME" \
+                    '{username:$u, email:$e, name:$n, is_active:true, path:"users"}')" \
+              | jq -r '.pk')
+            echo "Created user pk=${USER_PK}"
+          fi
+
+          # 2. Find the authentik Admins group (superuser grant)
+          GROUP_PK=$(curl -s -H "Authorization: Bearer ${AK_TOKEN}" \
+            "http://${SSO_IP}:9000/api/v3/core/groups/?name=authentik%20Admins" \
+            | jq -r '.results[0].pk')
+          if [ -z "$GROUP_PK" ] || [ "$GROUP_PK" = "null" ]; then
+            echo "::error::authentik Admins group not found; QA Authentik init incomplete"
+            exit 1
+          fi
+          echo "authentik Admins group pk=${GROUP_PK}"
+
+          # 3. Add user to Admins (idempotent)
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${AK_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "http://${SSO_IP}:9000/api/v3/core/groups/${GROUP_PK}/add_user/" \
+            -d "$(jq -nc --argjson pk "$USER_PK" '{pk:$pk}')"
+          echo "Added ${AK_USERNAME} to authentik Admins"
+
+          # 4. Set a fresh random password (user will reset via Authentik's
+          #    self-service flow at first login).
+          RAND_PASS=$(openssl rand -base64 24)
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${AK_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "http://${SSO_IP}:9000/api/v3/core/users/${USER_PK}/set_password/" \
+            -d "$(jq -nc --arg p "$RAND_PASS" '{password:$p}')"
+
+          # Write the temp password to bootstrap vault so the operator can retrieve it
+          VAULT_ADDR="$BOOTSTRAP_VAULT_ADDR" VAULT_TOKEN="$BOOTSTRAP_VAULT_TOKEN" \
+            vault kv put "secret/devops-portal/qa/users/${AK_USERNAME}" \
+              username="${AK_USERNAME}" \
+              email="${AK_EMAIL}" \
+              name="${AK_NAME}" \
+              initial_password="${RAND_PASS}" \
+              authentik_pk="${USER_PK}"
+          echo "Initial password stored at secret/devops-portal/qa/users/${AK_USERNAME} (bootstrap vault)"
