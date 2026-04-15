@@ -7,7 +7,8 @@
     k3s_version: "v1.32.3+k3s1"
     helm_version: "v3.17.1"
     rancher_version: "2.11.3"
-    rancher_hostname: "rancher-{{ runner_env }}.databaes.net"
+    rancher_hostname: "{% if runner_env == 'prod' %}rancher.databaes.net{% else %}rancher-{{ runner_env }}.databaes.net{% endif %}"
+    auth_hostname: "{% if runner_env == 'prod' %}auth.databaes.net{% else %}auth-{{ runner_env }}.databaes.net{% endif %}"
     # runner_env is passed as an extra var from the pipeline.
 
   tasks:
@@ -175,18 +176,9 @@
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
-    - name: Install Rancher (no-wait)
+    - name: Install Rancher with lower-env Authentik host aliases (no-wait)
       become_user: appadm
       shell: |
-        # Bake extraHostAliases into the Helm release when a Traefik/network-vm IP
-        # is provided. This is the only durable way to inject pod /etc/hosts entries
-        # — kubectl patch on a Helm-managed Deployment is reverted by the HelmChart
-        # controller within minutes. Using --set here makes the aliases part of the
-        # Helm release values, so reconciliation preserves them.
-        EXTRA_HOSTS=""
-        if [ -n "{{ network_vm_ip | default('') }}" ]; then
-          EXTRA_HOSTS="--set extraHostAliases[0].ip={{ network_vm_ip }} --set extraHostAliases[0].hostnames[0]=auth-{{ runner_env }}.databaes.net --set extraHostAliases[0].hostnames[1]={{ rancher_hostname }}"
-        fi
         /usr/local/bin/helm upgrade --install rancher rancher-stable/rancher \
           --namespace cattle-system \
           --version "{{ rancher_version }}" \
@@ -194,7 +186,27 @@
           --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
           --set ingress.tls.source=secret \
           --set privateCA=true \
-          $EXTRA_HOSTS
+          --set extraHostAliases[0].ip="{{ network_vm_ip }}" \
+          --set extraHostAliases[0].hostnames[0]="{{ auth_hostname }}" \
+          --set extraHostAliases[0].hostnames[1]="{{ rancher_hostname }}"
+      when:
+        - runner_env != 'prod'
+        - network_vm_ip is defined
+        - network_vm_ip | length > 0
+      environment:
+        KUBECONFIG: /home/appadm/.kube/config
+
+    - name: Install Rancher without private Authentik host aliases (no-wait)
+      become_user: appadm
+      shell: |
+        /usr/local/bin/helm upgrade --install rancher rancher-stable/rancher \
+          --namespace cattle-system \
+          --version "{{ rancher_version }}" \
+          --set hostname="{{ rancher_hostname }}" \
+          --set bootstrapPassword="{{ rancher_bootstrap_password }}" \
+          --set ingress.tls.source=secret \
+          --set privateCA=true
+      when: runner_env == 'prod' or (network_vm_ip | default('') | length == 0)
       environment:
         KUBECONFIG: /home/appadm/.kube/config
 
@@ -420,59 +432,50 @@
             CLUSTER_BINDINGS: "{{ rancher_rbac_cluster_bindings | default([]) | to_json }}"
             CLUSTER_ID:       "local"
 
-    # ── Dev DNS patching ─────────────────────────────────────────────────────
-    # Dev services (auth-dev.databaes.net etc.) are NOT in public DNS — they're
-    # only accessible via Tailscale with a local DNS server. Rancher must resolve
-    # them server-side for the OIDC token exchange step (step 6 of the OIDC flow:
-    # Rancher → POST https://auth-dev.databaes.net/application/o/rancher/token).
-    # Without this, /verify-auth fails silently — no user created, no R_SESS set.
-    #
-    # network_vm_ip must be passed as an extra var from the pipeline (the active
-    # Traefik IP, which routes to Authentik).
+    # ── Lower-env OIDC reachability validation ────────────────────────────────
+    # Dev/QA Rancher pods cannot rely on the same public Authentik path prod uses.
+    # Fail the deploy here if the lower-env Helm release did not actually persist
+    # the private hostAliases needed for the backend token exchange.
 
-    - name: Patch /etc/hosts with dev service hostnames
-      when: network_vm_ip is defined and network_vm_ip | length > 0
-      block:
-        - name: Remove stale dev host entries
-          lineinfile:
-            path: /etc/hosts
-            regexp: ".*{{ item }}.*"
-            state: absent
-          loop:
-            - auth-{{ runner_env }}.databaes.net
-            - "{{ rancher_hostname }}"
-
-        - name: Add dev host entries (network-vm Traefik → Authentik + Rancher)
-          lineinfile:
-            path: /etc/hosts
-            line: "{{ item }}"
-            state: present
-          loop:
-            - "{{ network_vm_ip }} auth-{{ runner_env }}.databaes.net"
-            - "{{ network_vm_ip }} {{ rancher_hostname }}"
-
-    - name: Patch k3s CoreDNS NodeHosts for dev hostnames
-      when: network_vm_ip is defined and network_vm_ip | length > 0
-      shell: |
-        CURRENT=$(k3s kubectl get configmap coredns -n kube-system \
-          -o jsonpath='{.data.NodeHosts}' 2>/dev/null || echo "")
-        CLEANED=$(echo "$CURRENT" \
-          | grep -v "auth-{{ runner_env }}.databaes.net\|{{ rancher_hostname }}" || true)
-        UPDATED="${CLEANED}
-        {{ network_vm_ip }} auth-{{ runner_env }}.databaes.net
-        {{ network_vm_ip }} {{ rancher_hostname }}"
-        k3s kubectl patch configmap coredns -n kube-system --type=merge \
-          -p "{\"data\":{\"NodeHosts\":\"$(echo "$UPDATED" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')\"}}" \
-          2>/dev/null && echo "CoreDNS NodeHosts patched"
-      register: coredns_patch
-      failed_when: false
-
-    - name: Restart CoreDNS after NodeHosts patch
+    - name: Assert Rancher deployment includes lower-env hostAliases
       when:
-        - network_vm_ip is defined and network_vm_ip | length > 0
-        - "'patched' in coredns_patch.stdout"
-      shell: k3s kubectl rollout restart deployment/coredns -n kube-system
-      failed_when: false
+        - runner_env != 'prod'
+        - network_vm_ip is defined
+        - network_vm_ip | length > 0
+      shell: |
+        set -e
+        HOST_ALIASES_JSON=$(k3s kubectl get deployment rancher -n cattle-system \
+          -o jsonpath='{.spec.template.spec.hostAliases}')
+        echo "$HOST_ALIASES_JSON" | python3 -c '
+        import json, sys
+        host_aliases = json.load(sys.stdin)
+        expected_ip = "{{ network_vm_ip }}"
+        expected_hosts = {"{{ auth_hostname }}", "{{ rancher_hostname }}"}
+        for alias in host_aliases:
+            if alias.get("ip") == expected_ip and expected_hosts.issubset(set(alias.get("hostnames", []))):
+                print("expected hostAliases present")
+                raise SystemExit(0)
+        print(json.dumps(host_aliases))
+        raise SystemExit(1)
+        '
+      register: lower_env_host_aliases_check
+      changed_when: false
+
+    - name: Verify lower-env Authentik token endpoint from inside Rancher pod
+      when:
+        - runner_env != 'prod'
+        - network_vm_ip is defined
+        - network_vm_ip | length > 0
+      shell: |
+        set -euo pipefail
+        POD=$(k3s kubectl get pods -n cattle-system -l app=rancher \
+          -o jsonpath='{.items[0].metadata.name}')
+        HEADERS=$(k3s kubectl exec "$POD" -n cattle-system -- \
+          sh -c "curl -skI --max-time 15 https://{{ auth_hostname }}/application/o/token/")
+        echo "$HEADERS"
+        echo "$HEADERS" | grep -qi '^allow: POST, OPTIONS'
+      register: lower_env_authentik_reachability
+      changed_when: false
 
     - name: Rancher setup summary
       debug:
