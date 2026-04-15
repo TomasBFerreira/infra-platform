@@ -43,7 +43,7 @@ GitHub Actions → `infra-platform → Deploy ops-portal (meta)` → Run workflo
 
 | Input | What it does |
 |-------|--------------|
-| `env` | `dev` or `prod` |
+| `env` | `dev`, `qa`, or `prod` (qa mirrors dev — same overlay shape, separate worker, hostname `ops-qa.databaes.net`) |
 | `worker_node_ip` | optional override; blank = resolve from Vault per-repo |
 | `mode` | `ordered` (sequential, waits for each) or `parallel` (fires all at once) |
 | `services` | comma-separated subset (default: all 8). Use to redeploy just one or two — e.g. `incidents,shell`. |
@@ -54,11 +54,11 @@ The meta workflow does NOT expose `wipe_postgres`. If you need to recreate a Pos
 
 These are **not** part of the ops-portal repos and must already exist on the target env:
 
-- k3s worker node (CT 11 in dev) reachable on the LAN, with NFS server running on benedict
+- k3s worker node reachable on the LAN — VMID 211 (192.168.20.11, benedict) for dev, VMID 311 (192.168.30.11, heaton) for qa, VMID 111 (192.168.10.11, betsy) for prod. IPs come from Vault `worker-node/<env>/active-slot`
 - Vault unsealed at the bootstrap address; the meta workflow reads `worker-node/<env>/active-slot` from it
-- Authentik running with admin token in Vault at `secret/authentik/admin-token`
+- Authentik running with admin token in Vault at `secret/authentik/admin-token`, plus a Traefik middleware named `authentik-<env>` (`authentik-dev`, `authentik-qa`, `authentik-prod`) for the shell's forwardAuth chain
 - Traefik dynamic config repo (`traefik-gitops`) accepting `github-actions[bot]` pushes
-- AdGuard rewrite for any new `*-dev.databaes.net` hostname (see `feedback_new_app_adguard.md` in claude-memory)
+- AdGuard rewrite for any new `*-<env>.databaes.net` hostname — `ops-dev.databaes.net`, `ops-qa.databaes.net`, etc. (see `feedback_new_app_adguard.md` in claude-memory)
 
 If any of these are missing, fix them via the per-component `infra-platform` workflow (`vault-ct_pipeline_self_hosted`, `worker-node_pipeline_self_hosted`, etc.) first.
 
