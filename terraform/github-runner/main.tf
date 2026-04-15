@@ -12,7 +12,13 @@ resource "proxmox_lxc" "github_runner" {
 
   rootfs {
     storage = "local-lvm"
-    size    = "20G"
+    # 60G accommodates one runner instance per ops-portal repo (~700 MB
+    # _work each) plus airgap image tars, Docker build cache, and the
+    # accumulated /opt/github-runners/*/_work/_update self-update bits.
+    # 20 G filled within a couple of weeks of active development; bumping
+    # to 60 G + the weekly docker-prune.timer keeps it stable. The
+    # benedict thin pool has ~1.5 TB free, so this is cheap.
+    size = "60G"
   }
 
   network {
