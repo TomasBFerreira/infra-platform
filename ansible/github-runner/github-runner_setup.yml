@@ -339,6 +339,55 @@
         state: started
         daemon_reload: yes
 
+    # ── Nightly runner-listener restart (RSS hygiene) ─────────────────────────
+    # The .NET Runner.Listener leaks slowly over long idle periods; multiple
+    # per-repo listeners on one LXC add up to several GB of avoidable RSS
+    # within a week. Restarting releases it; runners auto-reconnect using
+    # their saved credentials, so there's no re-registration cost. Skip if
+    # any runner is currently executing a job (Runner.Worker child present)
+    # so we never kill an in-flight CI build. If skipped, the next night's
+    # run handles it.
+
+    - name: Install runner-restart.service
+      copy:
+        dest: /etc/systemd/system/runner-restart.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Restart GitHub Actions runner listeners to reclaim leaked RSS
+          Documentation=https://github.com/TomasBFerreira/infra-platform/blob/main/docs/runbooks.md
+
+          [Service]
+          Type=oneshot
+          ExecStart=/bin/bash -c 'if pgrep -f Runner.Worker >/dev/null; then echo "Skipping — at least one runner is mid-job"; exit 0; fi; systemctl restart "actions.runner.*.service"'
+
+    - name: Install runner-restart.timer
+      copy:
+        dest: /etc/systemd/system/runner-restart.timer
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Nightly restart of GitHub Actions runner listeners
+
+          [Timer]
+          # 03:30 local — after the 03:00 hour where most other cron-ish jobs
+          # fire, still in quiet hours. Randomised so parallel LXCs don't all
+          # reconnect to GitHub in the same second.
+          OnCalendar=*-*-* 03:30:00
+          Persistent=true
+          RandomizedDelaySec=10min
+          Unit=runner-restart.service
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable and start runner-restart.timer
+      systemd:
+        name: runner-restart.timer
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
     # ── Runner binary ─────────────────────────────────────────────────────────
 
     - name: Create runner directory
