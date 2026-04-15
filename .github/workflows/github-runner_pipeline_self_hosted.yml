@@ -210,6 +210,7 @@ jobs:
         env:
           VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_DEV_TOKEN:      ${{ secrets.VAULT_DEV_TOKEN }}
+          PRIMARY_REPO: ${{ github.event.inputs.github_repo || 'TomasBFerreira/infra-platform' }}
         run: |
           ssh-keygen -R "${IP}" || true
           ansible-playbook \
@@ -220,8 +221,50 @@ jobs:
             -e "ansible_user=root" \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
             -e "runner_env=${ENV}" \
-            -e "github_repo=${{ github.event.inputs.github_repo || 'TomasBFerreira/infra-platform' }}" \
+            -e "github_repo=${PRIMARY_REPO}" \
             ansible/github-runner/github-runner_setup.yml
+
+      # Replay every other repo registered against this env's runner LXC.
+      # Without this step, reprovisioning the LXC would silently break
+      # every downstream repo's deploy pipeline until someone manually
+      # re-ran register-runner.yml for each. See registered-repos.yml
+      # for the source of truth and onboarding instructions.
+      - name: Re-register additional repos from registered-repos.yml
+        env:
+          VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_DEV_TOKEN:      ${{ secrets.VAULT_DEV_TOKEN }}
+          PRIMARY_REPO: ${{ github.event.inputs.github_repo || 'TomasBFerreira/infra-platform' }}
+        run: |
+          set -euo pipefail
+          mapfile -t REPOS < <(python3 -c "
+          import yaml
+          data = yaml.safe_load(open('ansible/github-runner/registered-repos.yml')) or {}
+          for repo in data.get('${ENV}', []) or []:
+              print(repo)
+          ")
+          if [ ${#REPOS[@]} -eq 0 ]; then
+            echo "No repos listed for env=${ENV} in registered-repos.yml — skipping."
+            exit 0
+          fi
+          for repo in "${REPOS[@]}"; do
+            if [ "${repo}" = "${PRIMARY_REPO}" ]; then
+              echo "Skipping ${repo} — already registered by the primary step."
+              continue
+            fi
+            echo ""
+            echo "──────────────────────────────────────────────────"
+            echo "▶ Registering runner for ${repo}"
+            echo "──────────────────────────────────────────────────"
+            ansible-playbook \
+              -i "${IP}," \
+              --private-key /tmp/ansible_github_runner_id_ed25519 \
+              -e "ansible_host=${IP}" \
+              -e "ansible_user=root" \
+              -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+              -e "runner_env=${ENV}" \
+              -e "github_repo=${repo}" \
+              ansible/github-runner/github-runner_setup.yml
+          done
 
   save-runner-state:
     needs: [resolve-runner, ansible-runner]
