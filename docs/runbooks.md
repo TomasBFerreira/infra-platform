@@ -160,6 +160,34 @@ gh workflow run github-runner_pipeline_self_hosted.yml \
   --field environment=dev
 ```
 
+### Worker stale default route after a network-vm slot flip
+
+**Symptom:** any pod (or the worker host itself) can't reach the public internet — `ping 8.8.8.8` 100% loss, `curl https://api.anthropic.com` "host is unreachable", DNS resolution may still work because CoreDNS is in-cluster but TCP/UDP egress times out.
+
+**Cause:** a worker's default gateway was set when the network-vm was on one blue/green slot, and never updated when the slot flipped. The peer (e.g. `192.168.20.55`) no longer exists; the active network-vm is on the other slot (e.g. `192.168.20.56`). Vault's `secret/network-vm/<env>/active-slot` is the source of truth.
+
+```bash
+# Diagnose: compare runtime route to vault truth
+ssh -J root@<proxmox-host> root@<worker-ip> 'ip route | head -1'
+vault kv get secret/network-vm/<env>/active-slot   # ip field
+```
+
+**Quick fix (runtime, survives netplan reapply but not reprovisioning):**
+
+```bash
+ssh root@<worker-ip>
+ACTIVE=$(curl -sf -H "X-Vault-Token: $VAULT_BOOTSTRAP_DEV_TOKEN" \
+  "$VAULT_BOOTSTRAP_ADDR/v1/secret/data/network-vm/<env>/active-slot" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ip'])")
+ip route replace default via $ACTIVE dev eth0
+```
+
+**Persistent fix (survives reboot):**
+
+Edit `/etc/netplan/*.yaml`, set `gateway4` (or, since gateway4 is deprecated, the equivalent `routes: [{to: default, via: <ip>}]`) to the active slot IP. Run `netplan apply`. The dev worker LXC's netplan was already correct (192.168.20.56) the night this was written — only the runtime route had drifted.
+
+**Proper fix (open follow-up):** the worker provisioning playbook (`ansible/worker-node/`, `ansible/worker-node-gpu/`) should read `active-slot` from Vault on each apply and write the correct gateway, AND a small systemd boot-time service should re-check Vault and `ip route replace` on every boot so a slot flip eventually heals all consumers without a manual touch. Currently flagged for the prod GPU worker too — see CLAUDE.md "Note (2026-04-10) Issue 7" for the same class of bug on `worker-node-gpu_setup.yml`.
+
 ### Env runner disk is full
 
 **Symptom:** `register-runner.yml` fails at step "Set up job" with `##[error]No space left on device`, or any deploy fails trying to extract an image tar. The env runner LXC (`github-runner-dev` on CT 201, `github-runner-prod` on CT 101) has a 20 GB root disk and it fills up over time with Docker images and build cache.
