@@ -16,6 +16,10 @@
 **OAuth2 Providers configured:**
 - `Vault` — client credentials in `secret/authentik/vault-oidc` in env vault
 
+**Shared access groups:**
+- `web-admin` — Authentik SSO admission group for selected admin UIs. Attach it to Authentik applications that should be reachable by homelab admins.
+- Rancher reuses the same group through `secret/rancher/<env>/rbac`, mapping `genericoidc_group://web-admin` to Rancher's `admin` GlobalRole without making the group an Authentik superuser shortcut.
+
 **Traefik forwardAuth middleware:**
 - `authentik-dev` middleware defined in `services.yml` points to `http://192.168.20.75:9000/outpost.goauthentik.io/auth/traefik`
 - Attach to any Traefik router to gate it behind SSO
@@ -26,6 +30,17 @@
 - Bootstrap token mechanism: `AUTHENTIK_BOOTSTRAP_TOKEN` env var relies on Celery background task (unreliable). Instead, the pipeline creates the token directly via `docker exec authentik-server ak shell` + Django ORM.
 - API authentication: `Authorization: Bearer <token>` (not `Token`)
 - `redirect_uris` format in Authentik 2024.x: list of `{url: "...", matching_mode: "strict"}` dicts (not a newline-delimited string as in older docs)
+
+---
+
+## Rancher
+
+**Purpose:** K3s management plane with Generic OIDC login via Authentik.
+
+**Known quirks:**
+- Rancher's OIDC code exchange happens from inside the Rancher pod, not from the browser. Lower envs (`dev`, `qa`) cannot rely on the public Authentik path the way prod does; they must resolve `auth-<env>.databaes.net` to the active network-vm privately from inside the pod.
+- The durable fix for lower envs is Helm-managed `extraHostAliases`, not CoreDNS drift patches or a raw `kubectl patch` on the Deployment. `ansible/rancher/rancher_setup.yml` now treats this as a deploy-time requirement and fails the lower-env rollout if the Rancher pod cannot reach `https://auth-<env>.databaes.net/application/o/token/`.
+- Prod intentionally stays on the public path (`auth.databaes.net`) by default because the prod Rancher pod can already reach the real Authentik endpoint without private host aliases.
 
 ---
 
