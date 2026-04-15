@@ -471,6 +471,8 @@
           sh -c "curl -skI --max-time 15 https://{{ auth_hostname }}/application/o/token/")
         echo "$HEADERS"
         echo "$HEADERS" | grep -qi '^allow: POST, OPTIONS'
+      args:
+        executable: /bin/bash
       register: lower_env_authentik_reachability
       changed_when: false
 
