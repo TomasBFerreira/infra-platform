@@ -149,6 +149,7 @@ ops-portal dev consumes the benedict `ops-portal/dev` export via the `nfs-subdir
 Each of these bit someone and is documented in its own section of the linked docs. Skim before working in the area.
 
 - **Cluster service URLs need a trailing dot.** Pods' resolv.conf has `databaes.net` in the search path and Cloudflare wildcards that domain, so `nats.ns.svc.cluster.local:4222` resolves to a public Cloudflare IP. Always write the URL as `nats.ns.svc.cluster.local.:4222`. → `docs/network.md` → "k3s cluster DNS — trailing-dot gotcha".
+- **External APIs (Anthropic, GitHub, …) also break unless ndots is lowered.** Same wildcard collision: `api.anthropic.com` has 2 dots, ndots=5 search-expands to `api.anthropic.com.databaes.net` and Cloudflare answers. Add `dnsConfig.options.ndots: "2"` to any deployment that calls a public API. → `docs/network.md` → "Same wildcard, different shape".
 - **Worker → benedict NFS is via `192.168.20.1`, not `192.168.50.4`.** The worker has no route to the management subnet; benedict is reachable at its vmbr20 interface instead. → `docs/network.md` → "Worker-to-Proxmox NFS routing".
 - **Env runner LXC fills its 20 GB disk.** Symptom: `No space left on device` in workflow "Set up job" step. Fix is a docker prune on the runner. → `docs/runbooks.md` → "Env runner disk is full".
 - **`gh repo create` needs a classic PAT.** Fine-grained tokens can't create repos. Keep a classic `ghp_…` token around for that one operation. → `docs/runbooks.md` → "GitHub token permissions: repo creation needs a classic PAT".
