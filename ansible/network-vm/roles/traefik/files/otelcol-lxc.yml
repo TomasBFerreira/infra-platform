@@ -6,6 +6,9 @@ receivers:
   # Docker container metrics (CPU, memory, network, I/O per container)
   docker_stats:
     endpoint: unix:///var/run/docker.sock
+    # api_version must be >= 1.40 — modern Docker daemons (29+) refuse the
+    # otelcol-contrib docker client's default of 1.25.
+    api_version: "1.44"
     collection_interval: 30s
     timeout: 10s
 
