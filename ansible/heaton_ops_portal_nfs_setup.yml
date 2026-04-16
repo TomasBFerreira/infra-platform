@@ -1,0 +1,74 @@
+---
+# Sets up an NFS export on heaton (192.168.50.8) for ops-portal qa
+# persistent storage (per-service Postgres, etc).
+#
+# Mirrors ansible/benedict_ops_portal_nfs_setup.yml — the only differences
+# are the host, the base path, and the env list. Keep the two files in
+# lock-step when adding new envs or changing ACLs.
+#
+# The export lands on heaton's pve-root LV (currently ~86G free) — fine for
+# test workloads (dev ops-portal uses 233M after the full 8-service bring-up).
+# If you ever need proper isolation, cut a dedicated LV from pve/data (~290G
+# free in the thin pool) and mount it here before running this playbook;
+# the playbook itself is mount-agnostic.
+#
+# Run once before bringing up any ops-portal service that needs persistence:
+#   ansible-playbook -i 192.168.50.8, -u root ansible/heaton_ops_portal_nfs_setup.yml
+#
+# After this, the ops-portal-identity repo's cluster-bootstrap/nfs-subdir-provisioner/
+# overlays/qa/ kustomize overlay points the cluster at
+# 192.168.30.1:/mnt/heaton-ops-portal-data/ops-portal/qa (heaton's vmbr30 IP,
+# the only route reachable from the qa worker on 192.168.30.0/24).
+
+- name: Configure NFS export on heaton for ops-portal qa storage
+  hosts: all
+  gather_facts: false
+  become: yes
+
+  vars:
+    nfs_base: /mnt/heaton-ops-portal-data/ops-portal
+    nfs_allowed_network: 192.168.0.0/16
+    nfs_export_opts: "rw,sync,no_subtree_check,no_root_squash"
+    environments:
+      - qa
+
+  tasks:
+    - name: Ensure nfs-kernel-server is installed
+      apt:
+        name: nfs-kernel-server
+        state: present
+        update_cache: yes
+
+    - name: Create ops-portal NFS base directory
+      file:
+        path: "{{ nfs_base }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create per-environment subdirectories
+      file:
+        path: "{{ nfs_base }}/{{ item }}"
+        state: directory
+        # 0777 so the nfs-subdir-external-provisioner (running as non-root
+        # in the cluster) can mkdir per-PV subdirs without uid mapping on
+        # the NFS server — same pattern the monitoring exports use.
+        mode: '0777'
+      loop: "{{ environments }}"
+
+    - name: Add ops-portal NFS export to /etc/exports
+      lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_base }} {{ nfs_allowed_network }}({{ nfs_export_opts }})"
+        regexp: "^{{ nfs_base | regex_escape() }}\\s"
+        state: present
+      notify: reload exports
+
+    - name: Ensure NFS server is enabled and started
+      systemd:
+        name: nfs-kernel-server
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: reload exports
+      command: exportfs -ra
