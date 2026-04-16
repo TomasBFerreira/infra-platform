@@ -30,12 +30,12 @@ receivers:
         to: attributes["log.iostream"]
       - type: regex_parser
         id: extract-container-id
+        # Capture only the first 12 hex chars of the container_id so the label
+        # is short enough for Loki/Prometheus cardinality. (The deprecated
+        # `truncate_labels` operator that used to follow this was removed in
+        # otelcol-contrib v0.109+ — tightening the regex here supersedes it.)
         parse_from: attributes["log.file.path"]
-        regex: '/var/lib/docker/containers/(?P<container_id>[a-f0-9]{64})/.*\.log'
-      - type: truncate_labels
-        max_length: 12
-        labels:
-          - container_id
+        regex: '/var/lib/docker/containers/(?P<container_id>[a-f0-9]{12})[a-f0-9]{52}/.*\.log'
 
   # LXC host hardware and OS metrics
   hostmetrics:
