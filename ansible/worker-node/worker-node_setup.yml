@@ -91,6 +91,7 @@
         name:
           - curl
           - qemu-guest-agent
+          - nfs-common  # kubelet NFS mounts (ops-portal nfs-subdir-provisioner PVs)
         state: present
         update_cache: no
         lock_timeout: 30
