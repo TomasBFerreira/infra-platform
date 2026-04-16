@@ -104,16 +104,17 @@
   when: adguard_username != '' and adguard_password != ''
   no_log: true
 
-- name: Set managed domains list for this env
+- name: Set managed domains list (ALL envs, so upsert is comprehensive)
+  # Every netvm's AdGuard registers every env's hostnames, not just its own.
+  # Tailscale split-DNS for databaes.net fans queries out to every network-vm's
+  # AdGuard in parallel and the first answer wins — if any resolver doesn't
+  # know a hostname, it falls through to public Cloudflare and browsers can
+  # race onto a dead CF record. Registering universally guarantees a correct
+  # answer regardless of which resolver wins.
   set_fact:
     adguard_managed_domains: >-
-      {% if deploy_env == 'dev' %}
-      {{ adguard_dev_rewrites | map(attribute='domain') | list }}
-      {% elif deploy_env == 'qa' %}
-      {{ adguard_qa_rewrites | map(attribute='domain') | list }}
-      {% else %}
-      []
-      {% endif %}
+      {{ (adguard_dev_rewrites + adguard_qa_rewrites + adguard_prod_rewrites)
+         | map(attribute='domain') | list }}
 
 - name: Delete stale AdGuard rewrites for managed domains (clears duplicates + old LAN-IP entries)
   uri:
@@ -131,23 +132,40 @@
   when: adguard_rewrite_list is defined and adguard_rewrite_list.json is defined
   no_log: true
 
-- name: Upsert AdGuard DNS A rewrites for dev hostnames
+- name: Build cross-env upsert batch (A records — points each env's hostnames at that env's TS IPv4)
+  set_fact:
+    adguard_cross_env_upserts: >-
+      {{
+        (adguard_dev_rewrites  | map('combine', {'answer': adguard_env_tailscale_ips.dev})  | list)
+        + (adguard_qa_rewrites   | map('combine', {'answer': adguard_env_tailscale_ips.qa})   | list)
+        + (adguard_prod_rewrites | map('combine', {'answer': adguard_env_tailscale_ips.prod}) | list)
+      }}
+
+- name: Upsert AdGuard DNS A rewrites for ALL envs' hostnames
+  # Each entry maps `domain` to the correct env's Tailscale IPv4. Running this
+  # on every netvm means Tailscale split-DNS lookups succeed no matter which
+  # resolver answers first.
   uri:
     url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
     method: POST
     body_format: json
     body:
       domain: "{{ item.domain }}"
-      answer: "{{ adguard_rewrite_answer_ip }}"
+      answer: "{{ item.answer }}"
     url_username: "{{ adguard_username }}"
     url_password: "{{ adguard_password }}"
     force_basic_auth: yes
     status_code: [200, 409]
-  loop: "{{ adguard_dev_rewrites }}"
-  when: deploy_env == 'dev' and adguard_username != '' and adguard_password != ''
+  loop: "{{ adguard_cross_env_upserts }}"
+  when: adguard_username != '' and adguard_password != ''
   no_log: true
 
-- name: Upsert AdGuard DNS AAAA rewrites for dev hostnames (prevent Happy-Eyeballs fallback to public AAAA)
+# AAAA records still use this netvm's own TS IPv6. Happy-Eyeballs racing
+# between A and AAAA only matters when the browser is talking to this netvm's
+# IP (i.e. the env this role is currently running against). Cross-env AAAA
+# would require one extra TS IPv6 per env in vars — not worth the footprint
+# since v4 alone is enough for correct routing.
+- name: Upsert AdGuard DNS AAAA rewrites for THIS env's hostnames (Happy-Eyeballs safety net)
   uri:
     url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
     method: POST
@@ -159,38 +177,10 @@
     url_password: "{{ adguard_password }}"
     force_basic_auth: yes
     status_code: [200, 409]
-  loop: "{{ adguard_dev_rewrites }}"
-  when: deploy_env == 'dev' and adguard_username != '' and adguard_password != ''
-  no_log: true
-
-- name: Upsert AdGuard DNS A rewrites for QA hostnames
-  uri:
-    url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
-    method: POST
-    body_format: json
-    body:
-      domain: "{{ item.domain }}"
-      answer: "{{ adguard_rewrite_answer_ip }}"
-    url_username: "{{ adguard_username }}"
-    url_password: "{{ adguard_password }}"
-    force_basic_auth: yes
-    status_code: [200, 409]
-  loop: "{{ adguard_qa_rewrites }}"
-  when: deploy_env == 'qa' and adguard_username != '' and adguard_password != ''
-  no_log: true
-
-- name: Upsert AdGuard DNS AAAA rewrites for QA hostnames (prevent Happy-Eyeballs fallback to public AAAA)
-  uri:
-    url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/add"
-    method: POST
-    body_format: json
-    body:
-      domain: "{{ item.domain }}"
-      answer: "{{ adguard_rewrite_answer_ip_v6 }}"
-    url_username: "{{ adguard_username }}"
-    url_password: "{{ adguard_password }}"
-    force_basic_auth: yes
-    status_code: [200, 409]
-  loop: "{{ adguard_qa_rewrites }}"
-  when: deploy_env == 'qa' and adguard_username != '' and adguard_password != ''
+  loop: >-
+    {{ adguard_dev_rewrites  if deploy_env == 'dev'
+       else (adguard_qa_rewrites   if deploy_env == 'qa'
+       else (adguard_prod_rewrites if deploy_env == 'prod'
+       else [])) }}
+  when: adguard_username != '' and adguard_password != ''
   no_log: true
