@@ -52,9 +52,9 @@
     state: directory
     mode: '0700'
 
-- name: Copy Traefik main config
-  copy:
-    src: traefik.yml
+- name: Render Traefik main config (OTel endpoint is env-specific)
+  template:
+    src: traefik.yml.j2
     dest: /opt/traefik/config/traefik.yml
     mode: '0644'
   register: traefik_static_config
