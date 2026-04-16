@@ -59,6 +59,10 @@ receivers:
       processes: {}
       process:
         include:
+          # match_type is required by hostmetricsreceiver; "strict" matches names
+          # verbatim (no regex). Historical configs omitted this and the receiver
+          # silently accepted; otelcol v0.120+ fails pipeline build on empty value.
+          match_type: strict
           names: [dockerd, containerd, vault, authentik-server, qbittorrent, traefik]
         mute_process_name_error: true
         mute_process_exe_error: true

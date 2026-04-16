@@ -59,7 +59,14 @@ jobs:
         run: |
           ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
           ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
+          # collector_endpoint is a computed convenience field only populated on dev.
+          # Fall back to `<ip>:4317` (always present under active-slot) for qa/prod
+          # and for any env where the field hasn't been seeded.
           OTEL_ENDPOINT=$(vault kv get -field=collector_endpoint secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+          if [ -z "$OTEL_ENDPOINT" ]; then
+            MON_IP=$(vault kv get -field=ip secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+            [ -n "$MON_IP" ] && OTEL_ENDPOINT="${MON_IP}:4317"
+          fi
           # CF DNS token lives at a path the DEV token may not access — use bootstrap token
           CF_DNS_TOKEN=$(VAULT_TOKEN="$VAULT_BOOTSTRAP_TOKEN" vault kv get -field=dns_api_token secret/cloudflare 2>/dev/null || echo "")
           echo "::add-mask::$ADGUARD_PASS"
