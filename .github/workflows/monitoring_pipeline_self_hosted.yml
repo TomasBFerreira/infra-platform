@@ -124,6 +124,12 @@ jobs:
 
   setup-betsy-nfs:
     needs: resolve-slots
+    # Only betsy (prod Proxmox host, 192.168.50.2) owns /mnt/nfs-shared-data
+    # locally and can serve it via nfs-kernel-server. benedict (dev) and
+    # heaton (qa) mount that same path from betsy over NFSv4, so re-exporting
+    # fails with "requires fsid= for NFS export". Skip; the monitoring VM on
+    # those envs already mounts direct from the NAS (see NFS_SERVER below).
+    if: needs.resolve-slots.outputs.environment == 'prod'
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -185,7 +191,10 @@ jobs:
           REMOTE
 
   terraform-staging:
-    needs: [resolve-slots, setup-betsy-nfs]
+    # setup-betsy-nfs only runs on prod; for dev/qa the NFS path + export
+    # already exists on the shared NAS (betsy, 192.168.50.2) and is reachable
+    # directly by the monitoring VM. Don't gate on a job that doesn't run.
+    needs: [resolve-slots]
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       ENV:          ${{ needs.resolve-slots.outputs.environment }}
@@ -329,7 +338,12 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          NFS_SERVER=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          # NFS_SERVER is always the shared NAS on betsy (192.168.50.2), which
+          # exports /mnt/nfs-shared-data to 192.168.0.0/16 — reachable from
+          # dev (192.168.20.x), qa (192.168.30.x), and prod (192.168.10.x)
+          # worker subnets. The monitoring VM mounts directly from there;
+          # PVE hosts are no longer in the data path for non-prod envs.
+          NFS_SERVER=192.168.50.2
           ssh-keygen -R "${STAGING_IP}" || true
           ansible-playbook \
             -i "${STAGING_IP}," \
