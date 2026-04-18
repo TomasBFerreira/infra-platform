@@ -1,0 +1,26 @@
+[Unit]
+Description=Prometheus node_exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+ExecStart=/usr/local/bin/node_exporter \
+  --web.listen-address={{ node_exporter_listen_addr }} \
+{% for c in node_exporter_extra_collectors %}
+  --collector.{{ c }} \
+{% endfor %}
+  --collector.textfile.directory={{ node_exporter_textfile_dir }}
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=node_exporter
+
+# Small footprint — node_exporter is ~15MB resident on a quiet host.
+MemoryMax=128M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

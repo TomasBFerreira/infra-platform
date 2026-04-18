@@ -1,0 +1,85 @@
+name: Deploy node_exporter to a host
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment (for self-hosted runner routing)
+        required: true
+        default: dev
+        type: choice
+        options: [dev, qa, prod]
+      target_host_ip:
+        description: IP of the host to install node_exporter on
+        required: true
+        type: string
+      target_host_name:
+        description: Ansible inventory name to use in reports (e.g. worker-node-01)
+        required: true
+        type: string
+      ssh_key_vault_path:
+        description: Vault KV path whose private_key field authenticates into the host (e.g. ssh_keys/worker_node_worker)
+        required: true
+        type: string
+      ssh_user:
+        description: SSH user on the target
+        required: false
+        default: root
+        type: string
+
+concurrency:
+  group: node-exporter-fleet-${{ github.event.inputs.target_host_name }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    runs-on: [self-hosted, "${{ github.event.inputs.environment }}"]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          if [[ "$V" != http://* && "$V" != https://* ]]; then
+            V="http://${V}"
+          fi
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Pull SSH key from Vault
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          curl -sS -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/${{ github.event.inputs.ssh_key_vault_path }}" \
+            | python3 -c 'import sys,json,os; d=json.load(sys.stdin); k=d["data"]["data"]["private_key"]; open(os.path.expanduser("~/.ssh/target_key"),"w").write(k if k.endswith("\n") else k+"\n")'
+          chmod 600 ~/.ssh/target_key
+
+      - name: Build one-shot inventory
+        run: |
+          cat > /tmp/inv.yml <<EOF
+          all:
+            hosts:
+              ${{ github.event.inputs.target_host_name }}:
+                ansible_host: ${{ github.event.inputs.target_host_ip }}
+                ansible_user: ${{ github.event.inputs.ssh_user }}
+                ansible_ssh_private_key_file: ~/.ssh/target_key
+                ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+                ansible_python_interpreter: /usr/bin/python3
+          EOF
+          cat /tmp/inv.yml
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install ansible.posix community.general
+
+      - name: Run node_exporter playbook
+        run: |
+          ansible-playbook -i /tmp/inv.yml ansible/monitoring/node_exporter_fleet.yml
+
+      - name: Smoke-test scrape endpoint
+        run: |
+          curl -sS --fail --max-time 10 "http://${{ github.event.inputs.target_host_ip }}:9100/metrics" \
+            | head -5

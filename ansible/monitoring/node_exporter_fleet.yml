@@ -1,0 +1,12 @@
+---
+# node_exporter fleet rollout. Per design-review, hosts are not hard-coded
+# here; the workflow (or an operator) selects a target via `--limit` or by
+# passing `target_hosts` as an extra-var. Monitoring LXCs are excluded by
+# convention — the otel-monitoring docker-compose already runs node_exporter
+# alongside Prometheus there, and a second scrape endpoint would duplicate.
+
+- name: Install node_exporter on target hosts
+  hosts: "{{ target_hosts | default('all:!localhost') }}"
+  become: true
+  roles:
+    - role: ../_shared/roles/node-exporter
