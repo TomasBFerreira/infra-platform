@@ -1,0 +1,16 @@
+---
+node_exporter_version: "1.8.2"
+node_exporter_listen_addr: "0.0.0.0:9100"
+
+# Collectors enabled in addition to the default set. These populate the
+# ops-portal-monitoring alerts for OOM, conntrack saturation, TCP retransmit
+# rate, and chrony-style clock drift.
+node_exporter_extra_collectors:
+  - netstat
+  - conntrack
+  - vmstat
+  - timex
+  - systemd
+  - textfile
+
+node_exporter_textfile_dir: /var/lib/node_exporter/textfile
