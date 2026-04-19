@@ -1,0 +1,111 @@
+name: Diagnose Torrent qBittorrent State
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, "${{ github.event.inputs.environment || 'prod' }}"]
+    steps:
+      - name: Resolve active torrent slot
+        id: slots
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          ENV="${{ github.event.inputs.environment || 'prod' }}"
+          ACTIVE_IP=$(vault kv get -field=ip secret/torrent/$ENV/active-slot 2>/dev/null || echo "")
+          echo "ip=$ACTIVE_IP" >> $GITHUB_OUTPUT
+          echo "Torrent CT IP: $ACTIVE_IP"
+
+      - name: Fetch SSH key
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/torrent_worker \
+            | awk 'NF > 0' > /tmp/torrent_qbt_key
+          chmod 600 /tmp/torrent_qbt_key
+
+      - name: Deep qBittorrent diagnostic
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          ssh -i /tmp/torrent_qbt_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          set +e
+
+          echo "=== A. qBittorrent config persistence ==="
+          ls -la /opt/torrent/qbittorrent/config/qBittorrent/ 2>/dev/null || echo "(no qbittorrent config dir)"
+          echo ""
+          echo "--- qBittorrent.conf contents (redacted) ---"
+          if [ -f /opt/torrent/qbittorrent/config/qBittorrent/qBittorrent.conf ]; then
+            grep -E 'WebUI|CurrentNetworkInterface|DefaultSavePath|TempPath|ListenPort|Connection' \
+              /opt/torrent/qbittorrent/config/qBittorrent/qBittorrent.conf 2>/dev/null | head -40
+          else
+            find /opt/torrent -name 'qBittorrent.conf' 2>/dev/null | head -5
+          fi
+          echo ""
+
+          echo "=== B. qBittorrent API — login & preferences ==="
+          COOKIE=$(mktemp)
+          # Try empty password first (default)
+          HTTP=$(curl -s -o /dev/null -w '%{http_code}' -c "$COOKIE" \
+            -d "username=admin&password=adminadmin" \
+            http://127.0.0.1:8080/api/v2/auth/login)
+          echo "login(adminadmin) → $HTTP"
+          if [ "$HTTP" != "200" ]; then
+            # Try with empty password
+            HTTP=$(curl -s -o /dev/null -w '%{http_code}' -c "$COOKIE" \
+              -d "username=admin&password=" \
+              http://127.0.0.1:8080/api/v2/auth/login)
+            echo "login(empty) → $HTTP"
+          fi
+
+          echo ""
+          echo "--- Preferences (relevant keys) ---"
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences \
+            | python3 -c 'import json,sys;d=json.load(sys.stdin);keys=["current_network_interface","current_interface_address","listen_port","save_path","temp_path","bypass_auth_subnet_whitelist_enabled","bypass_auth_subnet_whitelist","web_ui_port","web_ui_username","web_ui_address"];print(json.dumps({k:d.get(k) for k in keys},indent=2))' 2>/dev/null || echo "(could not parse prefs)"
+
+          echo ""
+          echo "=== C. Active torrents ==="
+          curl -s -b "$COOKIE" "http://127.0.0.1:8080/api/v2/torrents/info?filter=all" \
+            | python3 -c 'import json,sys;t=json.load(sys.stdin);print(f"Total torrents: {len(t)}");
+          [print(f"  [{x[\"state\"]:12s}] {x[\"progress\"]*100:5.1f}%  {x[\"name\"][:70]}  (dl={x[\"dlspeed\"]}B/s, peers={x[\"num_leechs\"]}/{x[\"num_seeds\"]})") for x in t[:20]]' 2>/dev/null || echo "(could not parse torrents)"
+
+          echo ""
+          echo "=== D. Transfer info ==="
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/transfer/info \
+            | python3 -m json.tool 2>/dev/null | head -20 || echo "(no transfer info)"
+
+          echo ""
+          echo "=== E. External IP check via wg0 (should be VPN endpoint, NOT your ISP) ==="
+          timeout 10 curl -s --interface wg0 https://api.ipify.org 2>&1 || echo "(ipify via wg0 failed)"
+          echo ""
+          timeout 10 curl -s https://api.ipify.org 2>&1 || echo "(ipify default failed)"
+          echo ""
+
+          echo "=== F. DNS resolution from torrent CT ==="
+          getent hosts tracker.opentrackr.org 2>&1 | head -2
+          getent hosts knaben.xyz 2>&1 | head -2
+
+          echo ""
+          echo "=== G. Recent qBittorrent logs (errors/warnings) ==="
+          docker logs qbittorrent --since 2h 2>&1 | grep -iE 'error|warn|fail|refused|denied' | tail -30 || echo "(no error lines)"
+
+          echo ""
+          echo "=== H. /downloads volume state ==="
+          ls /downloads/ 2>&1 | head -20
+          df -h /downloads 2>&1 | head -3
+
+          rm -f "$COOKIE"
+          REMOTE
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/torrent_qbt_key
