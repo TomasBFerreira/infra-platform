@@ -168,6 +168,124 @@ jobs:
           rm -f "$COOKIE" /tmp/prefs.json /tmp/torrents.json
           REMOTE
 
+      - name: Check vault qBittorrent credentials + media-stack side
+        env:
+          BOOT_VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          BOOT_VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          PROD_VAULT_ADDR:  ${{ secrets.VAULT_PROD_ADDR }}
+          PROD_VAULT_TOKEN: ${{ secrets.VAULT_PROD_TOKEN }}
+        run: |
+          ENV="${{ github.event.inputs.environment || 'prod' }}"
+          if [ "$ENV" = "prod" ]; then
+            export VAULT_ADDR="$PROD_VAULT_ADDR"; export VAULT_TOKEN="$PROD_VAULT_TOKEN"
+          else
+            export VAULT_ADDR="${{ secrets.VAULT_ADDR }}"; export VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}"
+          fi
+
+          echo "=== J. Vault secret/qbittorrent ==="
+          QB_USER=$(vault kv get -field=username secret/qbittorrent 2>/dev/null || echo "(missing)")
+          QB_PASS=$(vault kv get -field=password secret/qbittorrent 2>/dev/null || echo "(missing)")
+          echo "username: $QB_USER"
+          echo "password: $(echo -n "$QB_PASS" | head -c 2)***${#QB_PASS}chars"
+
+          echo ""
+          echo "=== K. Test vault creds against actual qBittorrent ==="
+          IP="${{ steps.slots.outputs.ip }}"
+          CODE=$(curl -s -o /tmp/login-body -w '%{http_code}' --max-time 5 \
+            -d "username=${QB_USER}&password=${QB_PASS}" \
+            "http://${IP}:8080/api/v2/auth/login" 2>&1)
+          echo "Vault-creds login to qBT at ${IP}:8080 → HTTP $CODE, body: $(cat /tmp/login-body 2>/dev/null)"
+
+          echo ""
+          echo "=== L. Pull kubeconfig and inspect Sonarr/Radarr download clients ==="
+          # Resolve worker node IP (prod)
+          export VAULT_ADDR="$BOOT_VAULT_ADDR"; export VAULT_TOKEN="$BOOT_VAULT_TOKEN"
+          WORKER_IP=$(vault kv get -field=ip secret/worker-node-gpu/$ENV/active-slot 2>/dev/null \
+                      || vault kv get -field=ip secret/worker-node/$ENV/active-slot 2>/dev/null \
+                      || echo "192.168.10.21")
+          echo "Using worker IP: $WORKER_IP"
+          vault kv get -field=private_key secret/ssh_keys/worker_node \
+            | awk 'NF > 0' > /tmp/worker_key
+          chmod 600 /tmp/worker_key
+          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no root@"$WORKER_IP" \
+            "cat /etc/rancher/k3s/k3s.yaml" | sed "s/127.0.0.1/${WORKER_IP}/g" > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+
+          # Install kubectl if missing
+          if ! command -v kubectl &>/dev/null; then
+            curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl && sudo mv kubectl /usr/local/bin/ 2>/dev/null || mv kubectl "$HOME/bin/" 2>/dev/null || { mkdir -p "$HOME/bin"; mv kubectl "$HOME/bin/"; export PATH="$HOME/bin:$PATH"; }
+          fi
+
+          echo ""
+          echo "--- Pods in media-stack ---"
+          kubectl get pods -n media-stack -o wide 2>&1 | head -20
+
+          # Fetch API keys from streambox-secrets
+          SONARR_KEY=$(kubectl -n streambox get secret streambox-secrets -o jsonpath='{.data.sonarr-api-key}' | base64 -d)
+          RADARR_KEY=$(kubectl -n streambox get secret streambox-secrets -o jsonpath='{.data.radarr-api-key}' | base64 -d)
+          echo "Sonarr key len: ${#SONARR_KEY}  Radarr key len: ${#RADARR_KEY}"
+
+          # Exec into sonarr pod and query its own API
+          SONARR_POD=$(kubectl get pod -n media-stack -l app=sonarr -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          RADARR_POD=$(kubectl get pod -n media-stack -l app=radarr -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          echo "Sonarr pod: $SONARR_POD  Radarr pod: $RADARR_POD"
+
+          echo ""
+          echo "--- Sonarr /api/v3/downloadclient ---"
+          kubectl exec -n media-stack "$SONARR_POD" -- \
+            curl -s -H "X-Api-Key: $SONARR_KEY" http://localhost:8989/api/v3/downloadclient \
+            | python3 -c 'import json,sys;d=json.load(sys.stdin);
+          for c in d:
+              fs={f["name"]:f.get("value") for f in c.get("fields",[])}
+              print(f"  {c[\"name\"]} impl={c[\"implementation\"]} enable={c[\"enable\"]} host={fs.get(\"host\")} port={fs.get(\"port\")} user={fs.get(\"username\")} pw={bool(fs.get(\"password\"))} cat={fs.get(\"movieCategory\") or fs.get(\"tvCategory\")}")' 2>&1 || echo "(sonarr dc query failed)"
+
+          echo ""
+          echo "--- Radarr /api/v3/downloadclient ---"
+          kubectl exec -n media-stack "$RADARR_POD" -- \
+            curl -s -H "X-Api-Key: $RADARR_KEY" http://localhost:7878/api/v3/downloadclient \
+            | python3 -c 'import json,sys;d=json.load(sys.stdin);
+          for c in d:
+              fs={f["name"]:f.get("value") for f in c.get("fields",[])}
+              print(f"  {c[\"name\"]} impl={c[\"implementation\"]} enable={c[\"enable\"]} host={fs.get(\"host\")} port={fs.get(\"port\")} user={fs.get(\"username\")} pw={bool(fs.get(\"password\"))} cat={fs.get(\"movieCategory\") or fs.get(\"tvCategory\")}")' 2>&1 || echo "(radarr dc query failed)"
+
+          echo ""
+          echo "--- Sonarr test download client (tries connecting to qBT) ---"
+          DC_JSON=$(kubectl exec -n media-stack "$SONARR_POD" -- \
+            curl -s -H "X-Api-Key: $SONARR_KEY" http://localhost:8989/api/v3/downloadclient)
+          DC_ID=$(echo "$DC_JSON" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["id"]) if d else print("")')
+          echo "Testing DC id=$DC_ID"
+          TEST_BODY=$(echo "$DC_JSON" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(json.dumps(d[0]))')
+          kubectl exec -n media-stack "$SONARR_POD" -- \
+            curl -s -X POST -H "X-Api-Key: $SONARR_KEY" -H "Content-Type: application/json" \
+            --data "$TEST_BODY" \
+            http://localhost:8989/api/v3/downloadclient/test 2>&1 | head -5
+
+          echo ""
+          echo "--- Radarr test download client ---"
+          DC_JSON=$(kubectl exec -n media-stack "$RADARR_POD" -- \
+            curl -s -H "X-Api-Key: $RADARR_KEY" http://localhost:7878/api/v3/downloadclient)
+          TEST_BODY=$(echo "$DC_JSON" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(json.dumps(d[0]) if d else "{}")')
+          kubectl exec -n media-stack "$RADARR_POD" -- \
+            curl -s -X POST -H "X-Api-Key: $RADARR_KEY" -H "Content-Type: application/json" \
+            --data "$TEST_BODY" \
+            http://localhost:7878/api/v3/downloadclient/test 2>&1 | head -5
+
+          echo ""
+          echo "--- Sonarr recent log snippet (download/indexer errors) ---"
+          kubectl exec -n media-stack "$SONARR_POD" -- \
+            sh -c "ls -t /config/logs/sonarr.txt /config/logs/sonarr.*.txt 2>/dev/null | head -1 | xargs -r tail -n 200" 2>&1 \
+            | grep -iE 'error|warn|fail|refused|qbittorrent|download' | tail -30
+
+          echo ""
+          echo "--- Radarr recent log snippet ---"
+          kubectl exec -n media-stack "$RADARR_POD" -- \
+            sh -c "ls -t /config/logs/radarr.txt /config/logs/radarr.*.txt 2>/dev/null | head -1 | xargs -r tail -n 200" 2>&1 \
+            | grep -iE 'error|warn|fail|refused|qbittorrent|download' | tail -30
+
+          rm -f /tmp/worker_key /tmp/kubeconfig /tmp/login-body
+
       - name: Restart WireGuard if peer has 0 bytes received
         run: |
           IP="${{ steps.slots.outputs.ip }}"
