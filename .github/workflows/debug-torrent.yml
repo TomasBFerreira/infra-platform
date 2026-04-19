@@ -10,11 +10,11 @@ on:
         type: choice
         options: [dev, qa, prod]
       apply_fix:
-        description: 'Apply fix (none, 1=raise limits, 2=recheck, 3=delete-dead, 4=savepath+move, 5=DISK RESCUE)'
+        description: 'Apply fix (none, 1=raise limits, 2=recheck, 3=delete-dead, 4=savepath+move, 5=disk rescue, 6=fix Narcos location)'
         required: false
         default: 'none'
         type: choice
-        options: ['none','1','2','3','4','5']
+        options: ['none','1','2','3','4','5','6']
 
 jobs:
   debug:
@@ -734,6 +734,83 @@ jobs:
           echo ""
           echo "=== Final disk state ==="
           df -h / /mnt/media | head -5
+          rm -f "$COOKIE" /run/t.json
+          REMOTE
+
+      - name: STEP 6 — re-point Narcos torrents to CONTAINER path /downloads/tv-sonarr
+        if: github.event.inputs.apply_fix == '6'
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          COOKIE=/run/qbt.cookie
+          : > "$COOKIE"
+          curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
+            http://127.0.0.1:8080/api/v2/auth/login > /dev/null
+
+          # Container path (qBT sees /downloads mounted from host /mnt/media/downloads)
+          DEST_CONT=/downloads/tv-sonarr
+
+          echo "=== Before state ==="
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /run/t.json
+          python3 -c "
+          import json
+          t=json.load(open('/run/t.json'))
+          for x in t:
+              if 'Narcos' in x.get('name',''):
+                  print(f\"  {x.get('state',''):14s} prog={x.get('progress',0)*100:5.1f}%  save_path={x.get('save_path','')}  {x.get('name','')[:70]}\")" | sed 's/^          //'
+
+          # Pause, setLocation to CONTAINER path, recheck, resume
+          HASHES=$(python3 -c "
+          import json
+          t=json.load(open('/run/t.json'))
+          for x in t:
+              if 'Narcos' in x.get('name',''):
+                  print(x['hash'])" | sed 's/^          //')
+          HLIST=$(echo "$HASHES" | paste -sd '|' -)
+          echo ""
+          echo "=== Hashes: $HLIST ==="
+
+          curl -s -b "$COOKIE" -d "hashes=$HLIST" http://127.0.0.1:8080/api/v2/torrents/pause > /dev/null
+          sleep 1
+
+          # Verify path exists inside the container (should match host /mnt/media/downloads/tv-sonarr)
+          echo ""
+          echo "=== Verifying $DEST_CONT exists inside container ==="
+          docker exec qbittorrent sh -c "ls -la \"$DEST_CONT\" | head -5"
+          echo ""
+          echo "=== Verifying Narcos folders visible to qBT container ==="
+          docker exec qbittorrent sh -c "ls -la \"$DEST_CONT\" | grep -i narcos"
+
+          echo ""
+          echo "=== setLocation → $DEST_CONT (per torrent) ==="
+          for h in $HASHES; do
+            RESP=$(curl -s -w '\nHTTP:%{http_code}' -b "$COOKIE" \
+              -d "hashes=$h&location=$DEST_CONT" \
+              http://127.0.0.1:8080/api/v2/torrents/setLocation)
+            echo "  $h → $RESP"
+          done
+
+          echo ""
+          echo "=== Recheck ==="
+          curl -s -b "$COOKIE" -d "hashes=$HLIST" http://127.0.0.1:8080/api/v2/torrents/recheck > /dev/null
+          echo "waiting 20s for recheck to run..."
+          sleep 20
+
+          echo ""
+          echo "=== Resume ==="
+          curl -s -b "$COOKIE" -d "hashes=$HLIST" http://127.0.0.1:8080/api/v2/torrents/resume > /dev/null
+          sleep 3
+
+          echo ""
+          echo "=== After state ==="
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /run/t.json
+          python3 -c "
+          import json
+          t=json.load(open('/run/t.json'))
+          for x in t:
+              if 'Narcos' in x.get('name',''):
+                  print(f\"  {x.get('state',''):14s} prog={x.get('progress',0)*100:5.1f}%  save={x.get('save_path','')[:40]}  dl={x.get('dlspeed',0)}B/s  peers={x.get('num_leechs',0)}/{x.get('num_seeds',0)}  {x.get('name','')[:60]}\")" | sed 's/^          //'
+
           rm -f "$COOKIE" /run/t.json
           REMOTE
 
