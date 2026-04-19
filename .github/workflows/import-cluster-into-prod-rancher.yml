@@ -23,7 +23,11 @@ on:
 
 jobs:
   import:
-    runs-on: [self-hosted, prod]
+    # Run on the TARGET env's runner so we can SSH into its worker with the
+    # local SSH key (the prod runner's `worker_node_worker` only authorises
+    # against the prod worker). The Rancher API call goes to prod Rancher
+    # which is reachable via the cross-env routes added 2026-04-19.
+    runs-on: [self-hosted, "${{ inputs.target_env }}"]
     env:
       VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
@@ -34,15 +38,12 @@ jobs:
         run: |
           V="${VAULT_ADDR%/}"; [[ "$V" != http://* && "$V" != https://* ]] && V="http://$V"
           echo "VAULT_ADDR=$V" >> $GITHUB_ENV
-          # Default cluster name = target env
           CLUSTER_NAME="${CLUSTER_NAME:-$TARGET_ENV}"
           echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
-          # Prod rancher
           PROD_RANCHER_IP=192.168.10.2
           PROD_RANCHER_HOST=rancher.databaes.net
           echo "PROD_RANCHER_IP=$PROD_RANCHER_IP" >> $GITHUB_ENV
           echo "PROD_RANCHER_HOST=$PROD_RANCHER_HOST" >> $GITHUB_ENV
-          # Target worker IP from Vault
           TARGET_IP=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
             "$V/v1/secret/data/worker-node/$TARGET_ENV/active-slot" \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['ip'])")
