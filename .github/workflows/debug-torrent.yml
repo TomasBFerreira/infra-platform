@@ -608,15 +608,16 @@ jobs:
           echo "=== CT filesystems ==="
           df -h | head -10
           echo ""
-          echo "=== /opt/qbittorrent breakdown ==="
-          ls -la /opt/qbittorrent/ | head -30
+          echo "=== /opt/qbittorrent/config breakdown ==="
+          ls -la /opt/qbittorrent/config/ | head -30
           echo ""
-          du -x -sh /opt/qbittorrent/* 2>&1 | sort -h | tail -20
+          du -x -sh /opt/qbittorrent/config/* 2>&1 | sort -h | tail -25
           echo ""
-          echo "=== /opt/qbittorrent/Downloads (if present) ==="
-          if [ -d /opt/qbittorrent/Downloads ]; then
-            ls -la /opt/qbittorrent/Downloads/ | head -30
-            du -x -sh /opt/qbittorrent/Downloads/*/ 2>&1 | sort -h | tail -20
+          echo "=== /opt/qbittorrent/config/Downloads (if present) ==="
+          if [ -d /opt/qbittorrent/config/Downloads ]; then
+            ls -la /opt/qbittorrent/config/Downloads/ | head -30
+            echo ""
+            du -x -sh /opt/qbittorrent/config/Downloads/*/ 2>&1 | sort -h | tail -30
           fi
           echo ""
           echo "=== NFS target /mnt/media ==="
