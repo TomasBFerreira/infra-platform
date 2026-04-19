@@ -213,4 +213,144 @@ For issues and questions:
 2. Verify network connectivity: `docker network inspect`
 3. Test tool access: `./scripts/run-terraform.sh version`
 4. Review documentation in `docs/` directory
-# Test change
+
+## ops-portal-* first-time env bringup runbook
+
+Bringing up a new env (typically prod, the first time) for the 8 ops-portal-*
+services has hard ordering and a few non-obvious gotchas. The first prod
+push (2026-04-19) hit each of them. Future bringups should follow this
+order — every step here corresponds to a workflow already in this repo.
+
+**Prereqs (assumed already in place):** prod k3s worker reachable on the
+private network, prod monitoring-lxc + Authentik LXC running, prod Traefik
+network-vm running, GitHub PAT seeded into the prod runner LXC.
+
+### 1. Register self-hosted runners for each service repo
+
+The prod runner LXC starts with runners for streambox / infra-platform /
+otel-monitoring etc. but **not** for any ops-portal-* repo. Without this
+step every Deploy workflow sits queued forever.
+
+```
+for repo in ops-portal-incidents ops-portal-shell ops-portal-infrastructure \
+            ops-portal-identity ops-portal-domain ops-portal-deployments \
+            ops-portal-audit ops-portal-cmdb; do
+  gh workflow run "Register GitHub Actions Runner" \
+    --repo TomasBFerreira/infra-platform \
+    -f repo=TomasBFerreira/$repo -f env=prod
+done
+```
+
+These serialise on the single infra-platform runner. **Watch the runner
+LXC's disk** — 8 fresh runners + an otel-monitoring deploy can fill a
+20G LXC. If you see "No space left on device" in `journalctl -u
+actions.runner.*`, `pct resize 101 rootfs +20G` and `systemctl restart
+actions.runner.TomasBFerreira-infra-platform.github-runner-prod`.
+
+### 2. Seed Vault with per-service secrets
+
+```
+gh workflow run "Seed Vault for ops-portal env" \
+  --repo TomasBFerreira/infra-platform \
+  -f environment=prod -f worker_node_ip=<prod-worker-ip>
+```
+
+Idempotent — won't rotate keys unless `force_rotate=true`. Writes:
+`worker-node/<env>/active-slot`, `ops-portal/<env>/nats`,
+`ops-portal/<env>/svc-jwt/{<svc>,trusted}`, `ops-portal/<env>/incidents`
+(+ webhook + internal-health tokens), and per-service `postgres_password`
+for cmdb/audit/identity/deployments/domain.
+
+Then seed the Authentik bootstrap token (separate path because it
+requires SSH-ing into the SSO LXC):
+
+```
+gh workflow run "Seed devops-portal/<env>/authentik Vault path" \
+  --repo TomasBFerreira/infra-platform -f environment=prod
+```
+
+### 3. Configure Authentik forward-auth provider for the env
+
+```
+gh workflow run "Configure Prod Forward Auth (Authentik domain-level SSO)" \
+  --repo TomasBFerreira/infra-platform
+```
+
+Creates a `forward_domain` Proxy Provider, Application, and binds it to
+the embedded outpost. Without it the Traefik `authentik-prod` middleware
+returns 404 for unknown hosts.
+
+### 4. Add Traefik routes + DNS
+
+In `traefik-gitops`, add 8 prod routers + services under host
+`ops.databaes.net` (path-routed: `/api/cmdb`, `/api/audit`, `/api/incidents`,
+…, `/` for the shell). Match the dev pattern.
+
+```
+# in traefik-gitops
+git push  # auto-fires Deploy Traefik Config + Sync Cloudflare DNS
+gh workflow run "Deploy Traefik Config" \
+  --repo TomasBFerreira/traefik-gitops -f deploy_prod=true
+```
+
+**Push only deploys to dev by default.** You must explicitly
+`workflow_dispatch` with `deploy_prod=true` for the prod network-vm.
+
+The Cloudflare CNAME for `ops.databaes.net` is created automatically by
+`sync-dns.yml` on the same push. Note the sync-dns iterates per-router,
+so you'll see the first call OK and subsequent ones fail with "record
+already exists" — that's expected and the CNAME is in place.
+
+### 5. Deploy services in dependency order
+
+Wave A — must go first (bootstraps NATS in the cluster):
+```
+gh workflow run "Deploy ops-portal-cmdb" --repo .../ops-portal-cmdb -f env=prod
+```
+
+Wave B — parallel, no inter-deps beyond cmdb:
+```
+infrastructure, audit, identity, domain, deployments, shell
+```
+
+`identity` is normally the source of the `nfs-ops-portal` StorageClass via
+its cluster-bootstrap step — **but its bootstrap is dev-only.** Prod has
+no NFS export. Three places reference `nfs-ops-portal` and need overlay
+patches in prod:
+
+- `ops-portal-incidents` runbooks PVC → `local-path`
+- `ops-portal-deployments` data PVC → `local-path`
+- `ops-portal-domain` postgres-nfs-patch → drop entirely (postgres falls
+  back to base emptyDir)
+
+Wave C — `incidents` last because it depends on cmdb + infrastructure +
+audit being live.
+
+### 6. Common deploy failures + fixes
+
+| Failure | Cause | Fix |
+|---|---|---|
+| `manifests/overlays/prod: No such file or directory` | Service has no prod overlay | Clone qa overlay, retarget hostname → `ops.databaes.net`, middleware → `authentik-prod` |
+| `pod has unbound immediate PersistentVolumeClaims` (PVC `nfs-ops-portal`) | Prod has no NFS provisioner | Add overlay patch replacing `storageClassName: nfs-ops-portal` with `local-path` |
+| `PersistentVolumeClaim ... is invalid: spec: Forbidden` after fix | Pre-existing PVC from earlier failed attempt is immutable | `gh workflow run "Wipe PVC" -f environment=prod -f namespace=<ns> -f pvc_name=<pvc>` |
+| `StatefulSet "postgres" is invalid: spec: Forbidden` | Same, but for postgres volumeClaimTemplates | Re-run the service deploy with `-f wipe_postgres=true` |
+| `404 Client Error: secret/data/devops-portal/<env>/authentik` | Identity/shell deploy needs Authentik bootstrap token in Vault | Run "Seed devops-portal/<env>/authentik Vault path" |
+| Deploy queued forever, no movement | Self-hosted runner not registered for that repo | Run "Register GitHub Actions Runner" for it |
+| Auth redirect loops or 404 from `auth.databaes.net` from a browser | Forward-auth Proxy Provider not yet bound to outpost | "Configure Prod Forward Auth" workflow |
+
+### 7. Verification
+
+Internal `/healthz` from the env's monitoring LXC:
+```
+for s in incidents:30096 cmdb:30092 audit:30093 identity:30091 \
+         infrastructure:30094 domain:30098 deployments:30097 shell:30180; do
+  printf "%-16s %s\n" "${s%:*}" "$(curl -sk --max-time 5 -o /dev/null \
+    -w %{http_code} http://<worker-ip>:${s#*:}/healthz)"
+done
+```
+
+External through Traefik (use a tunnel or run from inside the env):
+```
+curl -sk -H "Host: ops.databaes.net" https://<network-vm-ip>/  # → 302 to auth
+```
+
