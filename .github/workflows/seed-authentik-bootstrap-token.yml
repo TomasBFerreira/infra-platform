@@ -1,0 +1,72 @@
+name: Seed devops-portal/<env>/authentik Vault path
+
+# Writes secret/data/devops-portal/<env>/authentik with {url, token} so
+# ops-portal-identity / ops-portal-shell deploys can find a valid Authentik
+# admin token at deploy time. Idempotent: skips if both fields already set.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target env
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  seed:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      ENV:         ${{ inputs.environment }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR%/}"
+          [[ "$V" != http://* && "$V" != https://* ]] && V="http://$V"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Skip if already populated
+        id: gate
+        run: |
+          EXISTS=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/devops-portal/$ENV/authentik" 2>/dev/null \
+            | python3 -c "import sys,json; d=json.load(sys.stdin)['data']['data']; print('y' if d.get('url') and d.get('token') else 'n')" 2>/dev/null) || EXISTS="n"
+          echo "skip=$EXISTS" >> $GITHUB_OUTPUT
+          [ "$EXISTS" = "y" ] && echo "already populated — nothing to do"
+
+      - name: Resolve SSO IP from Vault
+        if: steps.gate.outputs.skip != 'y'
+        run: |
+          IP=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/sso/$ENV/active-slot" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['ip'])")
+          echo "SSO_IP=$IP" >> $GITHUB_ENV
+
+      - name: Fetch SSO SSH key
+        if: steps.gate.outputs.skip != 'y'
+        run: |
+          mkdir -p keys && chmod 700 keys
+          curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/ssh_keys/sso_worker" \
+            | python3 -c 'import sys,json,os; d=json.load(sys.stdin); k=d["data"]["data"]["private_key"]; open("keys/sso","w").write(k if k.endswith("\n") else k+"\n")'
+          chmod 600 keys/sso
+
+      - name: Get fresh API token from Authentik
+        if: steps.gate.outputs.skip != 'y'
+        run: |
+          TOK=$(ssh -i keys/sso -o StrictHostKeyChecking=no root@$SSO_IP \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
+          [ -z "$TOK" ] && { echo "ERROR: empty token"; exit 1; }
+          echo "::add-mask::$TOK"
+          echo "AK_TOK=$TOK" >> $GITHUB_ENV
+
+      - name: Write to Vault
+        if: steps.gate.outputs.skip != 'y'
+        run: |
+          curl -sf -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
+            -d "{\"data\":{\"url\":\"http://${SSO_IP}:9000\",\"token\":\"${AK_TOK}\"}}" \
+            "$VAULT_ADDR/v1/secret/data/devops-portal/$ENV/authentik" >/dev/null
+          echo "wrote devops-portal/$ENV/authentik"
