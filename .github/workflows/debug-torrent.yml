@@ -68,6 +68,106 @@ jobs:
           df -h /mnt/media 2>/dev/null || df -h /
           REMOTE
 
+      - name: Deep qBittorrent diagnostic
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          set +e
+          echo "=== A. qBittorrent config persistence ==="
+          find /opt/torrent -name 'qBittorrent.conf' 2>/dev/null | head -5
+          CONFFILE=$(find /opt/torrent -name 'qBittorrent.conf' 2>/dev/null | head -1)
+          if [ -n "$CONFFILE" ]; then
+            echo "--- $CONFFILE (relevant keys) ---"
+            grep -iE 'webui|interface|listenport|savepath|tempath|enabled|bypass|auth' "$CONFFILE" | head -40
+          else
+            echo "(no qBittorrent.conf found)"
+          fi
+          echo ""
+
+          echo "=== B. qBittorrent API login attempts ==="
+          COOKIE=$(mktemp)
+          for PW in "adminadmin" "" "admin"; do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' -c "$COOKIE" \
+              -d "username=admin&password=$PW" \
+              http://127.0.0.1:8080/api/v2/auth/login)
+            echo "login(admin/'$PW') → $CODE"
+            if [ "$CODE" = "200" ]; then
+              BODY=$(curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/auth/login -d "username=admin&password=$PW")
+              echo "  body: $BODY"
+              if [ "$BODY" = "Ok." ]; then
+                echo "  ✓ authenticated with password=[$([ -z "$PW" ] && echo EMPTY || echo SET)]"
+                break
+              fi
+            fi
+          done
+
+          echo ""
+          echo "--- Preferences (relevant keys) ---"
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences > /tmp/prefs.json
+          python3 - <<'PY'
+          import json
+          try:
+              d=json.load(open('/tmp/prefs.json'))
+          except Exception as e:
+              print("(failed to parse prefs:", e, ")"); raise SystemExit
+          keys=["current_network_interface","current_interface_address","listen_port","save_path","temp_path",
+                "bypass_auth_subnet_whitelist_enabled","bypass_auth_subnet_whitelist",
+                "web_ui_port","web_ui_username","web_ui_address"]
+          print(json.dumps({k:d.get(k) for k in keys}, indent=2))
+          PY
+
+          echo ""
+          echo "=== C. Active torrents ==="
+          curl -s -b "$COOKIE" "http://127.0.0.1:8080/api/v2/torrents/info?filter=all" > /tmp/torrents.json
+          python3 - <<'PY'
+          import json
+          try:
+              t=json.load(open('/tmp/torrents.json'))
+          except Exception as e:
+              print("(failed:", e, ")"); raise SystemExit
+          print(f"Total torrents: {len(t)}")
+          for x in t[:25]:
+              print(f"  [{x.get('state',''):12s}] {x.get('progress',0)*100:5.1f}%  "
+                    f"dl={x.get('dlspeed',0)}B/s  peers={x.get('num_leechs',0)}/{x.get('num_seeds',0)}  "
+                    f"tracker_err={'Y' if x.get('tracker','').startswith('http') and x.get('num_seeds',0)==0 and x.get('state','')=='stalledDL' else '.'}  "
+                    f"{x.get('name','')[:60]}")
+          PY
+
+          echo ""
+          echo "=== D. Transfer info ==="
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/transfer/info
+
+          echo ""
+          echo ""
+          echo "=== E. External IP: WITH vs WITHOUT VPN (must differ) ==="
+          echo -n "via wg0   : "; timeout 8 curl -sS --interface wg0 https://api.ipify.org 2>&1; echo ""
+          echo -n "default   : "; timeout 8 curl -sS https://api.ipify.org 2>&1; echo ""
+
+          echo ""
+          echo "=== F. DNS resolution ==="
+          getent hosts google.com 2>&1 | head -2
+          getent hosts tracker.opentrackr.org 2>&1 | head -2
+
+          echo ""
+          echo "=== G. Recent qBittorrent logs (errors/warnings, last 2h) ==="
+          docker logs qbittorrent --since 2h 2>&1 | grep -iE 'error|warn|fail|refused|denied|unreach' | tail -30 || echo "(no error lines)"
+
+          echo ""
+          echo "=== H. Port 8080 reachability from LAN perspective ==="
+          ss -tln | grep 8080
+
+          echo ""
+          echo "=== I. Download directory state ==="
+          for d in /downloads /opt/torrent/downloads /mnt/media/downloads; do
+            if [ -d "$d" ]; then
+              echo "-- $d --"; ls -la "$d" 2>&1 | head -10
+              df -h "$d" 2>&1 | head -2
+            fi
+          done
+
+          rm -f "$COOKIE" /tmp/prefs.json /tmp/torrents.json
+          REMOTE
+
       - name: Restart WireGuard if peer has 0 bytes received
         run: |
           IP="${{ steps.slots.outputs.ip }}"
