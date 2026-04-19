@@ -9,6 +9,12 @@ on:
         default: 'prod'
         type: choice
         options: [dev, qa, prod]
+      apply_fix:
+        description: 'Apply a fix step (none=diag only, 1=raise limits, 2=recheck, 3=delete-dead, 4=savepath+move)'
+        required: false
+        default: 'none'
+        type: choice
+        options: ['none','1','2','3','4']
 
 jobs:
   debug:
@@ -319,6 +325,281 @@ jobs:
             echo "WireGuard receiving data ($RECEIVED bytes) — no restart needed"
           fi
           REMOTE
+
+      - name: STEP 1 — raise qBT active-download limits
+        if: github.event.inputs.apply_fix == '1'
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          set +e
+          COOKIE=$(mktemp)
+          curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
+            http://127.0.0.1:8080/api/v2/auth/login > /dev/null
+
+          echo "--- BEFORE ---"
+          cat > /tmp/pp.py <<'PY'
+          import json, sys
+          d=json.load(sys.stdin)
+          for k in ['max_active_downloads','max_active_torrents','max_active_uploads','queueing_enabled','dont_count_slow_torrents']:
+              print(f"  {k} = {d.get(k)}")
+          PY
+          sed -i 's/^          //' /tmp/pp.py
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences | python3 /tmp/pp.py
+
+          NEW='{"max_active_downloads":10,"max_active_torrents":20,"max_active_uploads":10,"dont_count_slow_torrents":true}'
+          HTTP=$(curl -s -o /tmp/r -w '%{http_code}' -b "$COOKIE" \
+            --data-urlencode "json=$NEW" \
+            http://127.0.0.1:8080/api/v2/app/setPreferences)
+          echo "setPreferences → HTTP $HTTP"
+
+          echo "--- AFTER ---"
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences | python3 /tmp/pp.py
+
+          echo ""
+          echo "--- Torrent states after 5s ---"
+          sleep 5
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /tmp/t.json
+          cat > /tmp/pt.py <<'PY'
+          import json
+          t=json.load(open('/tmp/t.json'))
+          for x in t:
+              print(f"  [{x.get('category','')[:10]:10s}] {x.get('state',''):14s} {x.get('progress',0)*100:5.1f}%  peers={x.get('num_leechs',0)}/{x.get('num_seeds',0)}  {x.get('name','')[:80]}")
+          PY
+          sed -i 's/^          //' /tmp/pt.py
+          python3 /tmp/pt.py
+          rm -f "$COOKIE" /tmp/r /tmp/t.json /tmp/pp.py /tmp/pt.py
+          REMOTE
+
+      - name: STEP 2 — force-recheck/reannounce stuck torrents
+        if: github.event.inputs.apply_fix == '2'
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          set +e
+          COOKIE=$(mktemp)
+          curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
+            http://127.0.0.1:8080/api/v2/auth/login > /dev/null
+
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /tmp/t.json
+          cat > /tmp/pick.py <<'PY'
+          import json
+          t=json.load(open('/tmp/t.json'))
+          stuck=[x for x in t if x.get('state') in ('error','stalledDL') and x.get('category') in ('radarr','tv-sonarr')]
+          for x in stuck: print(x['hash'])
+          PY
+          sed -i 's/^          //' /tmp/pick.py
+          HLIST=$(python3 /tmp/pick.py | paste -sd '|' -)
+          echo "Targets: $HLIST"
+          if [ -z "$HLIST" ]; then echo "(nothing to recheck)"; exit 0; fi
+
+          curl -s -b "$COOKIE" -d "hashes=$HLIST" http://127.0.0.1:8080/api/v2/torrents/resume > /dev/null
+          curl -s -b "$COOKIE" -d "hashes=$HLIST" http://127.0.0.1:8080/api/v2/torrents/recheck > /dev/null
+          curl -s -b "$COOKIE" -d "hashes=$HLIST" http://127.0.0.1:8080/api/v2/torrents/reannounce > /dev/null
+          echo "issued resume + recheck + reannounce"
+
+          echo ""
+          echo "--- State after 15s ---"
+          sleep 15
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /tmp/t.json
+          cat > /tmp/show.py <<'PY'
+          import json, os
+          want=set(os.environ['HLIST'].split('|'))
+          t=json.load(open('/tmp/t.json'))
+          for x in t:
+              if x['hash'] in want:
+                  print(f"  {x.get('state',''):14s} {x.get('progress',0)*100:5.1f}%  peers={x.get('num_leechs',0)}/{x.get('num_seeds',0)}  dl={x.get('dlspeed',0)}B/s  {x.get('name','')[:80]}")
+          PY
+          sed -i 's/^          //' /tmp/show.py
+          HLIST="$HLIST" python3 /tmp/show.py
+          rm -f "$COOKIE" /tmp/t.json /tmp/pick.py /tmp/show.py
+          REMOTE
+
+      - name: STEP 3 — remove dead torrents (qBT + Sonarr/Radarr queue with blocklist)
+        if: github.event.inputs.apply_fix == '3'
+        env:
+          BOOT_VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          BOOT_VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          # Identify dead torrents via qBT
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash > /tmp/dead.txt <<'REMOTE'
+          COOKIE=$(mktemp)
+          curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
+            http://127.0.0.1:8080/api/v2/auth/login > /dev/null
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /tmp/t.json
+          cat > /tmp/pick.py <<'PY'
+          import json
+          t=json.load(open('/tmp/t.json'))
+          for x in t:
+              if x.get('category') not in ('radarr','tv-sonarr'): continue
+              s=x.get('state','')
+              peers=x.get('num_leechs',0); dl=x.get('dlspeed',0)
+              if s=='error' or (s=='stalledDL' and peers==0 and dl<100):
+                  print(x['hash']+'|'+x.get('category','')+'|'+x.get('name','')[:80])
+          PY
+          sed -i 's/^          //' /tmp/pick.py
+          python3 /tmp/pick.py
+          rm -f "$COOKIE" /tmp/t.json /tmp/pick.py
+          REMOTE
+          echo "--- Dead torrents identified ---"
+          cat /tmp/dead.txt
+          if [ ! -s /tmp/dead.txt ]; then echo "nothing dead to remove"; exit 0; fi
+
+          # Setup kubectl
+          export VAULT_ADDR="$BOOT_VAULT_ADDR"; export VAULT_TOKEN="$BOOT_VAULT_TOKEN"
+          ENV="${{ github.event.inputs.environment || 'prod' }}"
+          WORKER_IP=$(vault kv get -field=ip secret/worker-node/$ENV/active-slot 2>/dev/null || echo "192.168.10.21")
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF>0' > /tmp/wkey
+          chmod 600 /tmp/wkey
+          ssh -i /tmp/wkey -o StrictHostKeyChecking=no root@"$WORKER_IP" \
+            "cat /etc/rancher/k3s/k3s.yaml" | sed "s/127.0.0.1/${WORKER_IP}/g" > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          if ! command -v kubectl &>/dev/null; then
+            curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl && mkdir -p "$HOME/bin" && mv kubectl "$HOME/bin/" && export PATH="$HOME/bin:$PATH"
+          fi
+
+          SONARR_POD=$(kubectl get pod -n media-stack -l app=sonarr -o jsonpath='{.items[0].metadata.name}')
+          RADARR_POD=$(kubectl get pod -n media-stack -l app=radarr -o jsonpath='{.items[0].metadata.name}')
+          SONARR_KEY=$(kubectl -n streambox get secret streambox-secrets -o jsonpath='{.data.sonarr-api-key}' | base64 -d)
+          RADARR_KEY=$(kubectl -n streambox get secret streambox-secrets -o jsonpath='{.data.radarr-api-key}' | base64 -d)
+
+          while IFS='|' read -r HASH CAT NAME; do
+            [ -z "$HASH" ] && continue
+            echo ""
+            echo "== $CAT / $NAME (hash=$HASH) =="
+            UHASH=$(echo "$HASH" | tr 'a-z' 'A-Z')
+            if [ "$CAT" = "tv-sonarr" ]; then POD=$SONARR_POD; KEY=$SONARR_KEY; PORT=8989; APP=sonarr;
+            else                               POD=$RADARR_POD; KEY=$RADARR_KEY; PORT=7878; APP=radarr;
+            fi
+            QID=$(kubectl exec -n media-stack "$POD" -- \
+              curl -s -H "X-Api-Key: $KEY" "http://localhost:${PORT}/api/v3/queue?pageSize=200" \
+              | UHASH="$UHASH" python3 -c "
+          import json,sys,os
+          d=json.load(sys.stdin); rec=d.get('records',d)
+          ids=[str(q['id']) for q in rec if q.get('downloadId','').upper()==os.environ['UHASH']]
+          print(','.join(sorted(set(ids))))")
+            echo "  ${APP} queue ids: '$QID'"
+            if [ -n "$QID" ]; then
+              IFS=',' read -ra IDS <<< "$QID"
+              for id in "${IDS[@]}"; do
+                kubectl exec -n media-stack "$POD" -- \
+                  curl -s -X DELETE -H "X-Api-Key: $KEY" \
+                  "http://localhost:${PORT}/api/v3/queue/${id}?removeFromClient=true&blocklist=true&skipRedownload=false" \
+                  > /dev/null && echo "  deleted ${APP} queue id $id (blocklisted)"
+              done
+            fi
+            # Ensure removed from qBT (idempotent if Sonarr/Radarr already removed)
+            ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" \
+              "curl -s -c /tmp/c -d 'username=admin&password=adminadmin' http://127.0.0.1:8080/api/v2/auth/login >/dev/null && curl -s -b /tmp/c -d 'hashes=$HASH&deleteFiles=true' http://127.0.0.1:8080/api/v2/torrents/delete > /dev/null && rm -f /tmp/c && echo '  confirmed deletion in qBT'"
+          done < /tmp/dead.txt
+
+          echo ""
+          echo "--- Kicking Sonarr MissingEpisodeSearch + Radarr MissingMoviesSearch ---"
+          kubectl exec -n media-stack "$SONARR_POD" -- \
+            curl -s -X POST -H "X-Api-Key: $SONARR_KEY" -H "Content-Type: application/json" \
+            --data '{"name":"MissingEpisodeSearch"}' \
+            http://localhost:8989/api/v3/command | head -c 300; echo
+          kubectl exec -n media-stack "$RADARR_POD" -- \
+            curl -s -X POST -H "X-Api-Key: $RADARR_KEY" -H "Content-Type: application/json" \
+            --data '{"name":"MissingMoviesSearch"}' \
+            http://localhost:7878/api/v3/command | head -c 300; echo
+
+          rm -f /tmp/wkey /tmp/kubeconfig /tmp/dead.txt
+
+      - name: STEP 4 — fix qBT save_path + locate/relocate Narcos S03
+        if: github.event.inputs.apply_fix == '4'
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          set +e
+          COOKIE=$(mktemp)
+          curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
+            http://127.0.0.1:8080/api/v2/auth/login > /dev/null
+
+          echo "--- Before ---"
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences \
+            | python3 -c "import json,sys;d=json.load(sys.stdin);print('save_path:',d.get('save_path'));print('temp_path:',d.get('temp_path'))"
+
+          NEW='{"save_path":"/downloads","temp_path":""}'
+          curl -s -b "$COOKIE" --data-urlencode "json=$NEW" \
+            http://127.0.0.1:8080/api/v2/app/setPreferences > /dev/null
+          echo "set save_path=/downloads"
+
+          echo "--- After ---"
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences \
+            | python3 -c "import json,sys;d=json.load(sys.stdin);print('save_path:',d.get('save_path'));print('temp_path:',d.get('temp_path'))"
+
+          echo ""
+          echo "--- Inside qBT container: /config/Downloads contents ---"
+          docker exec qbittorrent sh -c 'ls -la /config/Downloads/ 2>/dev/null | head -30' || echo "(container probe failed)"
+
+          echo ""
+          echo "--- Host filesystem search for 'Narcos (2015) Season 3' ---"
+          find /opt/torrent /var/lib/docker /mnt/media -maxdepth 7 -type d -name '*Narcos*Season 3*' 2>/dev/null | head -10
+
+          # If the Narcos S03 folder is in qBT's container /config/Downloads (unmounted),
+          # copy it out via docker cp and move into /mnt/media/downloads/tv-sonarr.
+          FOLDER="/config/Downloads/Narcos (2015) Season 3 S03 (1080p BluRay x265 HEVC 10bit AAC 5.1 Vyndros)"
+          if docker exec qbittorrent sh -c "[ -d \"$FOLDER\" ]" 2>/dev/null; then
+            echo ""
+            echo "--- Narcos S03 found in container at $FOLDER — copying to host NFS ---"
+            DEST="/mnt/media/downloads/tv-sonarr/"
+            mkdir -p "$DEST"
+            # docker cp preserves perms; use the target so qBT's container id resolves
+            TARGET_DIR="$DEST$(basename "$FOLDER")"
+            if [ -d "$TARGET_DIR" ]; then
+              echo "  (target already exists: $TARGET_DIR — leaving alone)"
+            else
+              docker cp "qbittorrent:$FOLDER" "$DEST" && echo "  copied to $TARGET_DIR"
+              chown -R 1000:1000 "$TARGET_DIR" 2>/dev/null || true
+            fi
+            # Update the torrent's save_path via qBT so next import uses correct path
+            # Look up hash of the Narcos S03 torrent
+            HASH=$(curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' \
+              | python3 -c "
+          import json,sys
+          t=json.load(sys.stdin)
+          for x in t:
+              if 'Narcos' in x.get('name','') and 'Season 3' in x.get('name',''):
+                  print(x['hash']); break")
+            if [ -n "$HASH" ]; then
+              echo "  updating qBT torrent $HASH location → /downloads/tv-sonarr"
+              curl -s -b "$COOKIE" -d "hashes=$HASH&location=/downloads/tv-sonarr" \
+                http://127.0.0.1:8080/api/v2/torrents/setLocation > /dev/null
+            fi
+          else
+            echo "  (Narcos S03 NOT in container /config/Downloads — may already be in /downloads)"
+          fi
+
+          rm -f "$COOKIE"
+          REMOTE
+
+          # After the copy, ask Sonarr to rescan DownloadedEpisodes
+          # (uses KUBECONFIG set up in step 3 chain — re-fetch for this step)
+          VAULT_ADDR="${{ secrets.VAULT_BOOTSTRAP_ADDR }}" \
+          VAULT_TOKEN="${{ secrets.VAULT_DEV_TOKEN }}" \
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF>0' > /tmp/wkey2
+          chmod 600 /tmp/wkey2
+          ENV="${{ github.event.inputs.environment || 'prod' }}"
+          VAULT_ADDR="${{ secrets.VAULT_BOOTSTRAP_ADDR }}" \
+          VAULT_TOKEN="${{ secrets.VAULT_DEV_TOKEN }}" \
+          WORKER_IP=$(vault kv get -field=ip secret/worker-node/$ENV/active-slot 2>/dev/null || echo "192.168.10.21")
+          ssh -i /tmp/wkey2 -o StrictHostKeyChecking=no root@"$WORKER_IP" \
+            "cat /etc/rancher/k3s/k3s.yaml" | sed "s/127.0.0.1/${WORKER_IP}/g" > /tmp/kc2
+          chmod 600 /tmp/kc2
+          if ! command -v kubectl &>/dev/null; then
+            curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl && mkdir -p "$HOME/bin" && mv kubectl "$HOME/bin/" && export PATH="$HOME/bin:$PATH"
+          fi
+          KUBECONFIG=/tmp/kc2 kubectl exec -n media-stack \
+            "$(KUBECONFIG=/tmp/kc2 kubectl get pod -n media-stack -l app=sonarr -o jsonpath='{.items[0].metadata.name}')" -- \
+            curl -s -X POST -H "X-Api-Key: $(KUBECONFIG=/tmp/kc2 kubectl -n streambox get secret streambox-secrets -o jsonpath='{.data.sonarr-api-key}' | base64 -d)" \
+            -H "Content-Type: application/json" \
+            --data '{"name":"DownloadedEpisodesScan","path":"/downloads/tv-sonarr/Narcos (2015) Season 3 S03 (1080p BluRay x265 HEVC 10bit AAC 5.1 Vyndros)","importMode":"Move"}' \
+            http://localhost:8989/api/v3/command | head -c 500; echo
+          rm -f /tmp/wkey2 /tmp/kc2
 
       - name: Cleanup SSH key
         if: always()
