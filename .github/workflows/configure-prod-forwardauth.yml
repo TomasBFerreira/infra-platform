@@ -1,0 +1,174 @@
+name: Configure Prod Forward Auth (Authentik domain-level SSO)
+
+# Mirror of configure-dev-forwardauth.yml for prod. Creates a forward_domain
+# Proxy Provider in prod Authentik so any *.databaes.net (notably
+# ops.databaes.net) protected by the authentik-prod Traefik middleware
+# gets SSO without per-service providers.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  configure:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+
+    steps:
+      - name: Check SSO is deployed
+        id: check-sso
+        run: |
+          if ! vault kv get secret/sso/prod/active-slot > /dev/null 2>&1; then
+            echo "Prod SSO not yet deployed — skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch SSH key and resolve SSO IP
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/sso_worker \
+            | awk 'NF > 0' > /tmp/sso_key
+          chmod 600 /tmp/sso_key
+          SSO_IP=$(vault kv get -field=ip secret/sso/prod/active-slot)
+          echo "SSO_IP=$SSO_IP" >> $GITHUB_ENV
+
+      - name: Get fresh Authentik API token
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          FRESH_TOKEN=$(ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker exec authentik-server ak shell --command \
+              \"from authentik.core.models import Token, TokenIntents, User; u=User.objects.get(username='akadmin'); t,_=Token.objects.get_or_create(identifier='bootstrap-api-token',defaults={'user':u,'intent':TokenIntents.INTENT_API,'expiring':False}); print(t.key)\"" 2>/dev/null)
+          if [ -z "$FRESH_TOKEN" ]; then
+            echo "Could not get fresh token from Authentik — aborting"
+            exit 1
+          fi
+          echo "::add-mask::$FRESH_TOKEN"
+          echo "AUTHENTIK_TOKEN=$FRESH_TOKEN" >> $GITHUB_ENV
+
+      - name: Resolve auth and invalidation flows
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          AUTH_FLOW=$(curl -sf "http://${SSO_IP}:9000/api/v3/flows/instances/?designation=authorization" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+          INVALIDATION_FLOW=$(curl -sf "http://${SSO_IP}:9000/api/v3/flows/instances/?designation=invalidation" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+          echo "AUTH_FLOW=$AUTH_FLOW" >> $GITHUB_ENV
+          echo "INVALIDATION_FLOW=$INVALIDATION_FLOW" >> $GITHUB_ENV
+
+      - name: Create or update Prod Forward Auth Proxy Provider (domain-level)
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          ALL_PROVIDERS=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/proxy/?page_size=100" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          PROVIDER_PK=$(echo "$ALL_PROVIDERS" | python3 -c \
+            "import sys,json; r=json.load(sys.stdin); m=[p for p in r['results'] if p['name']=='Prod Forward Auth' and p['mode']=='forward_domain']; print(m[0]['pk'] if m else '0')")
+
+          if [ "$PROVIDER_PK" != "0" ]; then
+            echo "Prod Forward Auth Provider already exists (pk=$PROVIDER_PK)"
+          else
+            RESP=$(curl -sf -X POST "http://${SSO_IP}:9000/api/v3/providers/proxy/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"name\": \"Prod Forward Auth\",
+                \"authorization_flow\": \"$AUTH_FLOW\",
+                \"invalidation_flow\": \"$INVALIDATION_FLOW\",
+                \"mode\": \"forward_domain\",
+                \"external_host\": \"https://auth.databaes.net\",
+                \"cookie_domain\": \"databaes.net\"
+              }")
+            PROVIDER_PK=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['pk'])")
+            echo "Created Prod Forward Auth Provider (pk=$PROVIDER_PK)"
+          fi
+
+          echo "PROVIDER_PK=$PROVIDER_PK" >> $GITHUB_ENV
+
+      - name: Create Prod Forward Auth Application (if missing)
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          ALL_APPS=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?page_size=100" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          SLUG_MATCH=$(echo "$ALL_APPS" | python3 -c \
+            "import sys,json; r=json.load(sys.stdin); m=[a for a in r['results'] if a['slug']=='prod-forward-auth']; print(m[0]['slug'] if m else '0')")
+
+          if [ "$SLUG_MATCH" != "0" ]; then
+            echo "Prod Forward Auth Application already exists (by slug) — skipping"
+          else
+            BY_PROVIDER=$(curl -sf "http://${SSO_IP}:9000/api/v3/core/applications/?page_size=100" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+            PCOUNT=$(echo "$BY_PROVIDER" | python3 -c \
+              "import sys,json; r=json.load(sys.stdin); m=[a for a in r['results'] if a.get('provider')==$PROVIDER_PK]; print(len(m))")
+
+            if [ "$PCOUNT" -gt 0 ]; then
+              APP_SLUG=$(echo "$BY_PROVIDER" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['slug'])")
+              echo "Application already bound to provider (slug=$APP_SLUG) — skipping creation"
+            else
+              RESP=$(curl -s -w "\n%{http_code}" -X POST "http://${SSO_IP}:9000/api/v3/core/applications/" \
+                -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{
+                  \"name\": \"Prod Forward Auth\",
+                  \"slug\": \"prod-forward-auth\",
+                  \"provider\": $PROVIDER_PK,
+                  \"open_in_new_tab\": false
+                }")
+              HTTP_CODE=$(echo "$RESP" | tail -1)
+              BODY=$(echo "$RESP" | head -n -1)
+              echo "HTTP $HTTP_CODE: $BODY"
+              if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+                echo "ERROR: Application creation failed"
+                exit 1
+              fi
+              echo "$BODY" | python3 -c "import sys,json; r=json.load(sys.stdin); print('Created Prod Forward Auth Application (slug='+r['slug']+')')"
+            fi
+          fi
+
+      - name: Assign provider to embedded outpost
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          OUTPOST=$(curl -sf "http://${SSO_IP}:9000/api/v3/outposts/instances/?managed=goauthentik.io/outposts/embedded" \
+            -H "Authorization: Bearer $AUTHENTIK_TOKEN")
+          OUTPOST_PK=$(echo "$OUTPOST" | python3 -c "import sys,json; print(json.load(sys.stdin)['results'][0]['pk'])")
+
+          ALREADY=$(echo "$OUTPOST" | python3 -c \
+            "import sys,json; providers=json.load(sys.stdin)['results'][0]['providers']; print('true' if $PROVIDER_PK in providers else 'false')")
+
+          if [ "$ALREADY" = "true" ]; then
+            echo "Prod Forward Auth already assigned to embedded outpost — done"
+          else
+            UPDATED=$(echo "$OUTPOST" | python3 -c \
+              "import sys,json; p=json.load(sys.stdin)['results'][0]['providers']; p.append($PROVIDER_PK); print(p)")
+            curl -sf -X PATCH "http://${SSO_IP}:9000/api/v3/outposts/instances/${OUTPOST_PK}/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"providers\": $UPDATED}" \
+              | python3 -c "import sys,json; r=json.load(sys.stdin); print('Outpost updated — providers:', r['providers'])"
+          fi
+
+      - name: Verify ForwardAuth via Authentik main server (port 9000)
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          sleep 5
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+            "http://${SSO_IP}:9000/outpost.goauthentik.io/auth/traefik" \
+            -H "X-Forwarded-Host: ops.databaes.net" \
+            -H "X-Forwarded-Proto: https" || echo "000")
+          echo "ForwardAuth health check (port 9000): HTTP $HTTP"
+          if [ "$HTTP" = "000" ]; then
+            echo "ERROR: Authentik not reachable on port 9000"
+            exit 1
+          elif [ "$HTTP" = "404" ]; then
+            echo "ERROR: ForwardAuth returned 404 — no matching provider for ops.databaes.net"
+            exit 1
+          fi
+          echo "ForwardAuth is working correctly (HTTP $HTTP)"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/sso_key
