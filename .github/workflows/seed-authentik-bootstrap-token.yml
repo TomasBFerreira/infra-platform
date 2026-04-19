@@ -30,11 +30,16 @@ jobs:
       - name: Skip if already populated
         id: gate
         run: |
-          EXISTS=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
-            "$VAULT_ADDR/v1/secret/data/devops-portal/$ENV/authentik" 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin)['data']['data']; print('y' if d.get('url') and d.get('token') else 'n')" 2>/dev/null) || EXISTS="n"
+          set +e
+          BODY=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/devops-portal/$ENV/authentik" 2>/dev/null)
+          EXISTS="n"
+          if [ -n "$BODY" ]; then
+            EXISTS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin)['data']['data']; print('y' if d.get('url') and d.get('token') else 'n')" 2>/dev/null || echo n)
+          fi
           echo "skip=$EXISTS" >> $GITHUB_OUTPUT
           [ "$EXISTS" = "y" ] && echo "already populated — nothing to do"
+          true
 
       - name: Resolve SSO IP from Vault
         if: steps.gate.outputs.skip != 'y'
