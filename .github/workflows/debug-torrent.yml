@@ -608,18 +608,29 @@ jobs:
           echo "=== CT filesystems ==="
           df -h | head -20
           echo ""
-          echo "=== /opt/torrent usage (top 20) ==="
-          du -sh /opt/torrent/* 2>/dev/null | sort -h | tail -10
+          echo "=== Top-level sizes of / ==="
+          du -x -sh /[a-z]* 2>/dev/null | sort -h | tail -15
           echo ""
-          echo "=== qBittorrent container /config ==="
-          docker exec qbittorrent sh -c 'df -h /config; echo ""; du -sh /config/* 2>/dev/null | sort -h | tail -15' || true
+          echo "=== /opt breakdown ==="
+          du -x -sh /opt/* 2>/dev/null 2>&1 | sort -h | tail -15
+          du -x -sh /opt/torrent/* 2>/dev/null 2>&1 | sort -h | tail -15
+          du -x -sh /opt/torrent/qbittorrent/* 2>/dev/null 2>&1 | sort -h | tail -15
           echo ""
-          echo "=== qBT container: /config/Downloads subfolders and sizes ==="
-          docker exec qbittorrent sh -c 'du -sh /config/Downloads/*/ 2>/dev/null | sort -h | tail -20' || true
+          echo "=== Docker storage usage ==="
+          docker system df 2>&1 | head -30
           echo ""
-          echo "=== NFS target /mnt/media/downloads ==="
+          echo "=== /var/log + journal ==="
+          du -x -sh /var/log /var/lib/docker 2>&1
+          journalctl --disk-usage 2>&1 | head -5
+          echo ""
+          echo "=== Inside qBittorrent container (df + du) ==="
+          docker exec qbittorrent sh -c 'df -h / 2>&1; echo ""; du -x -sh /config/* 2>/dev/null | sort -h | tail -15' 2>&1 || echo "docker exec failed (disk full)"
+          echo ""
+          echo "=== /config/Downloads inside container ==="
+          docker exec qbittorrent sh -c 'ls -la /config/Downloads/ 2>&1; du -x -sh /config/Downloads/* 2>/dev/null | sort -h' 2>&1 || echo "docker exec failed"
+          echo ""
+          echo "=== NFS target /mnt/media (control group — should have space) ==="
           df -h /mnt/media
-          du -sh /mnt/media/downloads/* 2>/dev/null | sort -h | tail -5
           REMOTE
 
       - name: Cleanup SSH key
