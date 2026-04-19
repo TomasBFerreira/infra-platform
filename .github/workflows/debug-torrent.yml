@@ -631,14 +631,39 @@ jobs:
           sleep 3
 
           echo ""
-          echo "=== rsync to NFS ==="
+          echo "=== Moving each Narcos folder (cp then rm) ==="
           mkdir -p "$DEST"
-          # Use --remove-source-files so successfully-copied files get deleted atomically
-          # (directory shells remain and are removed below)
-          rsync -a --info=progress2 --remove-source-files "$SRC/" "$DEST/" 2>&1 | tail -5
-          # Clean up empty source directories
-          find "$SRC" -mindepth 1 -type d -empty -delete 2>&1 | tail -5
-          echo "rsync complete"
+          for FOLDER in "$SRC"/*/; do
+            NAME=$(basename "$FOLDER")
+            echo ""
+            echo "-- $NAME --"
+            SRC_SIZE=$(du -sb "$FOLDER" | awk '{print $1}')
+            echo "  source size: $SRC_SIZE bytes"
+            if [ -e "$DEST/$NAME" ]; then
+              echo "  ! destination exists; skipping"
+              continue
+            fi
+            # Use cp (rsync temp file creation fails on 100%-full source).
+            # cp streams files directly without needing source-side workspace.
+            echo "  copying..."
+            cp -r "$FOLDER" "$DEST/"
+            CP_RC=$?
+            if [ "$CP_RC" -ne 0 ]; then
+              echo "  !! cp failed with $CP_RC — aborting this folder (source left intact)"
+              continue
+            fi
+            DST_SIZE=$(du -sb "$DEST/$NAME" | awk '{print $1}')
+            echo "  dest size: $DST_SIZE bytes"
+            if [ "$SRC_SIZE" = "$DST_SIZE" ]; then
+              echo "  sizes match — removing source"
+              rm -rf "$FOLDER"
+              echo "  source removed"
+            else
+              echo "  !! size mismatch — source kept for safety"
+            fi
+          done
+          # Fix ownership on moved folders (NFS side)
+          chown -R 1000:1000 "$DEST"/Narcos* 2>/dev/null || true
 
           echo ""
           echo "=== Post-rsync state ==="
