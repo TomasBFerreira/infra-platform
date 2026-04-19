@@ -84,62 +84,48 @@ jobs:
           fi
 
       - name: Seed per-service signing keys + trusted map
+        # All in one Python — bash assoc arrays don't survive a heredoc env.
         run: |
-          set -euo pipefail
-          SERVICES=(incidents infrastructure domain audit cmdb identity deployments shell)
-          declare -A KEYS
+          python3 - <<'PYEOF'
+          import json, os, secrets, urllib.request
+          SERVICES = ['incidents','infrastructure','domain','audit','cmdb','identity','deployments','shell']
+          VAULT = os.environ['VAULT_ADDR']
+          TOK = os.environ['VAULT_TOKEN']
+          ENV = os.environ['ENV']
+          FORCE = os.environ.get('FORCE') == 'true'
 
-          # Read existing or generate new (rotation only if FORCE)
-          for svc in "${SERVICES[@]}"; do
-            EXISTING=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
-              "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/svc-jwt/$svc" 2>/dev/null \
-              | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data'].get('signing_key',''))" 2>/dev/null) || EXISTING=""
-            if [ -n "$EXISTING" ] && [ "$FORCE" != "true" ]; then
-              KEYS[$svc]="$EXISTING"
-              echo "svc-jwt/$svc — keeping existing key"
-            else
-              KEYS[$svc]=$(openssl rand -hex 32)
-              curl -sf -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
-                -d "{\"data\":{\"signing_key\":\"${KEYS[$svc]}\"}}" \
-                "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/svc-jwt/$svc" >/dev/null
-              echo "svc-jwt/$svc — wrote new signing_key"
-            fi
-          done
+          def get(path):
+              req = urllib.request.Request(f"{VAULT}/v1/{path}",
+                  headers={'X-Vault-Token': TOK})
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return json.load(r)['data']['data']
+              except Exception:
+                  return None
 
-          # Build trusted map: every service trusts every OTHER service's
-          # signing key, keyed by issuer name. Each receiver's value is a
-          # JSON string the deploy workflow drops into TRUSTED_KEYS_JSON.
-          python3 - <<PYEOF
-          import json, os, urllib.request
-          services = os.environ['SERVICES'].split()
-          keys = {s: os.environ[f'KEY_{s}'] for s in services}
-          trusted = {}
-          for receiver in services:
-              issuers = {iss: keys[iss] for iss in services if iss != receiver}
-              trusted[receiver] = json.dumps(issuers)
-          payload = json.dumps({"data": trusted}).encode()
-          req = urllib.request.Request(
-              f"{os.environ['VAULT_ADDR']}/v1/secret/data/ops-portal/{os.environ['ENV']}/svc-jwt/trusted",
-              data=payload, method='POST',
-              headers={'X-Vault-Token': os.environ['VAULT_TOKEN'], 'Content-Type': 'application/json'},
-          )
-          urllib.request.urlopen(req).read()
-          print(f"svc-jwt/trusted — wrote map for {len(services)} services")
+          def put(path, data):
+              req = urllib.request.Request(f"{VAULT}/v1/{path}",
+                  data=json.dumps({"data": data}).encode(), method='POST',
+                  headers={'X-Vault-Token': TOK, 'Content-Type': 'application/json'})
+              urllib.request.urlopen(req).read()
+
+          keys = {}
+          for svc in SERVICES:
+              existing = get(f"secret/data/ops-portal/{ENV}/svc-jwt/{svc}") or {}
+              if existing.get('signing_key') and not FORCE:
+                  keys[svc] = existing['signing_key']
+                  print(f"svc-jwt/{svc} — keep existing")
+              else:
+                  keys[svc] = secrets.token_hex(32)
+                  put(f"secret/data/ops-portal/{ENV}/svc-jwt/{svc}", {"signing_key": keys[svc]})
+                  print(f"svc-jwt/{svc} — wrote new")
+
+          # Trusted map — receiver -> JSON map of {issuer: signing_key}
+          trusted = {receiver: json.dumps({iss: keys[iss] for iss in SERVICES if iss != receiver})
+                     for receiver in SERVICES}
+          put(f"secret/data/ops-portal/{ENV}/svc-jwt/trusted", trusted)
+          print(f"svc-jwt/trusted — wrote map for {len(SERVICES)} services")
           PYEOF
-        env:
-          SERVICES: incidents infrastructure domain audit cmdb identity deployments shell
-          KEY_incidents: ""
-
-      - name: Re-export keys to next step env
-        # Hack — bash assoc arrays don't survive between steps; re-fetch from Vault.
-        run: |
-          for svc in incidents infrastructure domain audit cmdb identity deployments shell; do
-            K=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
-              "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/svc-jwt/$svc" \
-              | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['signing_key'])")
-            echo "::add-mask::$K"
-            echo "KEY_$svc=$K" >> $GITHUB_ENV
-          done
 
       - name: Seed ops-portal/<env>/incidents if missing
         run: |
