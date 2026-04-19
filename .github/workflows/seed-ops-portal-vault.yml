@@ -1,0 +1,181 @@
+name: Seed Vault for ops-portal env
+
+# First-time bringup helper. Writes every Vault path the ops-portal-* deploy
+# workflows expect for a given env. Idempotent: existing keys are read first
+# and only missing keys are filled — so re-running won't rotate already-issued
+# tokens (which would invalidate already-deployed pods).
+#
+# Use case: bringing up prod for the first time after dev/qa already exist.
+# Run once with env=prod. Optional --field force=true to ROTATE everything
+# (only do this when the env is empty / no pods running).
+#
+# Vault paths written:
+#   secret/data/worker-node/<env>/active-slot   (only if missing — IP from input)
+#   secret/data/ops-portal/<env>/nats           (url)
+#   secret/data/ops-portal/<env>/svc-jwt/<svc>  (signing_key per service)
+#   secret/data/ops-portal/<env>/svc-jwt/trusted (per-receiver map of trusted issuers)
+#   secret/data/ops-portal/<env>/incidents      (webhook_token, internal_health_token)
+#   secret/data/ops-portal/<env>/<svc>          (postgres_password where applicable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment to seed
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+      worker_node_ip:
+        description: Worker node IP for this env (used only if worker-node/<env>/active-slot is missing)
+        required: false
+        type: string
+        default: ""
+      force_rotate:
+        description: ROTATE all per-service signing keys + tokens (DESTRUCTIVE — invalidates all pods until they redeploy)
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  seed:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      ENV:         ${{ inputs.environment }}
+      WORKER_IP:   ${{ inputs.worker_node_ip }}
+      FORCE:       ${{ inputs.force_rotate }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR%/}"
+          [[ "$V" != http://* && "$V" != https://* ]] && V="http://$V"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Validate Vault token
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/auth/token/lookup-self")
+          [ "$STATUS" = "200" ] || { echo "Vault token invalid ($STATUS)"; exit 1; }
+
+      - name: Seed worker-node/<env>/active-slot if missing
+        run: |
+          if curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+             "$VAULT_ADDR/v1/secret/data/worker-node/$ENV/active-slot" >/dev/null 2>&1; then
+            echo "worker-node/$ENV/active-slot already exists — skip"
+          else
+            [ -z "$WORKER_IP" ] && { echo "ERROR: worker-node/$ENV/active-slot missing AND no worker_node_ip input"; exit 1; }
+            echo "writing worker-node/$ENV/active-slot ip=$WORKER_IP"
+            curl -sf -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
+              -d "{\"data\":{\"ip\":\"$WORKER_IP\",\"slot\":\"blue\"}}" \
+              "$VAULT_ADDR/v1/secret/data/worker-node/$ENV/active-slot" >/dev/null
+          fi
+
+      - name: Seed ops-portal/<env>/nats if missing
+        run: |
+          if curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+             "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/nats" >/dev/null 2>&1; then
+            echo "ops-portal/$ENV/nats already exists — skip"
+          else
+            curl -sf -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
+              -d '{"data":{"url":"nats://nats.ops-portal-nats.svc.cluster.local.:4222"}}' \
+              "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/nats" >/dev/null
+            echo "wrote ops-portal/$ENV/nats"
+          fi
+
+      - name: Seed per-service signing keys + trusted map
+        run: |
+          set -euo pipefail
+          SERVICES=(incidents infrastructure domain audit cmdb identity deployments shell)
+          declare -A KEYS
+
+          # Read existing or generate new (rotation only if FORCE)
+          for svc in "${SERVICES[@]}"; do
+            EXISTING=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+              "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/svc-jwt/$svc" 2>/dev/null \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data'].get('signing_key',''))" 2>/dev/null) || EXISTING=""
+            if [ -n "$EXISTING" ] && [ "$FORCE" != "true" ]; then
+              KEYS[$svc]="$EXISTING"
+              echo "svc-jwt/$svc — keeping existing key"
+            else
+              KEYS[$svc]=$(openssl rand -hex 32)
+              curl -sf -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
+                -d "{\"data\":{\"signing_key\":\"${KEYS[$svc]}\"}}" \
+                "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/svc-jwt/$svc" >/dev/null
+              echo "svc-jwt/$svc — wrote new signing_key"
+            fi
+          done
+
+          # Build trusted map: every service trusts every OTHER service's
+          # signing key, keyed by issuer name. Each receiver's value is a
+          # JSON string the deploy workflow drops into TRUSTED_KEYS_JSON.
+          python3 - <<PYEOF
+          import json, os, urllib.request
+          services = os.environ['SERVICES'].split()
+          keys = {s: os.environ[f'KEY_{s}'] for s in services}
+          trusted = {}
+          for receiver in services:
+              issuers = {iss: keys[iss] for iss in services if iss != receiver}
+              trusted[receiver] = json.dumps(issuers)
+          payload = json.dumps({"data": trusted}).encode()
+          req = urllib.request.Request(
+              f"{os.environ['VAULT_ADDR']}/v1/secret/data/ops-portal/{os.environ['ENV']}/svc-jwt/trusted",
+              data=payload, method='POST',
+              headers={'X-Vault-Token': os.environ['VAULT_TOKEN'], 'Content-Type': 'application/json'},
+          )
+          urllib.request.urlopen(req).read()
+          print(f"svc-jwt/trusted — wrote map for {len(services)} services")
+          PYEOF
+        env:
+          SERVICES: incidents infrastructure domain audit cmdb identity deployments shell
+          KEY_incidents: ""
+
+      - name: Re-export keys to next step env
+        # Hack — bash assoc arrays don't survive between steps; re-fetch from Vault.
+        run: |
+          for svc in incidents infrastructure domain audit cmdb identity deployments shell; do
+            K=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+              "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/svc-jwt/$svc" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['signing_key'])")
+            echo "::add-mask::$K"
+            echo "KEY_$svc=$K" >> $GITHUB_ENV
+          done
+
+      - name: Seed ops-portal/<env>/incidents if missing
+        run: |
+          EXISTS=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/incidents" 2>/dev/null \
+            | python3 -c "import sys,json; d=json.load(sys.stdin)['data']['data']; print('y' if d.get('webhook_token') and d.get('internal_health_token') else 'n')" 2>/dev/null) || EXISTS="n"
+          if [ "$EXISTS" = "y" ] && [ "$FORCE" != "true" ]; then
+            echo "ops-portal/$ENV/incidents already populated — skip"
+          else
+            WT=$(openssl rand -hex 32)
+            IT=$(openssl rand -hex 32)
+            PG=$(openssl rand -hex 16)
+            curl -sf -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
+              -d "{\"data\":{\"webhook_token\":\"$WT\",\"internal_health_token\":\"$IT\",\"postgres_password\":\"$PG\"}}" \
+              "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/incidents" >/dev/null
+            echo "ops-portal/$ENV/incidents — wrote webhook_token + internal_health_token + postgres_password"
+          fi
+
+      - name: Seed per-service postgres passwords for cmdb/audit/identity/deployments/domain
+        run: |
+          for svc in cmdb audit identity deployments domain; do
+            EXISTS=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+              "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/$svc" 2>/dev/null \
+              | python3 -c "import sys,json; print('y' if json.load(sys.stdin)['data']['data'].get('postgres_password') else 'n')" 2>/dev/null) || EXISTS="n"
+            if [ "$EXISTS" = "y" ] && [ "$FORCE" != "true" ]; then
+              echo "ops-portal/$ENV/$svc — postgres_password already set, skip"
+              continue
+            fi
+            PG=$(openssl rand -hex 16)
+            curl -sf -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
+              -d "{\"data\":{\"postgres_password\":\"$PG\"}}" \
+              "$VAULT_ADDR/v1/secret/data/ops-portal/$ENV/$svc" >/dev/null
+            echo "ops-portal/$ENV/$svc — wrote postgres_password"
+          done
+
+      - name: Summary
+        run: |
+          echo "Vault seed for env=$ENV complete."
+          echo "Paths written under: $VAULT_ADDR/v1/secret/data/ops-portal/$ENV/{nats,svc-jwt/*,incidents,...}"
