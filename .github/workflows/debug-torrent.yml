@@ -10,11 +10,11 @@ on:
         type: choice
         options: [dev, qa, prod]
       apply_fix:
-        description: 'Apply fix (none/1/2/3/4/5/6/7=re-import+search)'
+        description: 'Apply fix (none/1/2/3/4/5/6/7/8=enable AutoTMM)'
         required: false
         default: 'none'
         type: choice
-        options: ['none','1','2','3','4','5','6','7']
+        options: ['none','1','2','3','4','5','6','7','8']
 
 jobs:
   debug:
@@ -890,6 +890,85 @@ jobs:
             http://localhost:8989/api/v3/command | head -c 500; echo
 
           rm -f /tmp/wkey /tmp/kubeconfig /tmp/rq.json
+
+      - name: STEP 8 — enable AutoTMM (fix category save_path)
+        if: github.event.inputs.apply_fix == '8'
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          COOKIE=/run/qbt.cookie
+          : > "$COOKIE"
+          curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
+            http://127.0.0.1:8080/api/v2/auth/login > /dev/null
+
+          echo "=== BEFORE: AutoTMM-related prefs ==="
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences | python3 -c "
+          import json, sys
+          d=json.load(sys.stdin)
+          for k in ['auto_tmm_enabled','torrent_changed_tmm_enabled','save_path_changed_tmm_enabled','category_changed_tmm_enabled']:
+              print(f'  {k} = {d.get(k)}')" | sed 's/^          //'
+
+          echo ""
+          echo "=== Setting global AutoTMM defaults ==="
+          # - auto_tmm_enabled: new torrents get AutoTMM=ON by default
+          # - category_changed_tmm_enabled: when a torrent's category changes, move to new category path
+          # - save_path_changed_tmm_enabled: when a category's savePath changes, move torrents in that category
+          # - torrent_changed_tmm_enabled: toggles updates when these prefs change
+          NEW='{"auto_tmm_enabled":true,"category_changed_tmm_enabled":true,"save_path_changed_tmm_enabled":true,"torrent_changed_tmm_enabled":true}'
+          curl -s -b "$COOKIE" --data-urlencode "json=$NEW" \
+            http://127.0.0.1:8080/api/v2/app/setPreferences > /dev/null
+          echo "set"
+
+          echo ""
+          echo "=== AFTER ==="
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences | python3 -c "
+          import json, sys
+          d=json.load(sys.stdin)
+          for k in ['auto_tmm_enabled','torrent_changed_tmm_enabled','save_path_changed_tmm_enabled','category_changed_tmm_enabled','save_path']:
+              print(f'  {k} = {d.get(k)}')" | sed 's/^          //'
+
+          echo ""
+          echo "=== Enabling AutoTMM for all EXISTING radarr/tv-sonarr torrents ==="
+          # Get hashes of all categorised torrents
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /run/t.json
+          HLIST=$(python3 -c "
+          import json
+          t=json.load(open('/run/t.json'))
+          hashes=[x['hash'] for x in t if x.get('category') in ('radarr','tv-sonarr')]
+          print('|'.join(hashes))" | sed 's/^          //')
+          echo "Applying AutoTMM to $(echo "$HLIST" | tr '|' '\n' | wc -l) torrents"
+
+          # setAutoManagement API: enable=true
+          curl -s -b "$COOKIE" -d "hashes=$HLIST&enable=true" \
+            http://127.0.0.1:8080/api/v2/torrents/setAutoManagement > /dev/null
+          echo "AutoTMM enabled on all radarr/tv-sonarr torrents"
+
+          echo ""
+          echo "=== Verifying save_path moved to category path (after 3s) ==="
+          sleep 3
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /run/t.json
+          python3 -c "
+          import json
+          t=json.load(open('/run/t.json'))
+          # Count by (category, save_path)
+          from collections import Counter
+          c=Counter((x.get('category',''), x.get('save_path','')) for x in t)
+          print('  category        | save_path                   | count')
+          print('  ----------------|-----------------------------|------')
+          for (cat, path), n in sorted(c.items()):
+              print(f\"  {cat:15s} | {path:27s} | {n}\")" | sed 's/^          //'
+
+          echo ""
+          echo "=== Narcos / The Matrix / Inception specific check ==="
+          python3 -c "
+          import json
+          t=json.load(open('/run/t.json'))
+          for x in t:
+              if any(k in x.get('name','') for k in ['Narcos','Matrix','Inception','Peach','Gilded','King of Kong']):
+                  print(f\"  [{x.get('category','')[:10]:10s}] auto_tmm={x.get('auto_tmm','?')}  save={x.get('save_path','')[:30]}  {x.get('name','')[:60]}\")" | sed 's/^          //'
+
+          rm -f "$COOKIE" /run/t.json
+          REMOTE
 
       - name: Disk audit (run always)
         run: |
