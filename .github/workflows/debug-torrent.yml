@@ -10,11 +10,11 @@ on:
         type: choice
         options: [dev, qa, prod]
       apply_fix:
-        description: 'Apply fix (none, 1=raise limits, 2=recheck, 3=delete-dead, 4=savepath+move, 5=disk rescue, 6=fix Narcos location)'
+        description: 'Apply fix (none/1/2/3/4/5/6/7=re-import+search)'
         required: false
         default: 'none'
         type: choice
-        options: ['none','1','2','3','4','5','6']
+        options: ['none','1','2','3','4','5','6','7']
 
 jobs:
   debug:
@@ -813,6 +813,83 @@ jobs:
 
           rm -f "$COOKIE" /run/t.json
           REMOTE
+
+      - name: STEP 7 — Sonarr import Narcos S03 + Radarr re-search missing movies
+        if: github.event.inputs.apply_fix == '7'
+        env:
+          BOOT_VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          BOOT_VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          export VAULT_ADDR="$BOOT_VAULT_ADDR"; export VAULT_TOKEN="$BOOT_VAULT_TOKEN"
+          ENV="${{ github.event.inputs.environment || 'prod' }}"
+          WORKER_IP=$(vault kv get -field=ip secret/worker-node/$ENV/active-slot 2>/dev/null || echo "192.168.10.21")
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF>0' > /tmp/wkey
+          chmod 600 /tmp/wkey
+          ssh -i /tmp/wkey -o StrictHostKeyChecking=no root@"$WORKER_IP" \
+            "cat /etc/rancher/k3s/k3s.yaml" | sed "s/127.0.0.1/${WORKER_IP}/g" > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          if ! command -v kubectl &>/dev/null; then
+            curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl && mkdir -p "$HOME/bin" && mv kubectl "$HOME/bin/" && export PATH="$HOME/bin:$PATH"
+          fi
+
+          SONARR_POD=$(kubectl get pod -n media-stack -l app=sonarr -o jsonpath='{.items[0].metadata.name}')
+          RADARR_POD=$(kubectl get pod -n media-stack -l app=radarr -o jsonpath='{.items[0].metadata.name}')
+          SONARR_KEY=$(kubectl -n streambox get secret streambox-secrets -o jsonpath='{.data.sonarr-api-key}' | base64 -d)
+          RADARR_KEY=$(kubectl -n streambox get secret streambox-secrets -o jsonpath='{.data.radarr-api-key}' | base64 -d)
+
+          echo "=== Sonarr: trigger DownloadedEpisodesScan on Narcos S03 folder ==="
+          kubectl exec -n media-stack "$SONARR_POD" -- \
+            curl -s -X POST -H "X-Api-Key: $SONARR_KEY" -H "Content-Type: application/json" \
+            --data '{"name":"DownloadedEpisodesScan","path":"/downloads/tv-sonarr/Narcos (2015) Season 3 S03 (1080p BluRay x265 HEVC 10bit AAC 5.1 Vyndros)","importMode":"Move"}' \
+            http://localhost:8989/api/v3/command | head -c 500; echo
+
+          echo ""
+          echo "=== Radarr: remove zombie queue entries (3 lost torrents) ==="
+          # Their downloadIds were A19BEA30DABA, 970435B8EFE8, 47DF458E0D77
+          kubectl exec -n media-stack "$RADARR_POD" -- \
+            curl -s -H "X-Api-Key: $RADARR_KEY" "http://localhost:7878/api/v3/queue?pageSize=200" > /tmp/rq.json
+          cat /tmp/rq.json | python3 -c "
+          import json, sys
+          d=json.load(sys.stdin); rec=d.get('records',d)
+          for q in rec:
+              print(q.get('id'), q.get('downloadId','')[:12], q.get('status',''), q.get('title','')[:60])
+          " | sed 's/^          //'
+
+          echo ""
+          echo "--- Removing orphan queue entries (blocklist=true → Radarr re-searches for new release) ---"
+          for UHASH in A19BEA30DABA 970435B8EFE8 47DF458E0D77; do
+            IDS=$(UHASH="$UHASH" python3 -c "
+          import json,os
+          d=json.load(open('/tmp/rq.json')); rec=d.get('records',d)
+          for q in rec:
+              if q.get('downloadId','').upper()==os.environ['UHASH']:
+                  print(q.get('id'))
+          " | sed 's/^          //')
+            for id in $IDS; do
+              kubectl exec -n media-stack "$RADARR_POD" -- \
+                curl -s -X DELETE -H "X-Api-Key: $RADARR_KEY" \
+                "http://localhost:7878/api/v3/queue/${id}?removeFromClient=true&blocklist=true&skipRedownload=false" \
+                > /dev/null && echo "  deleted queue id=$id (hash=$UHASH, blocklisted)"
+            done
+          done
+
+          echo ""
+          echo "=== Radarr: trigger MissingMoviesSearch ==="
+          kubectl exec -n media-stack "$RADARR_POD" -- \
+            curl -s -X POST -H "X-Api-Key: $RADARR_KEY" -H "Content-Type: application/json" \
+            --data '{"name":"MissingMoviesSearch"}' \
+            http://localhost:7878/api/v3/command | head -c 500; echo
+
+          echo ""
+          echo "=== Sonarr: trigger MissingEpisodeSearch (in case any eps are missing too) ==="
+          kubectl exec -n media-stack "$SONARR_POD" -- \
+            curl -s -X POST -H "X-Api-Key: $SONARR_KEY" -H "Content-Type: application/json" \
+            --data '{"name":"MissingEpisodeSearch"}' \
+            http://localhost:8989/api/v3/command | head -c 500; echo
+
+          rm -f /tmp/wkey /tmp/kubeconfig /tmp/rq.json
 
       - name: Disk audit (run always)
         run: |
