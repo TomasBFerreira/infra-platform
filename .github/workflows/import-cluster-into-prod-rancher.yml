@@ -89,25 +89,35 @@ jobs:
 
       - name: Get registration manifest URL
         run: |
-          # Find or create the cluster registration token
-          BODY=$(curl -sk -H "Host: $PROD_RANCHER_HOST" \
+          set +e
+          # Ensure a clusterRegistrationToken exists (POST is idempotent on
+          # GET-then-create — Rancher returns the existing one or 422)
+          curl -sk -H "Host: $PROD_RANCHER_HOST" \
             -H "Authorization: Bearer $RANCHER_TOKEN" \
-            "https://$PROD_RANCHER_IP/v3/clusterregistrationtokens?clusterId=$CLUSTER_ID")
-          MANIFEST_URL=$(echo "$BODY" | python3 -c "
+            -H "Content-Type: application/json" \
+            -X POST "https://$PROD_RANCHER_IP/v3/clusterregistrationtokens" \
+            -d "{\"type\":\"clusterRegistrationToken\",\"clusterId\":\"$CLUSTER_ID\"}" \
+            >/tmp/crt-create.json 2>&1
+          # Poll list endpoint up to 30s for manifestUrl to be populated
+          for i in $(seq 1 15); do
+            BODY=$(curl -sk -H "Host: $PROD_RANCHER_HOST" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              "https://$PROD_RANCHER_IP/v3/clusterregistrationtokens?clusterId=$CLUSTER_ID")
+            MANIFEST_URL=$(echo "$BODY" | python3 -c "
           import sys,json
           d=json.load(sys.stdin)
           urls=[t.get('manifestUrl') for t in d.get('data',[]) if t.get('manifestUrl')]
           print(urls[0] if urls else '')" 2>/dev/null)
-          if [ -z "$MANIFEST_URL" ]; then
-            RESP=$(curl -sk -H "Host: $PROD_RANCHER_HOST" \
-              -H "Authorization: Bearer $RANCHER_TOKEN" \
-              -H "Content-Type: application/json" \
-              -X POST "https://$PROD_RANCHER_IP/v3/clusterregistrationtokens" \
-              -d "{\"type\":\"clusterRegistrationToken\",\"clusterId\":\"$CLUSTER_ID\"}")
-            MANIFEST_URL=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['manifestUrl'])")
-          fi
-          echo "manifest URL: $MANIFEST_URL"
-          echo "MANIFEST_URL=$MANIFEST_URL" >> $GITHUB_ENV
+            if [ -n "$MANIFEST_URL" ]; then
+              echo "manifest URL ready after ${i}*2s: $MANIFEST_URL"
+              echo "MANIFEST_URL=$MANIFEST_URL" >> $GITHUB_ENV
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ERROR: manifest URL never populated. Last list body:"
+          echo "$BODY" | head -c 2000
+          exit 1
 
       - name: Pull SSH key + kubeconfig for target worker
         run: |
