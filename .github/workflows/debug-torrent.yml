@@ -347,7 +347,7 @@ jobs:
           sed -i 's/^          //' /tmp/pp.py
           curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences | python3 /tmp/pp.py
 
-          NEW='{"max_active_downloads":10,"max_active_torrents":20,"max_active_uploads":10,"dont_count_slow_torrents":true}'
+          NEW='{"max_active_downloads":10,"max_active_torrents":10,"max_active_uploads":10,"dont_count_slow_torrents":true}'
           HTTP=$(curl -s -o /tmp/r -w '%{http_code}' -b "$COOKIE" \
             --data-urlencode "json=$NEW" \
             http://127.0.0.1:8080/api/v2/app/setPreferences)
