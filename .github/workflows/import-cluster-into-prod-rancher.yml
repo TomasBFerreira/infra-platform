@@ -133,11 +133,18 @@ jobs:
 
       - name: Apply registration manifest to target cluster
         run: |
-          # The manifest URL is served by Rancher itself; download and apply.
+          # MANIFEST_URL is rancher.databaes.net which resolves to Cloudflare
+          # public IPs and 502s. Pin DNS to the internal Rancher IP.
           MURL_HOST=$(echo "$MANIFEST_URL" | sed 's|^https\?://||;s|/.*||')
-          curl -sk -H "Host: $MURL_HOST" "$MANIFEST_URL" -o /tmp/cluster-register.yaml
-          [ ! -s /tmp/cluster-register.yaml ] && { echo "registration manifest empty"; exit 1; }
+          curl -sk --resolve "${MURL_HOST}:443:${PROD_RANCHER_IP}" \
+            "$MANIFEST_URL" -o /tmp/cluster-register.yaml
+          if [ ! -s /tmp/cluster-register.yaml ]; then
+            echo "registration manifest empty after curl"
+            ls -la /tmp/cluster-register.yaml
+            exit 1
+          fi
           echo "manifest size: $(wc -c < /tmp/cluster-register.yaml) bytes"
+          head -3 /tmp/cluster-register.yaml
           kubectl apply -f /tmp/cluster-register.yaml
 
       - name: Wait for cattle-cluster-agent
