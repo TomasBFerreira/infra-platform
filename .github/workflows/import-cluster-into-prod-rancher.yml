@@ -23,7 +23,9 @@ on:
 
 jobs:
   import:
-    runs-on: [self-hosted, prod]
+    # Run on the TARGET env's runner so we can SSH into its worker with the
+    # local SSH key. The Rancher API call goes to prod via cross-env routes.
+    runs-on: [self-hosted, "${{ inputs.target_env }}"]
     env:
       VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
