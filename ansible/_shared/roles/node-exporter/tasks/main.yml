@@ -36,11 +36,15 @@
   failed_when: false
 
 - name: Download node_exporter tarball
-  ansible.builtin.get_url:
-    url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
-    dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
-    mode: '0644'
-    timeout: 60
+  # Some hosts ship a Python whose urllib doesn't accept the cert_file kwarg
+  # ansible's get_url passes (seen on worker-node-gpu-01 in prod). curl is
+  # universal — fall through to it instead of relying on the urllib3 wheel.
+  ansible.builtin.command:
+    cmd: >
+      curl -fsSL --max-time 60
+      -o /tmp/node_exporter-{{ node_exporter_version }}.tar.gz
+      https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+    creates: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
   when: node_exporter_version_check.stdout | default('0') == '0'
 
 - name: Extract node_exporter
