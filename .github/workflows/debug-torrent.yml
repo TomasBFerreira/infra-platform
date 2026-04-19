@@ -68,104 +68,89 @@ jobs:
           df -h /mnt/media 2>/dev/null || df -h /
           REMOTE
 
-      - name: Deep qBittorrent diagnostic
+      - name: Per-torrent state (tracker + peers + category)
         run: |
           IP="${{ steps.slots.outputs.ip }}"
           ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
           set +e
-          echo "=== A. qBittorrent config persistence ==="
-          find /opt/torrent -name 'qBittorrent.conf' 2>/dev/null | head -5
-          CONFFILE=$(find /opt/torrent -name 'qBittorrent.conf' 2>/dev/null | head -1)
-          if [ -n "$CONFFILE" ]; then
-            echo "--- $CONFFILE (relevant keys) ---"
-            grep -iE 'webui|interface|listenport|savepath|tempath|enabled|bypass|auth' "$CONFFILE" | head -40
-          else
-            echo "(no qBittorrent.conf found)"
-          fi
-          echo ""
-
-          echo "=== B. qBittorrent API login attempts ==="
           COOKIE=$(mktemp)
-          for PW in "adminadmin" "" "admin"; do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' -c "$COOKIE" \
-              -d "username=admin&password=$PW" \
-              http://127.0.0.1:8080/api/v2/auth/login)
-            echo "login(admin/'$PW') → $CODE"
-            if [ "$CODE" = "200" ]; then
-              BODY=$(curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/auth/login -d "username=admin&password=$PW")
-              echo "  body: $BODY"
-              if [ "$BODY" = "Ok." ]; then
-                echo "  ✓ authenticated with password=[$([ -z "$PW" ] && echo EMPTY || echo SET)]"
-                break
-              fi
-            fi
-          done
+          curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
+            http://127.0.0.1:8080/api/v2/auth/login > /dev/null
 
-          echo ""
-          echo "--- Preferences (relevant keys) ---"
-          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences > /tmp/prefs.json
-          python3 - <<'PY'
-          import json
-          try:
-              d=json.load(open('/tmp/prefs.json'))
-          except Exception as e:
-              print("(failed to parse prefs:", e, ")"); raise SystemExit
-          keys=["current_network_interface","current_interface_address","listen_port","save_path","temp_path",
-                "bypass_auth_subnet_whitelist_enabled","bypass_auth_subnet_whitelist",
-                "web_ui_port","web_ui_username","web_ui_address"]
-          print(json.dumps({k:d.get(k) for k in keys}, indent=2))
-          PY
-
-          echo ""
-          echo "=== C. Active torrents ==="
+          echo "=== Per-torrent summary (category, state, peers, tracker) ==="
           curl -s -b "$COOKIE" "http://127.0.0.1:8080/api/v2/torrents/info?filter=all" > /tmp/torrents.json
-          python3 - <<'PY'
+          python3 /tmp/torrents.json <<'PY' 2>&1 || python3 - <<'PY'
           import json
-          try:
-              t=json.load(open('/tmp/torrents.json'))
-          except Exception as e:
-              print("(failed:", e, ")"); raise SystemExit
-          print(f"Total torrents: {len(t)}")
-          for x in t[:25]:
-              print(f"  [{x.get('state',''):12s}] {x.get('progress',0)*100:5.1f}%  "
-                    f"dl={x.get('dlspeed',0)}B/s  peers={x.get('num_leechs',0)}/{x.get('num_seeds',0)}  "
-                    f"tracker_err={'Y' if x.get('tracker','').startswith('http') and x.get('num_seeds',0)==0 and x.get('state','')=='stalledDL' else '.'}  "
-                    f"{x.get('name','')[:60]}")
+          t=json.load(open('/tmp/torrents.json'))
+          print("total torrents:", len(t))
+          print()
+          for x in t:
+              hsh=x.get('hash','')[:12]
+              name=x.get('name','')[:90]
+              cat=x.get('category','')
+              st=x.get('state','')
+              prog=x.get('progress',0)*100
+              seeds=x.get('num_seeds',0); leech=x.get('num_leechs',0)
+              dl=x.get('dlspeed',0)
+              trk=x.get('tracker','')
+              added=x.get('added_on',0)
+              print(f"{hsh} [{cat:10s}] {st:12s} {prog:5.1f}%  seeds={seeds} peers={leech} dl={dl}B/s trk={trk[:50] if trk else '(none)'}  {name}")
           PY
 
           echo ""
-          echo "=== D. Transfer info ==="
-          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/transfer/info
+          echo "=== Tracker detail for each torrent in 'radarr' category ==="
+          python3 - <<'PY'
+          import json, urllib.request, http.cookiejar, subprocess
+          t=json.load(open('/tmp/torrents.json'))
+          for x in t:
+              if x.get('category') != 'radarr': continue
+              h = x.get('hash')
+              print(f"\n-- hash={h[:12]} name={x.get('name','')[:80]} state={x.get('state')} --")
+              # call trackers endpoint via curl from shell
+              import os
+              os.system(f"curl -s -b {os.environ.get('COOKIE')} 'http://127.0.0.1:8080/api/v2/torrents/trackers?hash={h}' | python3 -c \"import json,sys; [print(f\\\"  [{tr.get(chr(39)+'status'+chr(39)):>2}] {tr.get(chr(39)+'msg'+chr(39),'')[:50]:50s} seeds={tr.get(chr(39)+'num_seeds'+chr(39),0)} peers={tr.get(chr(39)+'num_peers'+chr(39),0)} {tr.get(chr(39)+'url'+chr(39),'')[:80]}\\\") for tr in json.load(sys.stdin)]\"")
+          PY
 
           echo ""
-          echo ""
-          echo "=== E. External IP: WITH vs WITHOUT VPN (must differ) ==="
-          echo -n "via wg0   : "; timeout 8 curl -sS --interface wg0 https://api.ipify.org 2>&1; echo ""
-          echo -n "default   : "; timeout 8 curl -sS https://api.ipify.org 2>&1; echo ""
-
-          echo ""
-          echo "=== F. DNS resolution ==="
-          getent hosts google.com 2>&1 | head -2
-          getent hosts tracker.opentrackr.org 2>&1 | head -2
-
-          echo ""
-          echo "=== G. Recent qBittorrent logs (errors/warnings, last 2h) ==="
-          docker logs qbittorrent --since 2h 2>&1 | grep -iE 'error|warn|fail|refused|denied|unreach' | tail -30 || echo "(no error lines)"
-
-          echo ""
-          echo "=== H. Port 8080 reachability from LAN perspective ==="
-          ss -tln | grep 8080
-
-          echo ""
-          echo "=== I. Download directory state ==="
-          for d in /downloads /opt/torrent/downloads /mnt/media/downloads; do
-            if [ -d "$d" ]; then
-              echo "-- $d --"; ls -la "$d" 2>&1 | head -10
-              df -h "$d" 2>&1 | head -2
-            fi
+          echo "=== Simpler tracker dump (shell loop) ==="
+          for H in $(python3 -c "import json; t=json.load(open('/tmp/torrents.json')); [print(x['hash']) for x in t if x.get('category')=='radarr']"); do
+            NAME=$(python3 -c "import json; t=json.load(open('/tmp/torrents.json')); [print(x['name']) for x in t if x['hash']=='$H']" | head -1)
+            echo ""
+            echo "# $NAME (hash=${H:0:12})"
+            curl -s -b "$COOKIE" "http://127.0.0.1:8080/api/v2/torrents/trackers?hash=$H" \
+              | python3 -c "
+import json, sys
+for tr in json.load(sys.stdin):
+    stat=tr.get('status',0)
+    # status: 0=disabled 1=not_contacted 2=working 3=updating 4=not_working
+    status_map={0:'DISABLED',1:'NOT_CONTACTED',2:'WORKING',3:'UPDATING',4:'NOT_WORKING'}
+    print(f\"  [{status_map.get(stat,stat):15s}] seeds={tr.get('num_seeds',0):3d} peers={tr.get('num_peers',0):3d} msg={tr.get('msg','')[:60]:60s} {tr.get('url','')[:80]}\")
+"
           done
 
-          rm -f "$COOKIE" /tmp/prefs.json /tmp/torrents.json
+          echo ""
+          echo "=== qBT preferences (key fields) ==="
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences > /tmp/prefs.json
+          python3 -c "
+import json
+d=json.load(open('/tmp/prefs.json'))
+keys=['current_network_interface','current_interface_address','listen_port','save_path',
+      'temp_path','web_ui_address','max_active_downloads','max_active_torrents',
+      'queueing_enabled','dont_count_slow_torrents','slow_torrent_dl_rate_threshold',
+      'dht','pex','lsd','anonymous_mode','encryption']
+for k in keys: print(f'  {k} = {d.get(k)}')
+"
+
+          echo ""
+          echo "=== Categories ==="
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/torrents/categories | python3 -m json.tool
+
+          echo ""
+          echo "=== External IP via wg0 vs default (should match — both via VPN) ==="
+          echo -n "via wg0 : "; timeout 8 curl -s --interface wg0 https://api.ipify.org 2>&1; echo
+          echo -n "default : "; timeout 8 curl -s https://api.ipify.org 2>&1; echo
+
+          rm -f "$COOKIE" /tmp/torrents.json /tmp/prefs.json
           REMOTE
 
       - name: Check vault qBittorrent credentials + media-stack side
@@ -231,6 +216,34 @@ jobs:
           SONARR_POD=$(kubectl get pod -n media-stack -l app=sonarr -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
           RADARR_POD=$(kubectl get pod -n media-stack -l app=radarr -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
           echo "Sonarr pod: $SONARR_POD  Radarr pod: $RADARR_POD"
+
+          echo ""
+          echo "--- Sonarr /api/v3/queue (detailed) ---"
+          kubectl exec -n media-stack "$SONARR_POD" -- \
+            curl -s -H "X-Api-Key: $SONARR_KEY" "http://localhost:8989/api/v3/queue?pageSize=50&includeUnknownSeriesItems=true" \
+            | python3 -c "
+import json, sys
+d=json.load(sys.stdin)
+rec=d.get('records',d) if isinstance(d,dict) else d
+print(f'Sonarr queue count: {len(rec)}')
+for q in rec:
+    print(f\"  hash={q.get('downloadId','')[:12]} status={q.get('status','')} trackedStatus={q.get('trackedDownloadStatus','')}/{q.get('trackedDownloadState','')} size={q.get('size',0)} sizeleft={q.get('sizeleft',0)} errorMsg={q.get('errorMessage','')} title={q.get('title','')[:70]}\")
+    for sm in q.get('statusMessages',[]):
+        print(f'    msg: {sm.get(chr(34)+chr(116)+chr(105)+chr(116)+chr(108)+chr(101)+chr(34)) or sm.get(\"title\",\"\")}: {sm.get(\"messages\",[])}')" 2>&1 | head -60
+
+          echo ""
+          echo "--- Radarr /api/v3/queue (detailed) ---"
+          kubectl exec -n media-stack "$RADARR_POD" -- \
+            curl -s -H "X-Api-Key: $RADARR_KEY" "http://localhost:7878/api/v3/queue?pageSize=50&includeUnknownMovieItems=true" \
+            | python3 -c "
+import json, sys
+d=json.load(sys.stdin)
+rec=d.get('records',d) if isinstance(d,dict) else d
+print(f'Radarr queue count: {len(rec)}')
+for q in rec:
+    print(f\"  hash={q.get('downloadId','')[:12]} status={q.get('status','')} trackedStatus={q.get('trackedDownloadStatus','')}/{q.get('trackedDownloadState','')} size={q.get('size',0)} sizeleft={q.get('sizeleft',0)} errorMsg={q.get('errorMessage','')} title={q.get('title','')[:70]}\")
+    for sm in q.get('statusMessages',[]):
+        print(f'    msg: {sm.get(\"title\",\"\")}: {sm.get(\"messages\",[])}')" 2>&1 | head -60
 
           echo ""
           echo "--- Sonarr /api/v3/downloadclient ---"
