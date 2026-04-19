@@ -1,0 +1,50 @@
+name: Wipe PVC
+
+# One-shot kubectl delete for a PVC in any env. Used during prod bringup
+# when an immutable storageClassName needs to be changed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [dev, qa, prod]
+        required: true
+      namespace:
+        required: true
+        type: string
+      pvc_name:
+        required: true
+        type: string
+
+jobs:
+  wipe:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      ENV:         ${{ inputs.environment }}
+    steps:
+      - name: Resolve worker IP
+        run: |
+          IP=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "${VAULT_ADDR%/}/v1/secret/data/worker-node/$ENV/active-slot" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['ip'])")
+          echo "WORKER_IP=$IP" >> $GITHUB_ENV
+      - name: Pull SSH key + kubeconfig
+        run: |
+          mkdir -p keys && chmod 700 keys
+          curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "${VAULT_ADDR%/}/v1/secret/data/ssh_keys/worker_node_worker" \
+            | python3 -c 'import sys,json,os; d=json.load(sys.stdin); k=d["data"]["data"]["private_key"]; open("keys/worker","w").write(k if k.endswith("\n") else k+"\n")'
+          chmod 600 keys/worker
+          mkdir -p $HOME/.kube
+          ssh -i keys/worker -o StrictHostKeyChecking=no root@$WORKER_IP "cat /etc/rancher/k3s/k3s.yaml" \
+            | sed "s/127.0.0.1/$WORKER_IP/g" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+      - name: Delete PVC
+        run: |
+          kubectl -n ${{ inputs.namespace }} delete pvc ${{ inputs.pvc_name }} --force --grace-period=0 2>&1 || true
+          # Some PVCs are stuck on finalizers — patch to remove
+          kubectl -n ${{ inputs.namespace }} patch pvc ${{ inputs.pvc_name }} -p '{"metadata":{"finalizers":null}}' --type=merge 2>&1 || true
+          kubectl -n ${{ inputs.namespace }} get pvc 2>&1 || true
