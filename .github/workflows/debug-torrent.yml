@@ -77,13 +77,12 @@ jobs:
           curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
             http://127.0.0.1:8080/api/v2/auth/login > /dev/null
 
-          echo "=== Per-torrent summary (category, state, peers, tracker) ==="
+          echo "=== Per-torrent summary ==="
           curl -s -b "$COOKIE" "http://127.0.0.1:8080/api/v2/torrents/info?filter=all" > /tmp/torrents.json
-          python3 /tmp/torrents.json <<'PY' 2>&1 || python3 - <<'PY'
+          cat > /tmp/print_torrents.py <<'PY'
           import json
           t=json.load(open('/tmp/torrents.json'))
           print("total torrents:", len(t))
-          print()
           for x in t:
               hsh=x.get('hash','')[:12]
               name=x.get('name','')[:90]
@@ -92,65 +91,67 @@ jobs:
               prog=x.get('progress',0)*100
               seeds=x.get('num_seeds',0); leech=x.get('num_leechs',0)
               dl=x.get('dlspeed',0)
-              trk=x.get('tracker','')
-              added=x.get('added_on',0)
-              print(f"{hsh} [{cat:10s}] {st:12s} {prog:5.1f}%  seeds={seeds} peers={leech} dl={dl}B/s trk={trk[:50] if trk else '(none)'}  {name}")
+              trk=x.get('tracker','')[:50] or '(none)'
+              print(f"  {hsh} [{cat:10s}] {st:14s} {prog:5.1f}%  seeds={seeds} peers={leech} dl={dl}B/s  trk={trk}  {name}")
           PY
+          # Strip leading 10 spaces (YAML indent) then run
+          sed 's/^          //' /tmp/print_torrents.py > /tmp/pt.py
+          python3 /tmp/pt.py
 
           echo ""
-          echo "=== Tracker detail for each torrent in 'radarr' category ==="
-          python3 - <<'PY'
-          import json, urllib.request, http.cookiejar, subprocess
+          echo "=== Tracker detail for each 'radarr' category torrent ==="
+          cat > /tmp/print_trackers.py <<'PY'
+          import json, sys, subprocess, os
           t=json.load(open('/tmp/torrents.json'))
+          status_map={0:'DISABLED',1:'NOT_CONTACTED',2:'WORKING',3:'UPDATING',4:'NOT_WORKING'}
           for x in t:
-              if x.get('category') != 'radarr': continue
-              h = x.get('hash')
-              print(f"\n-- hash={h[:12]} name={x.get('name','')[:80]} state={x.get('state')} --")
-              # call trackers endpoint via curl from shell
-              import os
-              os.system(f"curl -s -b {os.environ.get('COOKIE')} 'http://127.0.0.1:8080/api/v2/torrents/trackers?hash={h}' | python3 -c \"import json,sys; [print(f\\\"  [{tr.get(chr(39)+'status'+chr(39)):>2}] {tr.get(chr(39)+'msg'+chr(39),'')[:50]:50s} seeds={tr.get(chr(39)+'num_seeds'+chr(39),0)} peers={tr.get(chr(39)+'num_peers'+chr(39),0)} {tr.get(chr(39)+'url'+chr(39),'')[:80]}\\\") for tr in json.load(sys.stdin)]\"")
+              if x.get('category') != 'radarr':
+                  continue
+              h = x.get('hash','')
+              print(f"\n-- {x.get('name','')[:80]}  (hash={h[:12]}, state={x.get('state')}) --")
+              trks_raw = subprocess.run(
+                  ['curl','-s','-b',os.environ['COOKIE'],
+                   f'http://127.0.0.1:8080/api/v2/torrents/trackers?hash={h}'],
+                  capture_output=True, text=True).stdout
+              try:
+                  trks = json.loads(trks_raw)
+              except Exception as e:
+                  print(f"  (trackers parse failed: {e})")
+                  continue
+              for tr in trks:
+                  stat = tr.get('status',0)
+                  print(f"  [{status_map.get(stat,stat):14s}] "
+                        f"seeds={tr.get('num_seeds',0):3d} peers={tr.get('num_peers',0):3d} "
+                        f"msg='{tr.get('msg','')[:50]}'  url={tr.get('url','')[:80]}")
           PY
-
-          echo ""
-          echo "=== Simpler tracker dump (shell loop) ==="
-          for H in $(python3 -c "import json; t=json.load(open('/tmp/torrents.json')); [print(x['hash']) for x in t if x.get('category')=='radarr']"); do
-            NAME=$(python3 -c "import json; t=json.load(open('/tmp/torrents.json')); [print(x['name']) for x in t if x['hash']=='$H']" | head -1)
-            echo ""
-            echo "# $NAME (hash=${H:0:12})"
-            curl -s -b "$COOKIE" "http://127.0.0.1:8080/api/v2/torrents/trackers?hash=$H" \
-              | python3 -c "
-import json, sys
-for tr in json.load(sys.stdin):
-    stat=tr.get('status',0)
-    # status: 0=disabled 1=not_contacted 2=working 3=updating 4=not_working
-    status_map={0:'DISABLED',1:'NOT_CONTACTED',2:'WORKING',3:'UPDATING',4:'NOT_WORKING'}
-    print(f\"  [{status_map.get(stat,stat):15s}] seeds={tr.get('num_seeds',0):3d} peers={tr.get('num_peers',0):3d} msg={tr.get('msg','')[:60]:60s} {tr.get('url','')[:80]}\")
-"
-          done
+          sed 's/^          //' /tmp/print_trackers.py > /tmp/ptrk.py
+          COOKIE="$COOKIE" python3 /tmp/ptrk.py
 
           echo ""
           echo "=== qBT preferences (key fields) ==="
           curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/app/preferences > /tmp/prefs.json
-          python3 -c "
-import json
-d=json.load(open('/tmp/prefs.json'))
-keys=['current_network_interface','current_interface_address','listen_port','save_path',
-      'temp_path','web_ui_address','max_active_downloads','max_active_torrents',
-      'queueing_enabled','dont_count_slow_torrents','slow_torrent_dl_rate_threshold',
-      'dht','pex','lsd','anonymous_mode','encryption']
-for k in keys: print(f'  {k} = {d.get(k)}')
-"
+          cat > /tmp/print_prefs.py <<'PY'
+          import json
+          d=json.load(open('/tmp/prefs.json'))
+          keys=['current_network_interface','current_interface_address','listen_port','save_path',
+                'temp_path','web_ui_address','max_active_downloads','max_active_torrents',
+                'queueing_enabled','dont_count_slow_torrents','slow_torrent_dl_rate_threshold',
+                'dht','pex','lsd','anonymous_mode','encryption']
+          for k in keys:
+              print(f"  {k} = {d.get(k)}")
+          PY
+          sed 's/^          //' /tmp/print_prefs.py > /tmp/pp.py && python3 /tmp/pp.py
 
           echo ""
           echo "=== Categories ==="
-          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/torrents/categories | python3 -m json.tool
+          curl -s -b "$COOKIE" http://127.0.0.1:8080/api/v2/torrents/categories | python3 -m json.tool 2>&1
 
           echo ""
-          echo "=== External IP via wg0 vs default (should match — both via VPN) ==="
+          echo "=== External IP via wg0 vs default ==="
           echo -n "via wg0 : "; timeout 8 curl -s --interface wg0 https://api.ipify.org 2>&1; echo
           echo -n "default : "; timeout 8 curl -s https://api.ipify.org 2>&1; echo
 
-          rm -f "$COOKIE" /tmp/torrents.json /tmp/prefs.json
+          rm -f "$COOKIE" /tmp/torrents.json /tmp/prefs.json /tmp/p*.py
           REMOTE
 
       - name: Check vault qBittorrent credentials + media-stack side
@@ -217,33 +218,36 @@ for k in keys: print(f'  {k} = {d.get(k)}')
           RADARR_POD=$(kubectl get pod -n media-stack -l app=radarr -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
           echo "Sonarr pod: $SONARR_POD  Radarr pod: $RADARR_POD"
 
-          echo ""
-          echo "--- Sonarr /api/v3/queue (detailed) ---"
-          kubectl exec -n media-stack "$SONARR_POD" -- \
-            curl -s -H "X-Api-Key: $SONARR_KEY" "http://localhost:8989/api/v3/queue?pageSize=50&includeUnknownSeriesItems=true" \
-            | python3 -c "
-import json, sys
-d=json.load(sys.stdin)
-rec=d.get('records',d) if isinstance(d,dict) else d
-print(f'Sonarr queue count: {len(rec)}')
-for q in rec:
-    print(f\"  hash={q.get('downloadId','')[:12]} status={q.get('status','')} trackedStatus={q.get('trackedDownloadStatus','')}/{q.get('trackedDownloadState','')} size={q.get('size',0)} sizeleft={q.get('sizeleft',0)} errorMsg={q.get('errorMessage','')} title={q.get('title','')[:70]}\")
-    for sm in q.get('statusMessages',[]):
-        print(f'    msg: {sm.get(chr(34)+chr(116)+chr(105)+chr(116)+chr(108)+chr(101)+chr(34)) or sm.get(\"title\",\"\")}: {sm.get(\"messages\",[])}')" 2>&1 | head -60
+          cat > /tmp/print_queue.py <<'PY'
+          import json, sys
+          d=json.load(sys.stdin)
+          rec=d.get('records',d) if isinstance(d,dict) else d
+          print(f"queue count: {len(rec)}")
+          for q in rec:
+              hsh=q.get('downloadId','')[:12]
+              status=q.get('status','')
+              trk=f"{q.get('trackedDownloadStatus','')}/{q.get('trackedDownloadState','')}"
+              size=q.get('size',0)
+              sl=q.get('sizeleft',0)
+              err=q.get('errorMessage','')
+              title=q.get('title','')[:70]
+              print(f"  hash={hsh} status={status} tracked={trk} size={size} left={sl} err='{err}' title={title}")
+              for sm in q.get('statusMessages',[]):
+                  print(f"    msg: {sm.get('title','')}: {sm.get('messages',[])}")
+          PY
+          sed 's/^          //' /tmp/print_queue.py > /tmp/pq.py
 
           echo ""
-          echo "--- Radarr /api/v3/queue (detailed) ---"
+          echo "--- Sonarr /api/v3/queue ---"
+          kubectl exec -n media-stack "$SONARR_POD" -- \
+            curl -s -H "X-Api-Key: $SONARR_KEY" "http://localhost:8989/api/v3/queue?pageSize=50&includeUnknownSeriesItems=true" \
+            | python3 /tmp/pq.py 2>&1 | head -80
+
+          echo ""
+          echo "--- Radarr /api/v3/queue ---"
           kubectl exec -n media-stack "$RADARR_POD" -- \
             curl -s -H "X-Api-Key: $RADARR_KEY" "http://localhost:7878/api/v3/queue?pageSize=50&includeUnknownMovieItems=true" \
-            | python3 -c "
-import json, sys
-d=json.load(sys.stdin)
-rec=d.get('records',d) if isinstance(d,dict) else d
-print(f'Radarr queue count: {len(rec)}')
-for q in rec:
-    print(f\"  hash={q.get('downloadId','')[:12]} status={q.get('status','')} trackedStatus={q.get('trackedDownloadStatus','')}/{q.get('trackedDownloadState','')} size={q.get('size',0)} sizeleft={q.get('sizeleft',0)} errorMsg={q.get('errorMessage','')} title={q.get('title','')[:70]}\")
-    for sm in q.get('statusMessages',[]):
-        print(f'    msg: {sm.get(\"title\",\"\")}: {sm.get(\"messages\",[])}')" 2>&1 | head -60
+            | python3 /tmp/pq.py 2>&1 | head -80
 
           echo ""
           echo "--- Sonarr /api/v3/downloadclient ---"
