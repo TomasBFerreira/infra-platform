@@ -601,6 +601,27 @@ jobs:
             http://localhost:8989/api/v3/command | head -c 500; echo
           rm -f /tmp/wkey2 /tmp/kc2
 
+      - name: Disk audit (run always)
+        run: |
+          IP="${{ steps.slots.outputs.ip }}"
+          ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
+          echo "=== CT filesystems ==="
+          df -h | head -20
+          echo ""
+          echo "=== /opt/torrent usage (top 20) ==="
+          du -sh /opt/torrent/* 2>/dev/null | sort -h | tail -10
+          echo ""
+          echo "=== qBittorrent container /config ==="
+          docker exec qbittorrent sh -c 'df -h /config; echo ""; du -sh /config/* 2>/dev/null | sort -h | tail -15' || true
+          echo ""
+          echo "=== qBT container: /config/Downloads subfolders and sizes ==="
+          docker exec qbittorrent sh -c 'du -sh /config/Downloads/*/ 2>/dev/null | sort -h | tail -20' || true
+          echo ""
+          echo "=== NFS target /mnt/media/downloads ==="
+          df -h /mnt/media
+          du -sh /mnt/media/downloads/* 2>/dev/null | sort -h | tail -5
+          REMOTE
+
       - name: Cleanup SSH key
         if: always()
         run: rm -f /tmp/torrent_debug_key
