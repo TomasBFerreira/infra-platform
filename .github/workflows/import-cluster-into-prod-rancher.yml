@@ -1,0 +1,141 @@
+name: Import a k3s cluster into prod Rancher
+
+# Imports an existing k3s cluster (dev or qa) into the prod Rancher
+# instance so it shows up in the prod UI for cross-env visibility.
+#
+# Idempotent — if the cluster is already imported under the same name
+# the workflow skips the create and just re-applies the registration
+# manifest (safe; the agent reads the latest credentials).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: env whose k3s to import (target cluster)
+        type: choice
+        required: true
+        options: [dev, qa]
+      cluster_name:
+        description: name to register in prod Rancher
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  import:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      TARGET_ENV:  ${{ inputs.target_env }}
+      CLUSTER_NAME: ${{ inputs.cluster_name }}
+    steps:
+      - name: Resolve names + IPs
+        run: |
+          V="${VAULT_ADDR%/}"; [[ "$V" != http://* && "$V" != https://* ]] && V="http://$V"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+          # Default cluster name = target env
+          CLUSTER_NAME="${CLUSTER_NAME:-$TARGET_ENV}"
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          # Prod rancher
+          PROD_RANCHER_IP=192.168.10.2
+          PROD_RANCHER_HOST=rancher.databaes.net
+          echo "PROD_RANCHER_IP=$PROD_RANCHER_IP" >> $GITHUB_ENV
+          echo "PROD_RANCHER_HOST=$PROD_RANCHER_HOST" >> $GITHUB_ENV
+          # Target worker IP from Vault
+          TARGET_IP=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$V/v1/secret/data/worker-node/$TARGET_ENV/active-slot" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['ip'])")
+          echo "TARGET_IP=$TARGET_IP" >> $GITHUB_ENV
+
+      - name: Get prod Rancher API token
+        run: |
+          PASS=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "${VAULT_ADDR}/v1/secret/data/rancher/prod/bootstrap" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['data']['password'])")
+          LOGIN=$(curl -sk -H "Host: $PROD_RANCHER_HOST" \
+            -X POST "https://$PROD_RANCHER_IP/v3-public/localProviders/local?action=login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"admin\",\"password\":\"$PASS\",\"ttl\":900000}")
+          TOK=$(echo "$LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          [ -z "$TOK" ] && { echo "login failed: $LOGIN"; exit 1; }
+          echo "::add-mask::$TOK"
+          echo "RANCHER_TOKEN=$TOK" >> $GITHUB_ENV
+
+      - name: Find existing cluster or create
+        run: |
+          set +e
+          BODY=$(curl -sk -H "Host: $PROD_RANCHER_HOST" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://$PROD_RANCHER_IP/v3/clusters?name=$CLUSTER_NAME")
+          EXISTING_ID=$(echo "$BODY" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          xs=[c for c in d.get('data',[]) if c.get('name')=='$CLUSTER_NAME']
+          print(xs[0]['id'] if xs else '')" 2>/dev/null)
+          if [ -n "$EXISTING_ID" ]; then
+            echo "cluster $CLUSTER_NAME exists: $EXISTING_ID"
+            CID=$EXISTING_ID
+          else
+            RESP=$(curl -sk -H "Host: $PROD_RANCHER_HOST" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              -H "Content-Type: application/json" \
+              -X POST "https://$PROD_RANCHER_IP/v3/clusters" \
+              -d "{\"name\":\"$CLUSTER_NAME\",\"description\":\"Imported $TARGET_ENV k3s\",\"type\":\"cluster\",\"import\":true}")
+            CID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+            echo "created cluster $CLUSTER_NAME: $CID"
+          fi
+          echo "CLUSTER_ID=$CID" >> $GITHUB_ENV
+
+      - name: Get registration manifest URL
+        run: |
+          # Find or create the cluster registration token
+          BODY=$(curl -sk -H "Host: $PROD_RANCHER_HOST" \
+            -H "Authorization: Bearer $RANCHER_TOKEN" \
+            "https://$PROD_RANCHER_IP/v3/clusterregistrationtokens?clusterId=$CLUSTER_ID")
+          MANIFEST_URL=$(echo "$BODY" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          urls=[t.get('manifestUrl') for t in d.get('data',[]) if t.get('manifestUrl')]
+          print(urls[0] if urls else '')" 2>/dev/null)
+          if [ -z "$MANIFEST_URL" ]; then
+            RESP=$(curl -sk -H "Host: $PROD_RANCHER_HOST" \
+              -H "Authorization: Bearer $RANCHER_TOKEN" \
+              -H "Content-Type: application/json" \
+              -X POST "https://$PROD_RANCHER_IP/v3/clusterregistrationtokens" \
+              -d "{\"type\":\"clusterRegistrationToken\",\"clusterId\":\"$CLUSTER_ID\"}")
+            MANIFEST_URL=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['manifestUrl'])")
+          fi
+          echo "manifest URL: $MANIFEST_URL"
+          echo "MANIFEST_URL=$MANIFEST_URL" >> $GITHUB_ENV
+
+      - name: Pull SSH key + kubeconfig for target worker
+        run: |
+          mkdir -p keys && chmod 700 keys
+          curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/ssh_keys/worker_node_worker" \
+            | python3 -c 'import sys,json,os; d=json.load(sys.stdin); k=d["data"]["data"]["private_key"]; open("keys/w","w").write(k if k.endswith("\n") else k+"\n")'
+          chmod 600 keys/w
+          mkdir -p $HOME/.kube
+          ssh -i keys/w -o StrictHostKeyChecking=no root@$TARGET_IP "cat /etc/rancher/k3s/k3s.yaml" \
+            | sed "s/127.0.0.1/$TARGET_IP/g" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Apply registration manifest to target cluster
+        run: |
+          # The manifest URL is served by Rancher itself; download and apply.
+          MURL_HOST=$(echo "$MANIFEST_URL" | sed 's|^https\?://||;s|/.*||')
+          curl -sk -H "Host: $MURL_HOST" "$MANIFEST_URL" -o /tmp/cluster-register.yaml
+          [ ! -s /tmp/cluster-register.yaml ] && { echo "registration manifest empty"; exit 1; }
+          echo "manifest size: $(wc -c < /tmp/cluster-register.yaml) bytes"
+          kubectl apply -f /tmp/cluster-register.yaml
+
+      - name: Wait for cattle-cluster-agent
+        run: |
+          for i in $(seq 1 30); do
+            STATE=$(kubectl -n cattle-system get pod -l app=cattle-cluster-agent -o jsonpath='{.items[0].status.phase}' 2>/dev/null)
+            echo "attempt $i: cluster-agent phase=$STATE"
+            [ "$STATE" = "Running" ] && break
+            sleep 10
+          done
+          kubectl -n cattle-system get pod -l app=cattle-cluster-agent -o wide
