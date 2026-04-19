@@ -607,28 +607,22 @@ jobs:
         run: |
           IP="${{ steps.slots.outputs.ip }}"
           ssh -i /tmp/torrent_debug_key -o StrictHostKeyChecking=no root@"$IP" bash <<'REMOTE'
-          set -e
+          # Intentionally NOT using set -e: disk is 100% full, many ordinary operations
+          # (mktemp, curl cookie-jar) may fail. Fall through and continue.
           SRC=/opt/qbittorrent/config/Downloads
           DEST=/mnt/media/downloads/tv-sonarr
+
+          # Use /run (tmpfs, 6.3G) for any temp files — root FS is out of space
+          COOKIE=/run/qbt.cookie
+          : > "$COOKIE" 2>/dev/null
 
           echo "=== Pre-rescue state ==="
           df -h / /mnt/media | head -5
           ls -la "$SRC/"
 
-          # Pause all torrents via API first (so qBT doesn't try to write during the move)
-          echo ""
-          echo "=== Pausing all torrents in qBT ==="
-          COOKIE=$(mktemp -p /mnt/media/tmp 2>/dev/null || mktemp)
-          curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
-            http://127.0.0.1:8080/api/v2/auth/login > /dev/null
-          curl -s -b "$COOKIE" -d "hashes=all" http://127.0.0.1:8080/api/v2/torrents/pause > /dev/null
-          echo "paused"
-          sleep 2
-
           echo ""
           echo "=== Stopping qBittorrent container (release file locks) ==="
           docker stop qbittorrent
-          # docker stop may take a few seconds
           sleep 3
 
           echo ""
@@ -685,7 +679,7 @@ jobs:
           done
 
           # Re-auth (new session)
-          rm -f "$COOKIE"; COOKIE=$(mktemp)
+          : > "$COOKIE"
           curl -s -c "$COOKIE" -d "username=admin&password=adminadmin" \
             http://127.0.0.1:8080/api/v2/auth/login > /dev/null
 
@@ -699,10 +693,10 @@ jobs:
           echo ""
           echo "=== Relocating the 3 Narcos torrents via setLocation ==="
           # Identify by name match
-          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /tmp/t.json
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /run/t.json
           HASHES=$(python3 -c "
           import json
-          t=json.load(open('/tmp/t.json'))
+          t=json.load(open('/run/t.json'))
           for x in t:
               if 'Narcos' in x.get('name',''):
                   print(x['hash'])
@@ -728,10 +722,10 @@ jobs:
 
           echo ""
           echo "=== Post-rescue qBT state ==="
-          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /tmp/t.json
+          curl -s -b "$COOKIE" 'http://127.0.0.1:8080/api/v2/torrents/info?filter=all' > /run/t.json
           python3 -c "
           import json
-          t=json.load(open('/tmp/t.json'))
+          t=json.load(open('/run/t.json'))
           for x in t:
               n=x.get('name','')
               if 'Narcos' in n or x.get('state') in ('error','stalledDL','downloading','checkingDL'):
@@ -740,7 +734,7 @@ jobs:
           echo ""
           echo "=== Final disk state ==="
           df -h / /mnt/media | head -5
-          rm -f "$COOKIE" /tmp/t.json
+          rm -f "$COOKIE" /run/t.json
           REMOTE
 
       - name: Disk audit (run always)
