@@ -200,11 +200,11 @@ jobs:
           echo "=== L. Pull kubeconfig and inspect Sonarr/Radarr download clients ==="
           # Resolve worker node IP (prod)
           export VAULT_ADDR="$BOOT_VAULT_ADDR"; export VAULT_TOKEN="$BOOT_VAULT_TOKEN"
-          WORKER_IP=$(vault kv get -field=ip secret/worker-node-gpu/$ENV/active-slot 2>/dev/null \
-                      || vault kv get -field=ip secret/worker-node/$ENV/active-slot 2>/dev/null \
+          WORKER_IP=$(vault kv get -field=ip secret/worker-node/$ENV/active-slot 2>/dev/null \
+                      || vault kv get -field=ip secret/worker-node-gpu/$ENV/active-slot 2>/dev/null \
                       || echo "192.168.10.21")
           echo "Using worker IP: $WORKER_IP"
-          vault kv get -field=private_key secret/ssh_keys/worker_node \
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
             | awk 'NF > 0' > /tmp/worker_key
           chmod 600 /tmp/worker_key
           ssh -i /tmp/worker_key -o StrictHostKeyChecking=no root@"$WORKER_IP" \
