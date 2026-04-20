@@ -36,6 +36,7 @@ dev:
   - TomasBFerreira/ops-portal-shell
   - TomasBFerreira/otel-monitoring
   - TomasBFerreira/streambox
+  - TomasBFerreira/traefik-gitops
   - TomasBFerreira/wikijs
 
 qa:
@@ -45,4 +46,13 @@ qa:
 
 prod:
   - TomasBFerreira/infra-platform
+  - TomasBFerreira/ops-portal-audit
+  - TomasBFerreira/ops-portal-cmdb
+  - TomasBFerreira/ops-portal-deployments
+  - TomasBFerreira/ops-portal-domain
+  - TomasBFerreira/ops-portal-identity
+  - TomasBFerreira/ops-portal-incidents
+  - TomasBFerreira/ops-portal-infrastructure
+  - TomasBFerreira/ops-portal-shell
+  - TomasBFerreira/traefik-gitops
   # Populate as prod rollout continues. Mirror dev for any app that has a prod deploy.
