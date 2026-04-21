@@ -1,0 +1,15 @@
+[Unit]
+Description=Re-assert AdGuard rewrites against current Tailscale IP
+After=tailscaled.service AdGuardHome.service network-online.target
+Wants=tailscaled.service AdGuardHome.service
+ConditionFileNotEmpty=/etc/adguard-rewrite-sync.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/adguard-rewrite-sync
+# Don't kill the VM on transient AdGuard/Tailscale flaps — the timer will retry.
+SuccessExitStatus=0
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

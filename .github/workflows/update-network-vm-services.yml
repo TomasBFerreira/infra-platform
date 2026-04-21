@@ -87,7 +87,6 @@ jobs:
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -i ${SSH_KEY_PATH}'" \
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
-            -e "adguard_dev_rewrite_ip=${ACTIVE_IP}" \
             -e "otel_collector_endpoint=$OTEL_ENDPOINT" \
             -e "deploy_env=${ENV}" \
             -e "cf_dns_api_token=$CF_DNS_TOKEN" \
