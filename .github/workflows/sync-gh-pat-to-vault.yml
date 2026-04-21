@@ -1,0 +1,36 @@
+name: Sync GH_PAT to Vault
+
+# Tiny sync: `secrets.GH_PAT` (rotated in GH repo settings) → Vault at
+# `secret/github-runner/gh_pat`. Downstream consumers (runner-register
+# ansible playbook, cross-repo CI checkouts) all read from Vault.
+#
+# Use this any time the GH_PAT GitHub Actions secret is rotated — faster
+# than running the full github-runner_pipeline_self_hosted.yml, which
+# also rebuilds the runner LXC as a side effect.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: [self-hosted, management]
+    steps:
+      - name: Write GH_PAT to Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv put secret/github-runner/gh_pat token="${{ secrets.GH_PAT }}"
+
+      - name: Smoke-test the token against api.github.com
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          TOKEN=$(vault kv get -field=token secret/github-runner/gh_pat)
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: token $TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/TomasBFerreira/infra-platform)
+          echo "GitHub API response: $CODE"
+          test "$CODE" = "200"
