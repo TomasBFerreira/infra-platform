@@ -218,9 +218,9 @@
       ADGUARD_URL=http://127.0.0.1:{{ adguard_port }}
       ADGUARD_USER={{ adguard_username }}
       ADGUARD_PASS={{ adguard_password }}
-      DEV_DOMAINS={{ adguard_dev_rewrites | map(attribute='domain') | join(' ') }}
-      QA_DOMAINS={{ adguard_qa_rewrites | map(attribute='domain') | join(' ') }}
-      PROD_DOMAINS={{ adguard_prod_rewrites | map(attribute='domain') | join(' ') }}
+      DEV_DOMAINS="{{ adguard_dev_rewrites | map(attribute='domain') | join(' ') }}"
+      QA_DOMAINS="{{ adguard_qa_rewrites | map(attribute='domain') | join(' ') }}"
+      PROD_DOMAINS="{{ adguard_prod_rewrites | map(attribute='domain') | join(' ') }}"
       DEV_HOSTNAME_RE=^dev-network-vm-
       QA_HOSTNAME_RE=^qa-network-vm-
       PROD_HOSTNAME_RE=^prod-network-vm-
