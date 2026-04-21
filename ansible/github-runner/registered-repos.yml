@@ -41,11 +41,6 @@ dev:
 
 qa:
   - TomasBFerreira/infra-platform
-  - TomasBFerreira/otel-monitoring
-  # Extend as qa parity grows. Only repos with a qa deploy target should go here.
-
-prod:
-  - TomasBFerreira/infra-platform
   - TomasBFerreira/ops-portal-audit
   - TomasBFerreira/ops-portal-cmdb
   - TomasBFerreira/ops-portal-deployments
@@ -54,5 +49,25 @@ prod:
   - TomasBFerreira/ops-portal-incidents
   - TomasBFerreira/ops-portal-infrastructure
   - TomasBFerreira/ops-portal-shell
+  - TomasBFerreira/otel-monitoring
+  # Every ops-portal-* service has a qa deploy target (workflow has env=qa option).
+
+prod:
+  - TomasBFerreira/databaes-status-api
+  - TomasBFerreira/infra-platform
+  - TomasBFerreira/landing-page
+  - TomasBFerreira/media-stack
+  - TomasBFerreira/nextcloud
+  - TomasBFerreira/ops-portal-audit
+  - TomasBFerreira/ops-portal-cmdb
+  - TomasBFerreira/ops-portal-deployments
+  - TomasBFerreira/ops-portal-domain
+  - TomasBFerreira/ops-portal-identity
+  - TomasBFerreira/ops-portal-incidents
+  - TomasBFerreira/ops-portal-infrastructure
+  - TomasBFerreira/ops-portal-shell
+  - TomasBFerreira/streambox
   - TomasBFerreira/traefik-gitops
-  # Populate as prod rollout continues. Mirror dev for any app that has a prod deploy.
+  - TomasBFerreira/wikijs
+  # Every repo with a `prod` deploy option in its workflow. otel-monitoring
+  # has no prod deploy (runs on a single docker-compose LXC) so is omitted.
