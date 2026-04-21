@@ -1,0 +1,136 @@
+name: Replay Runner Registrations
+
+# Re-registers every repo listed in registered-repos.yml against an
+# existing runner LXC, without reprovisioning. Use when a runner LXC
+# was rebuilt (and lost its /opt/github-runners state) but you don't
+# want to rerun the full github-runner_pipeline_self_hosted.yml pipeline
+# (which would also rebuild the LXC from Terraform).
+#
+# Idempotent — ansible/github-runner/github-runner_setup.yml registers a
+# fresh runner per repo via GH API each run; extra registrations get
+# garbage-collected by GitHub when the old ones stop heartbeating.
+#
+# Usage:
+#   gh workflow run replay-runner-registrations.yml --field env=prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Environment runner LXC to replay registrations against'
+        type: choice
+        options: [dev, prod, qa]
+        default: prod
+      runner_ip:
+        description: 'Override runner LXC IP (optional; used if secret/github-runner/<env>/state is missing)'
+        required: false
+        default: ''
+
+jobs:
+  replay:
+    # Runs on management (not the env runner) so a fully-broken env LXC
+    # doesn't turn this into a chicken-and-egg problem.
+    runs-on: [self-hosted, management]
+    env:
+      VAULT_ADDR:             ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN:            ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      VAULT_BOOTSTRAP_ADDR:   ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN:        ${{ secrets.VAULT_DEV_TOKEN }}
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure Vault CLI is installed
+        run: |
+          if ! command -v vault &>/dev/null; then
+            curl -fsSL https://apt.releases.hashicorp.com/gpg \
+              | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+              | sudo tee /etc/apt/sources.list.d/hashicorp.list
+            sudo apt-get update -qq && sudo apt-get install -y vault
+          fi
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Fetch runner LXC SSH key
+        run: |
+          set -o pipefail
+          vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
+            | python3 -c "
+          import sys, textwrap
+          raw = sys.stdin.read().strip().replace('\r', '')
+          B = '-----BEGIN OPENSSH PRIVATE KEY-----'
+          E = '-----END OPENSSH PRIVATE KEY-----'
+          body = raw[raw.find(B)+len(B):raw.find(E)].replace(' ', '').replace('\n', '').replace('\t', '')
+          print(B); print(textwrap.fill(body, width=70)); print(E)
+          " > /tmp/runner_lxc_key
+          chmod 600 /tmp/runner_lxc_key
+          grep -q "BEGIN OPENSSH PRIVATE KEY" /tmp/runner_lxc_key \
+            || { echo "ERROR: key missing PEM header — check secret/ssh_keys/github_runner_worker"; exit 1; }
+
+      - name: Resolve runner LXC IP
+        run: |
+          declare -A STATIC_IPS=([dev]="192.168.50.201" [prod]="192.168.50.101" [qa]="192.168.50.301")
+          RUNNER_IP=$(vault kv get -field=ip secret/github-runner/${{ inputs.env }}/state 2>/dev/null || true)
+          if [[ -z "${RUNNER_IP}" ]]; then
+            RUNNER_IP="${{ inputs.runner_ip }}"
+            [[ -n "${RUNNER_IP}" ]] && echo "INFO: vault path not found — using runner_ip input: ${RUNNER_IP}"
+          fi
+          if [[ -z "${RUNNER_IP}" ]]; then
+            RUNNER_IP="${STATIC_IPS[${{ inputs.env }}]}"
+            [[ -n "${RUNNER_IP}" ]] && echo "INFO: falling back to static IP for env=${{ inputs.env }}: ${RUNNER_IP}"
+          fi
+          if [[ -z "${RUNNER_IP}" ]]; then
+            echo "ERROR: could not resolve runner LXC IP for env=${{ inputs.env }}" >&2
+            exit 1
+          fi
+          echo "RUNNER_IP=${RUNNER_IP}" >> $GITHUB_ENV
+
+      - name: Replay every repo from registered-repos.yml[${{ inputs.env }}]
+        run: |
+          set -euo pipefail
+          mapfile -t REPOS < <(python3 -c "
+          import yaml
+          data = yaml.safe_load(open('ansible/github-runner/registered-repos.yml')) or {}
+          for repo in data.get('${{ inputs.env }}', []) or []:
+              print(repo)
+          ")
+          if [ ${#REPOS[@]} -eq 0 ]; then
+            echo "No repos listed for env=${{ inputs.env }} — nothing to do."
+            exit 0
+          fi
+          echo "Replaying ${#REPOS[@]} repo registration(s) on runner ${RUNNER_IP}…"
+          FAILED=()
+          for repo in "${REPOS[@]}"; do
+            echo ""
+            echo "──────────────────────────────────────────────────"
+            echo "▶ ${repo}"
+            echo "──────────────────────────────────────────────────"
+            if ansible-playbook \
+                -i "${RUNNER_IP}," \
+                --private-key /tmp/runner_lxc_key \
+                -u root \
+                -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+                -e "runner_env=${{ inputs.env }}" \
+                -e "github_repo=${repo}" \
+                -e "VAULT_BOOTSTRAP_ADDR=${VAULT_ADDR}" \
+                ansible/github-runner/github-runner_setup.yml; then
+              echo "✓ ${repo} registered"
+            else
+              echo "✗ ${repo} failed"
+              FAILED+=("${repo}")
+            fi
+          done
+          echo ""
+          if [ ${#FAILED[@]} -gt 0 ]; then
+            echo "FAILED: ${FAILED[*]}"
+            exit 1
+          fi
+          echo "All ${#REPOS[@]} registrations completed."
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/runner_lxc_key
