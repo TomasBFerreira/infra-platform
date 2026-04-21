@@ -184,3 +184,64 @@
        else [])) }}
   when: adguard_username != '' and adguard_password != ''
   no_log: true
+
+# ── Self-heal rewrites against Tailscale IP rotation ────────────────────────
+# The upsert tasks above use hardcoded `adguard_env_tailscale_ips` for the
+# answer — correct at vars-edit time, stale as soon as a netvm is
+# re-registered into Tailscale. The local sync timer below re-asserts
+# rewrites against `tailscale status --json` on every boot + daily, so a
+# stale vars entry (or a peer rotation between Ansible runs) self-heals.
+- name: Ensure jq + curl are available (rewrite-sync script dependencies)
+  apt:
+    name:
+      - jq
+      - curl
+    state: present
+    update_cache: false
+  when: ansible_os_family == 'Debian'
+
+- name: Install adguard-rewrite-sync script
+  copy:
+    src: adguard-rewrite-sync.sh
+    dest: /usr/local/bin/adguard-rewrite-sync
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Install adguard-rewrite-sync env file
+  copy:
+    dest: /etc/adguard-rewrite-sync.env
+    mode: '0600'
+    owner: root
+    group: root
+    content: |
+      ADGUARD_URL=http://127.0.0.1:{{ adguard_port }}
+      ADGUARD_USER={{ adguard_username }}
+      ADGUARD_PASS={{ adguard_password }}
+      DEV_DOMAINS={{ adguard_dev_rewrites | map(attribute='domain') | join(' ') }}
+      QA_DOMAINS={{ adguard_qa_rewrites | map(attribute='domain') | join(' ') }}
+      PROD_DOMAINS={{ adguard_prod_rewrites | map(attribute='domain') | join(' ') }}
+      DEV_HOSTNAME_RE=^dev-network-vm-
+      QA_HOSTNAME_RE=^qa-network-vm-
+      PROD_HOSTNAME_RE=^prod-network-vm-
+  when: adguard_username != '' and adguard_password != ''
+  no_log: true
+
+- name: Install adguard-rewrite-sync systemd service
+  copy:
+    src: adguard-rewrite-sync.service
+    dest: /etc/systemd/system/adguard-rewrite-sync.service
+    mode: '0644'
+
+- name: Install adguard-rewrite-sync systemd timer
+  copy:
+    src: adguard-rewrite-sync.timer
+    dest: /etc/systemd/system/adguard-rewrite-sync.timer
+    mode: '0644'
+
+- name: Enable + start adguard-rewrite-sync timer
+  systemd:
+    name: adguard-rewrite-sync.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes

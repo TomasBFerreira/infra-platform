@@ -8,8 +8,16 @@ adguard_data_path: /opt/adguard
 # public Cloudflare).
 # Keep in lock-step with secret/network-vm/<env>/active-slot in Vault;
 # change here when a slot-flip persists.
+#
+# NOTE (2026-04-21): these entries are bootstrap values only. At steady state
+# they WILL drift from reality whenever Tailscale re-registers a netvm (slot
+# flips, auth-key rotation, node re-creation). The adguard-rewrite-sync
+# systemd timer on each netvm re-asserts rewrites against `tailscale status`
+# every boot + daily, so a stale entry here is self-healed within 24h.
+# Update these when convenient (e.g. post-slot-flip) so a freshly provisioned
+# netvm doesn't serve wrong answers for up to 2 min before the first sync.
 adguard_env_tailscale_ips:
-  dev:  100.126.60.34  # dev-network-vm-green
+  dev:  100.71.47.6    # dev-network-vm-blue (updated 2026-04-21)
   qa:   100.123.3.27   # qa-network-vm-green
   prod: 100.125.152.26 # prod-network-vm-blue
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily AdGuard rewrite resync (+ 2 min after boot)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=24h
+Persistent=true
+Unit=adguard-rewrite-sync.service
+
+[Install]
+WantedBy=timers.target
