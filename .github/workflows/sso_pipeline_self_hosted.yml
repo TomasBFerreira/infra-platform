@@ -502,17 +502,23 @@ jobs:
           services = http.setdefault("services", {})
 
           # --- Middleware: forwardAuth ---
+          # Authentik's embedded outpost serves /outpost.goauthentik.io/ on port
+          # 9000 alongside the core API. Port 9300 is the Prometheus metrics
+          # endpoint and returns a Go-stdlib 404 for every request — using it
+          # here silently 404s every SSO-gated host (this caused INC #111 on
+          # 2026-04-22 when today's prod flip auto-committed :9300 to
+          # traefik-gitops).
           if mw_key in middlewares:
               fa = middlewares[mw_key].get("forwardAuth", {})
               old_addr = fa.get("address", "")
               if old_addr:
-                  new_addr = re.sub(r"https?://[^/]+", f"http://{new_ip}:9300", old_addr)
+                  new_addr = re.sub(r"https?://[^/]+", f"http://{new_ip}:9000", old_addr)
                   fa["address"] = new_addr
                   print(f"forwardAuth: {old_addr} → {new_addr}")
           else:
               middlewares[mw_key] = {
                   "forwardAuth": {
-                      "address": f"http://{new_ip}:9300/outpost.goauthentik.io/auth/traefik",
+                      "address": f"http://{new_ip}:9000/outpost.goauthentik.io/auth/traefik",
                       "authResponseHeaders": AUTH_RESPONSE_HEADERS,
                       "trustForwardHeader": True,
                   }
@@ -544,14 +550,16 @@ jobs:
               print(f"Updated service {auth_svc_key} → {new_ip}")
 
           # --- Service: auth-{env}-outpost-service ---
+          # Same port note as the middleware above — the outpost proxy path
+          # lives on 9000, not 9300.
           if svc_key in services:
               lb = services[svc_key].get("loadBalancer", {})
               old_servers = lb.get("servers", [])
-              lb["servers"] = [{"url": f"http://{new_ip}:9300"}]
+              lb["servers"] = [{"url": f"http://{new_ip}:9000"}]
               print(f"outpost servers: {old_servers} → {lb['servers']}")
           else:
               services[svc_key] = {
-                  "loadBalancer": {"servers": [{"url": f"http://{new_ip}:9300"}]}
+                  "loadBalancer": {"servers": [{"url": f"http://{new_ip}:9000"}]}
               }
               print(f"Created outpost service {svc_key}")
 
