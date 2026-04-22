@@ -1,4 +1,4 @@
-name: Provision Authentik Groups
+name: Provision Authentik Config
 
 on:
   workflow_dispatch:
@@ -63,6 +63,7 @@ jobs:
         env:
           TF_VAR_authentik_url:   ${{ env.AUTHENTIK_URL }}
           TF_VAR_authentik_token: ${{ env.AUTHENTIK_TOKEN }}
+          TF_VAR_environment:     ${{ inputs.environment }}
         run: |
           import_group() {
             local group_name="$1"
@@ -85,12 +86,115 @@ jobs:
           import_group "ops-operators" "authentik_group.ops_operators"
           import_group "ops-viewers"   "authentik_group.ops_viewers"
 
+      - name: Import existing proxy providers + applications if present
+        working-directory: terraform/authentik
+        env:
+          TF_VAR_authentik_url:    ${{ env.AUTHENTIK_URL }}
+          TF_VAR_authentik_token:  ${{ env.AUTHENTIK_TOKEN }}
+          TF_VAR_environment:      ${{ inputs.environment }}
+        run: |
+          python3 <<'PY'
+          import json, os, subprocess, sys, urllib.parse, urllib.request
+          env    = os.environ['TF_VAR_environment']
+          token  = os.environ['AUTHENTIK_TOKEN']
+          base   = os.environ['AUTHENTIK_URL']
+          services = {
+              "tomajflix":   "Tomaj Flix",
+              "prowlarr":    "Prowlarr",
+              "radarr":      "Radarr",
+              "sonarr":      "Sonarr",
+              "seerr":       "Seerr",
+              "semaphore":   "Semaphore",
+              "stremiotest": "Stremio Test",
+              "jacketttest": "Jackett Test",
+          }
+          def api(path):
+              req = urllib.request.Request(f"{base}{path}",
+                  headers={'Authorization': f"Bearer {token}"})
+              return json.load(urllib.request.urlopen(req))
+          def tf_import(addr, pk):
+              # TF_VAR_* env vars (set at step level) feed the provider and
+              # environment variables to terraform automatically.
+              r = subprocess.run(["terraform", "import", addr, str(pk)])
+              if r.returncode != 0:
+                  # Already imported on a previous run, or the target resource
+                  # was renamed — surface but don't fail the step.
+                  print(f"WARN: terraform import {addr} rc={r.returncode}")
+          for key, display in services.items():
+              want_name = f"{display} ({env})"
+              want_slug = f"{key}-{env}"
+              # Proxy provider lookup by name (URL-encoded).
+              prov = api(f"/api/v3/providers/proxy/?name={urllib.parse.quote(want_name)}")
+              if prov.get('results'):
+                  tf_import(f'authentik_provider_proxy.forward["{key}"]',
+                            prov['results'][0]['pk'])
+                  print(f"imported provider {want_name}")
+              # Application lookup by slug.
+              app = api(f"/api/v3/core/applications/?slug={want_slug}")
+              if app.get('results'):
+                  tf_import(f'authentik_application.proxy["{key}"]',
+                            app['results'][0]['slug'])
+                  print(f"imported application {want_slug}")
+          PY
+
+      - name: Terraform Plan
+        working-directory: terraform/authentik
+        env:
+          TF_VAR_authentik_url:   ${{ env.AUTHENTIK_URL }}
+          TF_VAR_authentik_token: ${{ env.AUTHENTIK_TOKEN }}
+          TF_VAR_environment:     ${{ inputs.environment }}
+        run: terraform plan -out=/tmp/tfplan
+
       - name: Terraform Apply
         working-directory: terraform/authentik
         env:
           TF_VAR_authentik_url:   ${{ env.AUTHENTIK_URL }}
           TF_VAR_authentik_token: ${{ env.AUTHENTIK_TOKEN }}
-        run: terraform apply -auto-approve
+          TF_VAR_environment:     ${{ inputs.environment }}
+        run: terraform apply -auto-approve /tmp/tfplan
+
+      - name: Bind new proxy providers to embedded outpost
+        env:
+          ENV: ${{ inputs.environment }}
+        run: |
+          # A proxy provider is inert until it's attached to an outpost. The
+          # embedded outpost (shipped with Authentik) already hosts auth/ops/
+          # wikijs; we append the newly-declared providers to its existing
+          # provider list rather than replacing it.
+          python3 <<'PY'
+          import json, os, urllib.request
+          env   = os.environ['ENV']
+          token = os.environ['AUTHENTIK_TOKEN']
+          base  = os.environ['AUTHENTIK_URL']
+          def api(path, method='GET', data=None):
+              req = urllib.request.Request(
+                  f"{base}{path}",
+                  data=json.dumps(data).encode() if data else None,
+                  method=method,
+                  headers={'Authorization': f"Bearer {token}",
+                           'Content-Type': 'application/json'},
+              )
+              return json.load(urllib.request.urlopen(req))
+          outposts = api('/api/v3/outposts/instances/?page_size=100')['results']
+          embedded = next((o for o in outposts
+                           if o['name'] == 'authentik Embedded Outpost'), None)
+          if embedded is None:
+              raise SystemExit('ERROR: embedded outpost not found in Authentik')
+          existing = set(embedded.get('providers', []))
+          providers = api('/api/v3/providers/proxy/?page_size=100')['results']
+          want = {p['pk'] for p in providers
+                  if p.get('name', '').endswith(f" ({env})")}
+          new = sorted(want - existing)
+          if not new:
+              print(f"No change — all {len(want)} target providers already "
+                    f"bound to embedded outpost")
+          else:
+              union = sorted(existing | want)
+              api(f"/api/v3/outposts/instances/{embedded['pk']}/",
+                  method='PATCH', data={'providers': union})
+              print(f"Bound {len(new)} new providers to embedded outpost "
+                    f"(pks={new})")
+          PY
 
       - name: Cleanup
         if: always()
