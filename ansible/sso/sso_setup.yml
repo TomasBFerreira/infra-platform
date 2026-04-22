@@ -530,6 +530,115 @@
             discovery_url="{{ _sso_host_browser }}/application/o/rancher/"
       no_log: true
 
+    # ── Authentik API — configure Directus OIDC provider (LP-F10) ───────────
+    # Directus v11 expects callbacks at /auth/login/<provider>/callback — the
+    # provider name is the Directus-side driver slug (not Authentik's slug).
+    # We use `oidc` there and keep the Authentik application slug the same for
+    # consistency.
+
+    - name: Check if Directus OAuth2 provider already exists
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/?name=Directus"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_directus_provider
+
+    - name: Set Directus resource facts
+      set_fact:
+        _directus_provider_exists: "{{ existing_directus_provider.json.pagination.count > 0 }}"
+        _existing_directus_client_id: "{{ existing_directus_provider.json.results[0].client_id | default('') }}"
+        _existing_directus_client_secret: "{{ existing_directus_provider.json.results[0].client_secret | default('') }}"
+        _existing_directus_provider_pk: "{{ existing_directus_provider.json.results[0].pk | default('') }}"
+        _directus_redirect_uris:
+          - {url: "https://cms.databaes.net/auth/login/oidc/callback",     matching_mode: "strict"}
+          - {url: "https://cms-dev.databaes.net/auth/login/oidc/callback", matching_mode: "strict"}
+          - {url: "https://cms-qa.databaes.net/auth/login/oidc/callback",  matching_mode: "strict"}
+
+    - name: Create Directus OAuth2 provider in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/providers/oauth2/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Directus"
+          client_type: "confidential"
+          redirect_uris: "{{ _directus_redirect_uris }}"
+          sub_mode: "user_email"
+          include_claims_in_id_token: true
+          signing_key: "{{ _signing_key }}"
+          authorization_flow: "{{ _auth_flow }}"
+          invalidation_flow: "{{ _invalidation_flow }}"
+          property_mappings: "{{ _scope_mappings }}"
+        status_code: 201
+      register: created_directus_provider
+      when: not _directus_provider_exists
+
+    - name: Resolve final Directus provider facts
+      set_fact:
+        _directus_provider_pk:     "{{ created_directus_provider.json.pk            if not _directus_provider_exists else _existing_directus_provider_pk }}"
+        _directus_client_id:       "{{ created_directus_provider.json.client_id     if not _directus_provider_exists else _existing_directus_client_id }}"
+        _directus_client_secret:   "{{ created_directus_provider.json.client_secret if not _directus_provider_exists else _existing_directus_client_secret }}"
+
+    - name: Check if Directus application already exists
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/?slug=directus"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: existing_directus_app
+
+    - name: Create Directus application in Authentik
+      uri:
+        url: "http://localhost:9000/api/v3/core/applications/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          name: "Directus"
+          slug: "directus"
+          provider: "{{ _directus_provider_pk }}"
+          open_in_new_tab: true
+          meta_launch_url: "https://cms.databaes.net"
+        status_code: 201
+      when: existing_directus_app.json.pagination.count == 0
+
+    - name: Store Directus OIDC credentials in env vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        case "{{ vault_env | default('dev') }}" in
+          dev)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_TOKEN') }}"
+            ;;
+          qa)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_QA_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_QA_TOKEN') }}"
+            ;;
+          prod)
+            export VAULT_ADDR="{{ lookup('env', 'VAULT_PROD_ADDR') }}"
+            export VAULT_TOKEN="{{ lookup('env', 'VAULT_PROD_TOKEN') }}"
+            ;;
+        esac
+        vault kv put secret/authentik/directus-oidc \
+          client_id="{{ _directus_client_id }}" \
+          client_secret="{{ _directus_client_secret }}" \
+          sso_ip="{{ ansible_host }}" \
+          discovery_url="{{ _sso_host_browser }}/application/o/directus/"
+
+        # Also write to bootstrap vault so the landing-page deploy-directus
+        # workflow can seed the Directus k8s Secret on fresh deploys.
+        VAULT_ADDR="{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}" \
+        VAULT_TOKEN="{{ lookup('env', 'VAULT_DEV_TOKEN') }}" \
+          vault kv put secret/authentik/{{ vault_env | default('dev') }}/directus-oidc \
+            client_id="{{ _directus_client_id }}" \
+            client_secret="{{ _directus_client_secret }}" \
+            sso_ip="{{ ansible_host }}" \
+            discovery_url="{{ _sso_host_browser }}/application/o/directus/"
+      no_log: true
+
     # Query Authentik for superuser groups (is_superuser=true on the group object).
     # We use group-based globalRoleBindings (groupPrincipalId) because Rancher's v3 API
     # does NOT accept userPrincipalName on globalRoleBindings — only groupPrincipalId or userId.
