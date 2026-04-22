@@ -8,3 +8,12 @@ variable "authentik_token" {
   type        = string
   sensitive   = true
 }
+
+variable "environment" {
+  description = "Target environment (dev|qa|prod). Non-prod envs get a -dev/-qa suffix on the subdomain of each proxy provider's external host."
+  type        = string
+  validation {
+    condition     = contains(["dev", "qa", "prod"], var.environment)
+    error_message = "environment must be one of: dev, qa, prod."
+  }
+}
