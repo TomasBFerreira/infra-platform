@@ -58,22 +58,32 @@ jobs:
         working-directory: terraform/authentik
         run: terraform init
 
-      - name: Import existing group if present
+      - name: Import existing groups if present
         working-directory: terraform/authentik
         env:
           TF_VAR_authentik_url:   ${{ env.AUTHENTIK_URL }}
           TF_VAR_authentik_token: ${{ env.AUTHENTIK_TOKEN }}
         run: |
-          GROUP_PK=$(curl -s \
-            -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
-            "${AUTHENTIK_URL}/api/v3/core/groups/?name=media-admin" \
-            | python3 -c "import json,sys;r=json.load(sys.stdin);results=r.get('results',[]);print(results[0]['pk'] if results else '')" 2>/dev/null)
-          if [ -n "$GROUP_PK" ]; then
-            echo "media-admin group exists (pk=$GROUP_PK) — importing into Terraform state"
-            terraform import authentik_group.media_admin "$GROUP_PK"
-          else
-            echo "media-admin group does not exist — will be created by apply"
-          fi
+          import_group() {
+            local group_name="$1"
+            local resource_name="$2"
+            local group_pk
+            group_pk=$(curl -s \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              "${AUTHENTIK_URL}/api/v3/core/groups/?name=${group_name}" \
+              | python3 -c "import json,sys;r=json.load(sys.stdin);results=r.get('results',[]);print(results[0]['pk'] if results else '')" 2>/dev/null)
+            if [ -n "$group_pk" ]; then
+              echo "$group_name group exists (pk=$group_pk) — importing into Terraform state"
+              terraform import "$resource_name" "$group_pk"
+            else
+              echo "$group_name group does not exist — will be created by apply"
+            fi
+          }
+
+          import_group "media-admin"   "authentik_group.media_admin"
+          import_group "ops-admins"    "authentik_group.ops_admins"
+          import_group "ops-operators" "authentik_group.ops_operators"
+          import_group "ops-viewers"   "authentik_group.ops_viewers"
 
       - name: Terraform Apply
         working-directory: terraform/authentik
