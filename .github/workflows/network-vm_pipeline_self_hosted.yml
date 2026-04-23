@@ -348,8 +348,14 @@ jobs:
           echo "ADGUARD_USER=$ADGUARD_USER" >> $GITHUB_ENV
           echo "ADGUARD_PASS=$ADGUARD_PASS" >> $GITHUB_ENV
           echo "CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN" >> $GITHUB_ENV
-          # Resolve monitoring-lxc endpoint for OTel sidecar (optional — ok if not deployed yet)
+          # Resolve monitoring-lxc endpoint for OTel sidecar (optional — ok if not deployed yet).
+          # Treat a literal "${...}" value as unset — prod held the unexpanded
+          # placeholder "${OTEL_COLLECTOR_ENDPOINT}" on 2026-04-23 (see PR #176).
           OTEL_ENDPOINT=$(vault kv get -field=collector_endpoint secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+          if [ -z "$OTEL_ENDPOINT" ] || [[ "$OTEL_ENDPOINT" == \$\{*\} ]]; then
+            MON_IP=$(vault kv get -field=ip secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+            [ -n "$MON_IP" ] && OTEL_ENDPOINT="${MON_IP}:4317"
+          fi
           echo "OTEL_ENDPOINT=$OTEL_ENDPOINT" >> $GITHUB_ENV
 
       - name: Run Ansible playbook

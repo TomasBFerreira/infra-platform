@@ -1,0 +1,83 @@
+name: Patch monitoring active-slot collector_endpoint
+
+# Background: on 2026-04-23 prod's secret/monitoring/prod/active-slot held the
+# literal string "${OTEL_COLLECTOR_ENDPOINT}" in the collector_endpoint field
+# (unexpanded placeholder from an earlier pipeline). The downstream fallback
+# (update-network-vm-services.yml, network-vm pipeline) passed this straight
+# to the Traefik template, which rendered a broken `endpoint:
+# "${OTEL_COLLECTOR_ENDPOINT}"` line and disabled telemetry.
+#
+# The root fix (PR #176) added a Jinja guard so any unresolved value cleanly
+# disables telemetry instead of silently breaking. This workflow is the
+# complementary fix for the Vault side: it rewrites the active-slot with the
+# current {slot, vmid, ip} plus a correct collector_endpoint derived from
+# the active IP. Safe to run any time; it only writes fields the monitoring
+# pipeline itself would write on a flip.
+#
+# Trigger with env=all to fix dev/qa/prod in one run, or pick a single env.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Which env(s) to patch'
+        type: choice
+        options: [dev, qa, prod, all]
+        default: prod
+
+jobs:
+  patch:
+    runs-on: self-hosted
+    steps:
+      - name: Decide env list
+        id: envs
+        run: |
+          case "${{ inputs.env }}" in
+            all) echo "list=dev qa prod" >> $GITHUB_OUTPUT ;;
+            *)   echo "list=${{ inputs.env }}" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Normalise Vault address
+        env:
+          VAULT_ADDR_RAW: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+        run: |
+          V="${VAULT_ADDR_RAW}"
+          if [[ "${V}" != http://* && "${V}" != https://* ]]; then
+            V="http://${V}"
+          fi
+          echo "VAULT_ADDR=${V}" >> $GITHUB_ENV
+
+      - name: Patch active-slot(s)
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          for ENV in ${{ steps.envs.outputs.list }}; do
+            echo "=== ${ENV} ==="
+            # Read the full active-slot; bail if the path is empty (nothing to patch).
+            SLOT=$(vault kv get -field=slot  secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+            VMID=$(vault kv get -field=vmid  secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+            IP=$(vault   kv get -field=ip    secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
+            OLD_EP=$(vault kv get -field=collector_endpoint secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "<unset>")
+            if [ -z "${IP}" ]; then
+              echo "  no active-slot recorded for ${ENV} — skipping"
+              continue
+            fi
+            NEW_EP="${IP}:4317"
+            if [ "${OLD_EP}" = "${NEW_EP}" ]; then
+              echo "  collector_endpoint already correct (${NEW_EP}) — no-op"
+              continue
+            fi
+            echo "  before: slot=${SLOT} vmid=${VMID} ip=${IP} collector_endpoint=${OLD_EP}"
+            echo "  after:  slot=${SLOT} vmid=${VMID} ip=${IP} collector_endpoint=${NEW_EP}"
+            # Rewrite rather than patch to guarantee only the four expected
+            # fields are present (kv patch would preserve any other leftover
+            # fields — not what we want given the whole reason for this
+            # workflow is cruft in the map).
+            vault kv put secret/monitoring/${ENV}/active-slot \
+              slot="${SLOT}" \
+              vmid="${VMID}" \
+              ip="${IP}" \
+              collector_endpoint="${NEW_EP}"
+            echo "  patched"
+          done
