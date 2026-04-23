@@ -9,6 +9,12 @@ services:
     network_mode: host
     environment:
       - TZ=Europe/London
+      # Surfaced to the container for sidecars / debugging only.
+      # Traefik's static YAML does NOT expand ${...} in-config — the actual
+      # OTLP endpoint is baked into traefik.yml at Ansible render time (see
+      # roles/traefik/templates/traefik.yml.j2).
+      - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT}
+      - DEPLOY_ENV=${DEPLOY_ENV:-dev}
       # Cloudflare DNS API token for Let's Encrypt DNS-01 wildcard cert (*.databaes.net).
       # Needs Zone:Zone:Read + Zone:DNS:Edit permission. Populated by Ansible from Vault.
       # LEGO (Traefik's ACME lib) requires CLOUDFLARE_ prefix; ZONE_API_TOKEN can be same token.
