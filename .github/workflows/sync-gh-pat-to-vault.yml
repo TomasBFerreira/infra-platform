@@ -1,12 +1,26 @@
-name: Sync GH_PAT to Vault
+name: Sync GH_PAT to Vault + downstream repos
 
-# Tiny sync: `secrets.GH_PAT` (rotated in GH repo settings) → Vault at
-# `secret/github-runner/gh_pat`. Downstream consumers (runner-register
-# ansible playbook, cross-repo CI checkouts) all read from Vault.
+# Triggered on GH_PAT rotation. Two jobs:
 #
-# Use this any time the GH_PAT GitHub Actions secret is rotated — faster
-# than running the full github-runner_pipeline_self_hosted.yml, which
-# also rebuilds the runner LXC as a side effect.
+#   1. `sync`       — writes `secrets.GH_PAT` (the rotated value in *this*
+#                     repo's settings) to Vault at
+#                     `secret/github-runner/gh_pat`. Consumers: runner-register
+#                     ansible playbook, anything that reads from Vault.
+#
+#   2. `propagate`  — mirrors that same PAT into every downstream repo's
+#                     `GH_PAT` Actions secret. Required because workflows in
+#                     other repos (e.g. otel-monitoring's `register-dns` job
+#                     doing a cross-repo checkout of traefik-gitops) use their
+#                     *own* repo-scoped `secrets.GH_PAT`, not Vault. Without
+#                     this step, rotating GH_PAT silently breaks every
+#                     downstream cross-repo CI checkout — observed on
+#                     2026-04-21 where register-dns failed in otel-monitoring
+#                     after a rotation landed only on infra-platform +
+#                     landing-page.
+#
+# Run this workflow any time the GH_PAT Actions secret is rotated — faster
+# than the full github-runner_pipeline_self_hosted.yml, which also rebuilds
+# the runner LXC as a side effect.
 
 on:
   workflow_dispatch:
@@ -34,3 +48,41 @@ jobs:
             https://api.github.com/repos/TomasBFerreira/infra-platform)
           echo "GitHub API response: $CODE"
           test "$CODE" = "200"
+
+  propagate:
+    needs: sync
+    runs-on: [self-hosted, management]
+    # Repo list: any repo whose workflows reference secrets.GH_PAT. Keep in
+    # sync when new repos are onboarded. Repos that never use GH_PAT (e.g.
+    # streambox, traefik-gitops) are intentionally omitted.
+    strategy:
+      fail-fast: false
+      matrix:
+        repo:
+          - otel-monitoring
+          - wikijs
+          - nextcloud
+          - landing-page
+          - databaes-status-api
+          - ops-portal-shell
+          - ops-portal-identity
+          - ops-portal-cmdb
+          - ops-portal-audit
+          - ops-portal-infrastructure
+          - ops-portal-incidents
+          - ops-portal-deployments
+          - ops-portal-domain
+    steps:
+      - name: Set GH_PAT in TomasBFerreira/${{ matrix.repo }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          PAT_VALUE: ${{ secrets.GH_PAT }}
+          TARGET_REPO: TomasBFerreira/${{ matrix.repo }}
+        run: |
+          # gh secret set reads the value from stdin (when no --body is given),
+          # encrypts with the target repo's public key, and uploads via the
+          # REST API. Needs GH_TOKEN with `repo` scope (admin:repo) for the
+          # destination. Value passed via env var (not command line) so it
+          # stays out of `ps`/logs.
+          printf '%s' "$PAT_VALUE" | gh secret set GH_PAT --repo "$TARGET_REPO"
+          echo "Updated GH_PAT on $TARGET_REPO"
