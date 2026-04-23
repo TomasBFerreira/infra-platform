@@ -61,20 +61,33 @@ certificatesResolvers:
           - "8.8.8.8:53"
 
 # OTLP metrics and traces to the central monitoring LXC.
-# Note: Traefik's static YAML does NOT expand ${VAR} env vars (Go yaml parser limitation),
-# so the collector endpoint is hardcoded here. For env-specific configs, use Ansible
-# to template this file per environment.
+# Note: Traefik's static YAML does NOT expand ${VAR} env vars (Go yaml parser
+# limitation — confirmed by `Unable to create OpenTelemetry meter provider:
+# invalid collector endpoint "${OTEL_COLLECTOR_ENDPOINT}"` on 2026-04-23), so
+# the endpoint must be baked in by Ansible at render time — not a ${...}
+# placeholder.
+#
+# Only render metrics/tracing blocks when otel_collector_endpoint is a
+# concrete host:port. If it's empty (monitoring not deployed yet in this env)
+# or still contains a ${...} placeholder (upstream pipeline didn't resolve
+# it), skip the sections entirely — Traefik then starts cleanly with
+# telemetry disabled instead of erroring in a crash loop.
+{% set _otel = otel_collector_endpoint | default('') %}
+{% if _otel and ':' in _otel and '${' not in _otel %}
 metrics:
   otlp:
     grpc:
-      endpoint: "{{ otel_collector_endpoint }}"
+      endpoint: "{{ _otel }}"
       insecure: true
 
 tracing:
   otlp:
     grpc:
-      endpoint: "{{ otel_collector_endpoint }}"
+      endpoint: "{{ _otel }}"
       insecure: true
+{% else %}
+# otel_collector_endpoint = {{ _otel | default('<unset>') }} — metrics/tracing disabled
+{% endif %}
 
 log:
   level: INFO
