@@ -18,7 +18,10 @@ jobs:
     env:
       ENV: ${{ inputs.environment }}
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+      # VAULT_DEV_TOKEN is dev-scoped and gets 403 on `secret/network-vm/prod/active-slot`.
+      # Use the bootstrap root token so this workflow works for all envs (the slot state
+      # paths under bootstrap vault are shared infra, intentionally readable by root).
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
