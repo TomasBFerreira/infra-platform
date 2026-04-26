@@ -33,6 +33,7 @@ dev:
   - TomasBFerreira/ops-portal-identity
   - TomasBFerreira/ops-portal-incidents
   - TomasBFerreira/ops-portal-infrastructure
+  - TomasBFerreira/ops-portal-pipelines
   - TomasBFerreira/ops-portal-shell
   - TomasBFerreira/otel-monitoring
   - TomasBFerreira/streambox
@@ -48,6 +49,7 @@ qa:
   - TomasBFerreira/ops-portal-identity
   - TomasBFerreira/ops-portal-incidents
   - TomasBFerreira/ops-portal-infrastructure
+  - TomasBFerreira/ops-portal-pipelines
   - TomasBFerreira/ops-portal-shell
   - TomasBFerreira/otel-monitoring
   # Every ops-portal-* service has a qa deploy target (workflow has env=qa option).
@@ -65,6 +67,7 @@ prod:
   - TomasBFerreira/ops-portal-identity
   - TomasBFerreira/ops-portal-incidents
   - TomasBFerreira/ops-portal-infrastructure
+  - TomasBFerreira/ops-portal-pipelines
   - TomasBFerreira/ops-portal-shell
   - TomasBFerreira/streambox
   - TomasBFerreira/traefik-gitops
