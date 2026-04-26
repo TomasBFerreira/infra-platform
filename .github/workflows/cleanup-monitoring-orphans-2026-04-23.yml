@@ -1,0 +1,201 @@
+name: Cleanup monitoring orphans (followups-2026-04-23 §C/D2)
+
+# One-shot workflow_dispatch to delete the specific orphan files left by the
+# 2026-04-23 observability repair day. Pinned to specific paths from the
+# followups doc so a second run no-ops cleanly. Default is dry_run=true —
+# you must explicitly set false to actually delete.
+#
+# Targets (per /app/issues/followups-2026-04-23.md §C and §D2):
+#   monitoring-lxc (active green slot, prod):
+#     C1 — /mnt/monitoring-data/loki/wal.orphan-20260423T064828Z   (326 MB)
+#     C1 — /mnt/monitoring-data/loki/wal.orphan-20260423T071640Z   (65 MB)
+#     C1 — /mnt/monitoring-data/loki/wal.orphan-20260423T093907Z   (21 MB)
+#     C1 — /mnt/monitoring-data/loki/compactor/deletion/delete_requests/delete_requests.bogus-file-20260423T064932Z (16 KB)
+#     D2 — /mnt/monitoring-data/loki/wal                           (pre-PR-#15 residue)
+#     C2 — /mnt/monitoring-data/tempo/generator/wal.orphan-20260423T065002Z (~0.8 MB)
+#   network-vm-blue (active blue slot, prod):
+#     C3 — /opt/traefik/config/traefik.yml.bak-20260423T105749Z
+#     C3 — /opt/traefik/docker-compose.yml.bak-20260423T*  (keep only most recent)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (list only, no rm)'
+        type: boolean
+        default: true
+
+jobs:
+  cleanup-monitoring-lxc:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          if [[ "$V" != http://* && "$V" != https://* ]]; then
+            V="http://${V}"
+          fi
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Resolve monitoring-lxc IP
+        run: |
+          MON_IP=$(vault kv get -field=ip secret/monitoring/prod/active-slot)
+          echo "MON_IP=${MON_IP}" >> $GITHUB_ENV
+          echo "Monitoring LXC: ${MON_IP}"
+
+      - name: Fetch SSH key
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/monitoring_worker \
+            | awk 'NF > 0' > /tmp/mon_key_${GITHUB_RUN_ID}
+          chmod 600 /tmp/mon_key_${GITHUB_RUN_ID}
+          echo "MON_KEY=/tmp/mon_key_${GITHUB_RUN_ID}" >> $GITHUB_ENV
+
+      - name: List orphans (Loki + Tempo) before action
+        run: |
+          set -euo pipefail
+          ssh -i ${MON_KEY} -o StrictHostKeyChecking=no root@${MON_IP} bash -s <<'REMOTE'
+            set -uo pipefail
+            echo "=== Loki orphan WAL dirs ==="
+            ls -ldh /mnt/monitoring-data/loki/wal.orphan-* 2>/dev/null || echo "  (none)"
+            echo "=== Loki bogus delete_requests file ==="
+            ls -lh /mnt/monitoring-data/loki/compactor/deletion/delete_requests/delete_requests.bogus-file-* 2>/dev/null || echo "  (none)"
+            echo "=== Loki pre-migration WAL dir ==="
+            ls -ldh /mnt/monitoring-data/loki/wal 2>/dev/null || echo "  (none)"
+            echo "=== Tempo orphan generator WAL ==="
+            ls -ldh /mnt/monitoring-data/tempo/generator/wal.orphan-* 2>/dev/null || echo "  (none)"
+          REMOTE
+
+      - name: Delete orphans (Loki + Tempo)
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          set -euo pipefail
+          ssh -i ${MON_KEY} -o StrictHostKeyChecking=no root@${MON_IP} bash -s <<'REMOTE'
+            set -euo pipefail
+            for d in /mnt/monitoring-data/loki/wal.orphan-*; do
+              [ -e "$d" ] || continue
+              echo "rm -rf $d"
+              rm -rf "$d"
+            done
+            for f in /mnt/monitoring-data/loki/compactor/deletion/delete_requests/delete_requests.bogus-file-*; do
+              [ -e "$f" ] || continue
+              echo "rm -f $f"
+              rm -f "$f"
+            done
+            if [ -d /mnt/monitoring-data/loki/wal ] && [ ! -L /mnt/monitoring-data/loki/wal ]; then
+              # Defensive: confirm running loki isn't writing here. Loki since PR #15
+              # uses /loki-wal (docker volume), not /loki/wal. The mtime should be
+              # before 2026-04-23 (the migration day). If mtime is recent, abort.
+              MTIME_EPOCH=$(stat -c %Y /mnt/monitoring-data/loki/wal)
+              CUTOFF=$(date -d '2026-04-23 00:00 UTC' +%s)
+              if [ "$MTIME_EPOCH" -gt "$CUTOFF" ]; then
+                echo "ABORT: /mnt/monitoring-data/loki/wal mtime $(date -d @$MTIME_EPOCH) is post-migration — Loki may still be writing here. Skipping D2 delete."
+              else
+                echo "rm -rf /mnt/monitoring-data/loki/wal"
+                rm -rf /mnt/monitoring-data/loki/wal
+              fi
+            fi
+            for d in /mnt/monitoring-data/tempo/generator/wal.orphan-*; do
+              [ -e "$d" ] || continue
+              echo "rm -rf $d"
+              rm -rf "$d"
+            done
+          REMOTE
+
+      - name: Verify orphans are gone
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          ssh -i ${MON_KEY} -o StrictHostKeyChecking=no root@${MON_IP} bash -s <<'REMOTE'
+            set -uo pipefail
+            REMAINING=0
+            for pattern in \
+              '/mnt/monitoring-data/loki/wal.orphan-*' \
+              '/mnt/monitoring-data/loki/compactor/deletion/delete_requests/delete_requests.bogus-file-*' \
+              '/mnt/monitoring-data/tempo/generator/wal.orphan-*' ; do
+              for f in $pattern; do
+                if [ -e "$f" ]; then
+                  echo "STILL PRESENT: $f"
+                  REMAINING=$((REMAINING+1))
+                fi
+              done
+            done
+            [ "$REMAINING" = "0" ] && echo "All targeted orphans removed (D2 may have skipped if mtime guard tripped — see prior step output)."
+          REMOTE
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/mon_key_${GITHUB_RUN_ID}
+
+  cleanup-network-vm:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          if [[ "$V" != http://* && "$V" != https://* ]]; then
+            V="http://${V}"
+          fi
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Resolve network-vm IP
+        run: |
+          NETVM_IP=$(vault kv get -field=ip secret/network-vm/prod/active-slot)
+          echo "NETVM_IP=${NETVM_IP}" >> $GITHUB_ENV
+          echo "Network-vm: ${NETVM_IP}"
+
+      - name: Fetch SSH key
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/network_vm_worker \
+            | awk 'NF > 0' > /tmp/netvm_key_${GITHUB_RUN_ID}
+          chmod 600 /tmp/netvm_key_${GITHUB_RUN_ID}
+          echo "NETVM_KEY=/tmp/netvm_key_${GITHUB_RUN_ID}" >> $GITHUB_ENV
+
+      - name: List Traefik backups before action
+        run: |
+          ssh -i ${NETVM_KEY} -o StrictHostKeyChecking=no root@${NETVM_IP} bash -s <<'REMOTE'
+            echo "=== /opt/traefik/config/*.bak-* ==="
+            ls -lh /opt/traefik/config/traefik.yml.bak-* 2>/dev/null || echo "  (none)"
+            echo "=== /opt/traefik/docker-compose.yml.bak-* ==="
+            ls -lh /opt/traefik/docker-compose.yml.bak-* 2>/dev/null || echo "  (none)"
+          REMOTE
+
+      - name: Delete stale Traefik backups (keep most-recent docker-compose.yml.bak)
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          ssh -i ${NETVM_KEY} -o StrictHostKeyChecking=no root@${NETVM_IP} bash -s <<'REMOTE'
+            set -euo pipefail
+            # traefik.yml.bak — followup specifies exactly the 20260423T105749Z
+            # one. If others exist, leave them — they're not in scope.
+            rm -f /opt/traefik/config/traefik.yml.bak-20260423T105749Z 2>/dev/null && \
+              echo "rm /opt/traefik/config/traefik.yml.bak-20260423T105749Z" || \
+              echo "(traefik.yml.bak-20260423T105749Z already absent)"
+
+            # docker-compose.yml.bak — keep only the newest (per followup).
+            mapfile -t BAKS < <(ls -1t /opt/traefik/docker-compose.yml.bak-* 2>/dev/null || true)
+            if [ "${#BAKS[@]}" -le 1 ]; then
+              echo "(0 or 1 docker-compose backups — nothing to prune)"
+            else
+              for f in "${BAKS[@]:1}"; do
+                echo "rm $f"
+                rm -f "$f"
+              done
+              echo "Kept most-recent: ${BAKS[0]}"
+            fi
+          REMOTE
+
+      - name: Verify
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          ssh -i ${NETVM_KEY} -o StrictHostKeyChecking=no root@${NETVM_IP} bash -s <<'REMOTE'
+            ls -lh /opt/traefik/config/traefik.yml.bak-* 2>/dev/null || echo "  no traefik.yml.bak-* remaining (or only newer ones not in scope)"
+            ls -lh /opt/traefik/docker-compose.yml.bak-* 2>/dev/null || echo "  no docker-compose.yml.bak-* remaining"
+          REMOTE
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/netvm_key_${GITHUB_RUN_ID}
