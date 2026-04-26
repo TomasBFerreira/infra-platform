@@ -51,6 +51,7 @@ adguard_qa_rewrites:
   - domain: devops-portal-qa.databaes.net
   - domain: ops-qa.databaes.net
   - domain: qa.databaes.net
+  - domain: databaes-landing-page-qa.databaes.net
 
 # Empty today — populate when a prod AdGuard rewrite is needed.
 adguard_prod_rewrites: []
