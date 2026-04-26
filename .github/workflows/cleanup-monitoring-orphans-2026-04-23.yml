@@ -86,14 +86,16 @@ jobs:
             done
             if [ -d /mnt/monitoring-data/loki/wal ] && [ ! -L /mnt/monitoring-data/loki/wal ]; then
               # Defensive: confirm running loki isn't writing here. Loki since PR #15
-              # uses /loki-wal (docker volume), not /loki/wal. The mtime should be
-              # before 2026-04-23 (the migration day). If mtime is recent, abort.
+              # uses /loki-wal (docker volume), not /loki/wal. mtime is expected to
+              # be pre-deploy (the last write the old Loki did before being shut down
+              # on 2026-04-23). Anything in the last 24h would mean a regression to
+              # the old path; abort in that case.
               MTIME_EPOCH=$(stat -c %Y /mnt/monitoring-data/loki/wal)
-              CUTOFF=$(date -d '2026-04-23 00:00 UTC' +%s)
+              CUTOFF=$(date -d '1 day ago' +%s)
               if [ "$MTIME_EPOCH" -gt "$CUTOFF" ]; then
-                echo "ABORT: /mnt/monitoring-data/loki/wal mtime $(date -d @$MTIME_EPOCH) is post-migration — Loki may still be writing here. Skipping D2 delete."
+                echo "ABORT: /mnt/monitoring-data/loki/wal mtime $(date -d @$MTIME_EPOCH) is within the last 24h — Loki may have regressed to this path. Skipping D2 delete."
               else
-                echo "rm -rf /mnt/monitoring-data/loki/wal"
+                echo "rm -rf /mnt/monitoring-data/loki/wal  (mtime $(date -d @$MTIME_EPOCH))"
                 rm -rf /mnt/monitoring-data/loki/wal
               fi
             fi
