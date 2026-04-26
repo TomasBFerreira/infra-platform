@@ -269,6 +269,12 @@ gh workflow run "Seed devops-portal/<env>/authentik Vault path" \
   --repo TomasBFerreira/infra-platform -f environment=prod
 ```
 
+This workflow is safe to re-run and now acts as a **reconcile/upsert**:
+it rewrites `secret/devops-portal/<env>/authentik` from the current
+`secret/sso/<env>/active-slot`. The SSO pipeline also runs it
+automatically after `flip-active`, so the Authentik admin URL/token track
+blue/green slot changes instead of drifting to an old slot IP.
+
 ### 3. Configure Authentik forward-auth provider for the env
 
 ```
