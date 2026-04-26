@@ -123,7 +123,11 @@
         "
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+        # VAULT_DEV_TOKEN expires (default ~32d TTL) and silently breaks
+        # registration. Use the bootstrap root token (no TTL) for these
+        # bootstrap-vault reads — see register-runner.yml failure on
+        # 2026-04-26 where VAULT_DEV_TOKEN had rolled past expiry.
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_ROOT_TOKEN') }}"
       register: proxmox_ssh_privkey
       no_log: true
 
@@ -141,7 +145,11 @@
       shell: vault kv get -field=public_key secret/ssh_keys/github_runner_proxmox_access
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+        # VAULT_DEV_TOKEN expires (default ~32d TTL) and silently breaks
+        # registration. Use the bootstrap root token (no TTL) for these
+        # bootstrap-vault reads — see register-runner.yml failure on
+        # 2026-04-26 where VAULT_DEV_TOKEN had rolled past expiry.
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_ROOT_TOKEN') }}"
       register: proxmox_ssh_pubkey
 
     - name: Install Proxmox access SSH public key for root
@@ -176,7 +184,11 @@
         rm -f /tmp/runner_worker_key
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+        # VAULT_DEV_TOKEN expires (default ~32d TTL) and silently breaks
+        # registration. Use the bootstrap root token (no TTL) for these
+        # bootstrap-vault reads — see register-runner.yml failure on
+        # 2026-04-26 where VAULT_DEV_TOKEN had rolled past expiry.
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_ROOT_TOKEN') }}"
       register: runner_worker_pubkey
       no_log: true
 
@@ -436,7 +448,11 @@
         vault kv get -field=token secret/github-runner/gh_pat
       environment:
         VAULT_ADDR: "{{ lookup('env', 'VAULT_BOOTSTRAP_ADDR') }}"
-        VAULT_TOKEN: "{{ lookup('env', 'VAULT_DEV_TOKEN') }}"
+        # VAULT_DEV_TOKEN expires (default ~32d TTL) and silently breaks
+        # registration. Use the bootstrap root token (no TTL) for these
+        # bootstrap-vault reads — see register-runner.yml failure on
+        # 2026-04-26 where VAULT_DEV_TOKEN had rolled past expiry.
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_ROOT_TOKEN') }}"
       register: gh_pat_result
       no_log: true
 
