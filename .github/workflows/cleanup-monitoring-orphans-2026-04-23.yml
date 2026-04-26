@@ -171,11 +171,14 @@ jobs:
         run: |
           ssh -i ${NETVM_KEY} -o StrictHostKeyChecking=no root@${NETVM_IP} bash -s <<'REMOTE'
             set -euo pipefail
-            # traefik.yml.bak — followup specifies exactly the 20260423T105749Z
-            # one. If others exist, leave them — they're not in scope.
-            rm -f /opt/traefik/config/traefik.yml.bak-20260423T105749Z 2>/dev/null && \
-              echo "rm /opt/traefik/config/traefik.yml.bak-20260423T105749Z" || \
-              echo "(traefik.yml.bak-20260423T105749Z already absent)"
+            # traefik.yml.bak — followup spec'd 20260423T105749Z but the actual
+            # file is from a different minute that day. Glob-match any 04-23
+            # traefik.yml.bak — they're all from the same hand-edit window.
+            for f in /opt/traefik/config/traefik.yml.bak-20260423T*; do
+              [ -e "$f" ] || continue
+              echo "rm $f"
+              rm -f "$f"
+            done
 
             # docker-compose.yml.bak — keep only the newest (per followup).
             mapfile -t BAKS < <(ls -1t /opt/traefik/docker-compose.yml.bak-* 2>/dev/null || true)
