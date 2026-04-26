@@ -381,6 +381,14 @@ jobs:
             vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
             ip="${{ needs.resolve-slots.outputs.staging_ip }}"
 
+  reconcile-devops-portal-authentik:
+    needs: [resolve-slots, flip-active]
+    if: always() && needs.flip-active.result == 'success'
+    uses: ./.github/workflows/seed-authentik-bootstrap-token.yml
+    with:
+      environment: ${{ needs.resolve-slots.outputs.environment }}
+    secrets: inherit
+
   configure-vault-oidc:
     needs: [resolve-slots, flip-active, update-traefik]
     if: always() && needs.flip-active.result == 'success'
@@ -587,12 +595,13 @@ jobs:
             --field environment=${{ needs.resolve-slots.outputs.environment }}
 
   teardown-old-active:
-    needs: [resolve-slots, flip-active, backup-db, configure-vault-oidc, configure-bootstrap-vault-oidc, update-traefik]
+    needs: [resolve-slots, flip-active, backup-db, reconcile-devops-portal-authentik, configure-vault-oidc, configure-bootstrap-vault-oidc, update-traefik]
     if: >-
       always() &&
       needs.resolve-slots.outputs.first_run == 'false' &&
       needs.flip-active.result == 'success' &&
       (needs.backup-db.result == 'success' || needs.backup-db.result == 'failure') &&
+      needs.reconcile-devops-portal-authentik.result == 'success' &&
       (needs.configure-vault-oidc.result == 'success' || needs.configure-vault-oidc.result == 'failure') &&
       (needs.configure-bootstrap-vault-oidc.result == 'success' || needs.configure-bootstrap-vault-oidc.result == 'failure') &&
       (needs.update-traefik.result == 'success' || needs.update-traefik.result == 'failure')
