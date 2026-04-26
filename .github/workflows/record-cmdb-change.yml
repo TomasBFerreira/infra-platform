@@ -1,0 +1,127 @@
+name: Record CMDB change
+
+# workflow_dispatch helper for recording session-driven prod changes (manual
+# kubectl, ssh, vault patches, ad-hoc workflows) into ops-portal-cmdb without
+# going through Authentik. Hits ops-portal-cmdb's NodePort (30092) on the env's
+# worker node directly, which bypasses the Traefik forwardAuth ingress.
+#
+# Use cases per /app/.claude/rules/cmdb-discipline.md:
+#   - record a deploy you triggered out-of-band
+#   - record a Vault path you patched
+#   - record a one-off Ansible apply
+# Anything that's a "deliberate mutation of a homelab system" should land here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Target env (where the change happened)'
+        type: choice
+        options: [dev, qa, prod]
+        default: prod
+      title:
+        description: 'One-line change summary'
+        type: string
+        required: true
+      description:
+        description: 'Longer description (optional)'
+        type: string
+        required: false
+        default: ''
+      affected_cis:
+        description: 'Comma-separated list of CI names (e.g. monitoring-prod,vault-bootstrap)'
+        type: string
+        required: true
+      change_type:
+        type: choice
+        options: [standard, normal, emergency, auto]
+        default: auto
+      risk:
+        type: choice
+        options: [low, medium, high]
+        default: low
+      status:
+        type: choice
+        options: [completed, in_progress, draft]
+        default: completed
+      requested_by:
+        description: 'Actor (defaults to claude-session)'
+        type: string
+        default: 'claude-session'
+
+jobs:
+  record:
+    runs-on: [self-hosted, "${{ inputs.env }}"]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      ENV:         ${{ inputs.env }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          if [[ "$V" != http://* && "$V" != https://* ]]; then
+            V="http://${V}"
+          fi
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Resolve worker-node IP
+        run: |
+          # Try the regular worker first; prod uses worker-node-gpu-01 today
+          # (per /app/CLAUDE.md and infra-platform/CLAUDE.md). Try gpu first
+          # for prod, fall back to non-gpu for dev/qa.
+          IP=""
+          if [ "${ENV}" = "prod" ]; then
+            IP=$(vault kv get -field=ip secret/worker-node-gpu/${ENV}/active-slot 2>/dev/null || true)
+          fi
+          if [ -z "$IP" ]; then
+            IP=$(vault kv get -field=ip secret/worker-node/${ENV}/active-slot 2>/dev/null || true)
+          fi
+          if [ -z "$IP" ]; then
+            echo "ERROR: no worker-node IP for env=${ENV}"
+            exit 1
+          fi
+          echo "Worker node: $IP"
+          echo "WORKER_IP=$IP" >> $GITHUB_ENV
+
+      - name: POST to ops-portal-cmdb
+        run: |
+          set -euo pipefail
+          # Build the JSON payload. Use python to handle the multi-line
+          # description and proper JSON escaping; affected_cis is comma-split.
+          python3 <<'PY' > /tmp/cmdb-payload.json
+          import json, os
+          cis = [c.strip() for c in os.environ["AFFECTED_CIS"].split(",") if c.strip()]
+          payload = {
+              "title": os.environ["TITLE"],
+              "description": os.environ["DESCRIPTION"],
+              "affected_cis": cis,
+              "change_type": os.environ["CHANGE_TYPE"],
+              "risk": os.environ["RISK"],
+              "status": os.environ["STATUS"],
+              "requested_by": os.environ["REQUESTED_BY"],
+          }
+          print(json.dumps(payload, indent=2))
+          PY
+          echo "Payload:"
+          cat /tmp/cmdb-payload.json
+          echo
+          echo "POST http://${WORKER_IP}:30092/api/cmdb/changes"
+          STATUS=$(curl -sS -o /tmp/cmdb-resp.json -w "%{http_code}" \
+            --max-time 15 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/cmdb-payload.json \
+            "http://${WORKER_IP}:30092/api/cmdb/changes")
+          echo "HTTP ${STATUS}"
+          cat /tmp/cmdb-resp.json
+          echo
+          [ "$STATUS" = "201" ] || { echo "FAIL: expected 201 Created, got ${STATUS}"; exit 1; }
+        env:
+          TITLE:        ${{ inputs.title }}
+          DESCRIPTION:  ${{ inputs.description }}
+          AFFECTED_CIS: ${{ inputs.affected_cis }}
+          CHANGE_TYPE:  ${{ inputs.change_type }}
+          RISK:         ${{ inputs.risk }}
+          STATUS:       ${{ inputs.status }}
+          REQUESTED_BY: ${{ inputs.requested_by }}
