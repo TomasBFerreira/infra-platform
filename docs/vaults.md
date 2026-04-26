@@ -38,7 +38,7 @@ Runner state (singletons, no slot rotation):
 | `secret/ssh_keys/github_runner_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/ssh_keys/rancher_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/worker-node/<N>/state` | `vmid, ip, hostname, pve_node, provisioned_at` | worker-node pipeline |
-| `secret/github-runner/gh_pat` | `token` | github-runner pipeline (injected from GH_PAT secret each run) |
+| `secret/github-runner/gh_pat` | `token` | github-runner pipeline (injected from GH_PAT secret each run); **also reused by ops-portal-incidents (prod) to dispatch ops-portal-pipelines workflows** until a dedicated `secret/ops-portal/pipelines/gh-pat` is provisioned |
 | `secret/github-runner/<env>/state` | `vmid, ip, hostname, runner_name, provisioned_at` | github-runner pipeline |
 | `secret/rancher/<env>/state` | `vmid, ip, hostname, provisioned_at` | rancher pipeline |
 | `secret/tailscale` | `authkey` | Manual setup |

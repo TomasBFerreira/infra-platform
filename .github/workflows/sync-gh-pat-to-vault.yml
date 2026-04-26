@@ -72,6 +72,7 @@ jobs:
           - ops-portal-incidents
           - ops-portal-deployments
           - ops-portal-domain
+          - ops-portal-pipelines
     steps:
       - name: Set GH_PAT in TomasBFerreira/${{ matrix.repo }}
         env:
