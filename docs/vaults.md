@@ -40,6 +40,7 @@ Runner state (singletons, no slot rotation):
 | `secret/worker-node/<N>/state` | `vmid, ip, hostname, pve_node, provisioned_at` | worker-node pipeline |
 | `secret/github-runner/gh_pat` | `token` | github-runner pipeline (injected from GH_PAT secret each run); **also reused by ops-portal-incidents (prod) to dispatch ops-portal-pipelines workflows** until a dedicated `secret/ops-portal/pipelines/gh-pat` is provisioned |
 | `secret/github-runner/<env>/state` | `vmid, ip, hostname, runner_name, provisioned_at` | github-runner pipeline |
+| `secret/arc/github-app` | `app_id, installation_id, private_key` | Manual setup; consumed by `arc-deploy.yml` to install the ARC controller's GitHub App auth secret per env. See `docs/runbooks.md` § "Migrating from LXC runners to ARC". |
 | `secret/rancher/<env>/state` | `vmid, ip, hostname, provisioned_at` | rancher pipeline |
 | `secret/tailscale` | `authkey` | Manual setup |
 | `secret/wireguard` | `private_key, peer_public_key, endpoint, address, dns` | Manual setup |

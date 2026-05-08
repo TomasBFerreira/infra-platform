@@ -1,0 +1,38 @@
+# Source of truth for which (repo, env) pairs ARC manages.
+#
+# Mirror of ansible/github-runner/registered-repos.yml but per-repo, with
+# explicit min/max replicas. The arc-deploy.yml workflow reads this file and
+# helm-installs one scale set per matching entry.
+#
+# Phase 0: a single pilot scale set in dev only, label "dev-arc" so it doesn't
+# collide with the existing LXC runner's "dev" label. Pilot repo runs the
+# arc-smoketest.yml workflow against [self-hosted, dev-arc] to validate the
+# stack before we cut any real workflow over.
+#
+# Cutover plan: as each repo migrates, change its scale-set label here from
+# "<env>-arc" to "<env>" and decommission the LXC runner registration. See
+# docs/arc-migration.md for the per-phase steps.
+
+scale_sets:
+  # ── Pilot ────────────────────────────────────────────────────────────────
+  - repo: TomasBFerreira/infra-platform
+    env: dev
+    label: dev-arc          # intentionally distinct from "dev" during pilot
+    name: arc-pilot-dev
+    min_runners: 0
+    max_runners: 2
+
+  # ── Real repos (commented until pilot is green) ──────────────────────────
+  # - repo: TomasBFerreira/traefik-gitops
+  #   env: dev
+  #   label: dev
+  #   name: traefik-gitops-dev
+  #   min_runners: 0
+  #   max_runners: 3
+  #
+  # - repo: TomasBFerreira/landing-page
+  #   env: dev
+  #   label: dev
+  #   name: landing-page-dev
+  #   min_runners: 0
+  #   max_runners: 2

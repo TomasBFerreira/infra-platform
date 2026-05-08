@@ -1,0 +1,25 @@
+# Helm values for actions-runner-controller (gha-runner-scale-set-controller).
+# One install per env's k3s cluster; this file is shared across envs.
+#
+# Doc: https://github.com/actions/actions-runner-controller/blob/master/charts/gha-runner-scale-set-controller/values.yaml
+
+# Pin chart version in arc-deploy.yml; this file holds runtime tunables only.
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Watch a single namespace (the namespace the scale sets get deployed into).
+# Listener pods land here too. Keeps RBAC tight and the install easy to reason
+# about. If we later run scale sets in multiple namespaces, set this to "" to
+# watch cluster-wide and add the cluster-scoped RBAC the chart provides.
+flags:
+  watchSingleNamespace: arc-runners
+
+# Anything else stays at chart defaults.
