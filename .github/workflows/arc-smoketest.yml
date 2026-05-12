@@ -15,15 +15,19 @@ name: ARC smoketest
 on:
   workflow_dispatch:
     inputs:
-      label:
-        description: Runner label to target (e.g. dev-arc, qa, prod)
+      scale_set:
+        description: ARC scale-set name to target (matches `name` in manifests/arc/scale-sets.yml)
         required: true
-        default: dev-arc
+        default: arc-pilot-dev
         type: string
 
 jobs:
+  # ARC v0.10's gha-runner-scale-set chart uses the scale-set NAME as the
+  # runs-on value, not classic [self-hosted, label]. The runner pod won't
+  # advertise classic labels to GitHub regardless of RUNNER_LABELS — the
+  # routing happens via the scale set's listener subscribing to its name.
   smoke:
-    runs-on: [self-hosted, "${{ inputs.label }}"]
+    runs-on: ${{ inputs.scale_set }}
     steps:
       - name: Identify the runner
         run: |
