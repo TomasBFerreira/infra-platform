@@ -457,10 +457,12 @@ This installs the controller into the `arc-runners` namespace in the env's k3s c
 ### Verify
 
 ```
-gh workflow run arc-smoketest.yml --field label=dev-arc
+gh workflow run arc-smoketest.yml --field scale_set=arc-pilot-dev
 ```
 
 The smoketest job lands on an ARC pod and validates pre-baked tools, DNS (ndots:1), and vault reachability. Watch the pod show up in `arc-runners` namespace and exit cleanly.
+
+**Note on `runs-on`**: ARC v0.10's `gha-runner-scale-set` chart routes jobs by **scale-set name**, not classic `[self-hosted, <label>]`. A workflow targets a scale set with `runs-on: <scale-set-name>` (single string). The migration plan in `manifests/arc/scale-sets.yml`'s `label` field is a hold-over for future routing modes; today only the `name` matters for routing.
 
 ### Add a new repo to ARC
 
