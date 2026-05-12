@@ -43,16 +43,18 @@ RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/ku
         -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
 
-# terraform
+# terraform — extract only the binary; the zip also contains a LICENSE.txt
+# that collides with vault's LICENSE.txt below and prompts unzip interactively,
+# which in a non-TTY Docker build returns EOF and exits 1.
 RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" \
         -o /tmp/terraform.zip \
-    && unzip /tmp/terraform.zip -d /usr/local/bin/ \
+    && unzip -o /tmp/terraform.zip terraform -d /usr/local/bin/ \
     && rm /tmp/terraform.zip
 
-# vault CLI
+# vault CLI — extract only the binary (see comment on terraform above).
 RUN curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" \
         -o /tmp/vault.zip \
-    && unzip /tmp/vault.zip -d /usr/local/bin/ \
+    && unzip -o /tmp/vault.zip vault -d /usr/local/bin/ \
     && rm /tmp/vault.zip
 
 # gh CLI
