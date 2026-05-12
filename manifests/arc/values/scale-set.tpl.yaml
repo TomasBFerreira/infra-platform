@@ -33,12 +33,11 @@ template:
     containers:
       - name: runner
         image: ghcr.io/tomasbferreira/arc-runner:${IMAGE_TAG}
-        command: ["/home/runner/run.sh"]
-        env:
-          # The runner advertises this label to GitHub. Workflows pick a runner
-          # by matching runs-on; this is what makes the routing work.
-          - name: RUNNER_LABELS
-            value: "self-hosted,linux,${RUNNER_LABEL}"
+        # No explicit command — the chart leaves it to the upstream
+        # actions-runner image's default entrypoint (/home/runner/run.sh).
+        # Setting it explicitly here used to break because our base image
+        # didn't have that script; now that we FROM the upstream image,
+        # the default is correct.
         resources:
           requests:
             cpu: 200m
