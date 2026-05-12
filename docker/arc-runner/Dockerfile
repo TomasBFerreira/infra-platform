@@ -1,27 +1,24 @@
-# ARC runner image — pre-baked tools so ephemeral pods skip apt-get on every job.
+# ARC runner image — extends the upstream actions-runner image with the tools
+# every infra-platform / ops-portal workflow reaches for.
 #
-# Used by the gha-runner-scale-set Helm chart as the runner image. The chart
-# injects the actions/runner binary into /home/runner/_work; this image only
-# needs the tools workflows reach for during a job.
+# Why FROM actions-runner: the gha-runner-scale-set chart's default container
+# command is /home/runner/run.sh, which is part of the upstream image. A
+# from-scratch debian image with the tools but no run.sh deadlocks in
+# CrashLoopBackOff (caught on first real pod scheduling — see PR history).
 #
-# Tools chosen by reading existing pipelines under .github/workflows/:
-#   - vault CLI         — used for "vault kv get" in github-runner_setup.yml
-#   - kubectl           — every ops-portal-* deploy.yml installs it on demand;
-#                         baking it in saves ~15s per job
-#   - terraform         — run-terraform.sh prefers docker but falls through to
-#                         a native binary, which is what we use here
-#   - ansible           — ansible-playbook is invoked directly by infra-platform
-#                         workflows (no docker-compose wrapper)
-#   - gh                — used by sync-gh-pat-to-vault.yml + several others
-#   - python3 + pyyaml  — every workflow that reads registered-repos.yml or
-#                         parses Vault JSON output
-#   - openssh-client    — workflows SCP keys to nodes / SSH to Proxmox
-#   - jq, curl, git     — table stakes
-#
-# Versions tracked here are the floor; bump in lockstep with what production
-# pipelines test against. ARC controller version is pinned separately in the
-# Helm chart values.
-FROM debian:12-slim
+# Tools layered here, with rationale (matches what workflows install on
+# demand on the legacy LXC runner):
+#   - vault CLI         — vault kv get in many playbooks/workflows
+#   - kubectl           — every ops-portal-* deploy.yml installs on demand
+#   - terraform         — run-terraform.sh's no-docker fallback path
+#   - ansible           — ansible-playbook invoked directly by infra workflows
+#   - gh                — sync-gh-pat-to-vault.yml + several others
+#   - python3-yaml      — registered-repos.yml parsers
+#   - jq                — table stakes
+# (curl, git, unzip, openssh-client are already in the upstream image.)
+
+ARG ACTIONS_RUNNER_VERSION=2.321.0
+FROM ghcr.io/actions/actions-runner:${ACTIONS_RUNNER_VERSION}
 
 ARG TERRAFORM_VERSION=1.9.8
 ARG KUBECTL_VERSION=1.32.0
@@ -31,9 +28,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     LANG=C.UTF-8
 
+USER root
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash curl wget git ca-certificates gnupg lsb-release \
-        jq unzip sudo openssh-client rsync \
+        jq unzip ca-certificates gnupg lsb-release \
         python3 python3-pip python3-yaml \
         ansible \
     && rm -rf /var/lib/apt/lists/*
@@ -43,15 +41,15 @@ RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/ku
         -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
 
-# terraform — extract only the binary; the zip also contains a LICENSE.txt
-# that collides with vault's LICENSE.txt below and prompts unzip interactively,
-# which in a non-TTY Docker build returns EOF and exits 1.
+# terraform — extract only the binary; the zip ships a LICENSE.txt that
+# collides with vault's LICENSE.txt below if both are extracted whole, and
+# unzip prompts interactively in a non-TTY build (caught in initial build).
 RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" \
         -o /tmp/terraform.zip \
     && unzip -o /tmp/terraform.zip terraform -d /usr/local/bin/ \
     && rm /tmp/terraform.zip
 
-# vault CLI — extract only the binary (see comment on terraform above).
+# vault CLI — extract only the binary (see terraform note).
 RUN curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" \
         -o /tmp/vault.zip \
     && unzip -o /tmp/vault.zip vault -d /usr/local/bin/ \
@@ -65,19 +63,18 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root runner user — gha-runner-scale-set runs as this UID by default.
-RUN useradd -m -u 1001 -s /bin/bash runner \
-    && echo 'runner ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/runner \
-    && chmod 0440 /etc/sudoers.d/runner
-
-USER runner
-WORKDIR /home/runner
-
-# Sanity: every tool prints its version in build logs so a broken image fails
-# loudly at build time, not when a workflow lands on the new pod.
+# Sanity check at build time — broken image fails the build, not the
+# first pod scheduling.
 RUN kubectl version --client \
     && terraform version \
     && vault version \
-    && ansible --version \
-    && gh --version \
-    && python3 --version
+    && ansible --version | head -1 \
+    && gh --version | head -1 \
+    && python3 --version \
+    && test -x /home/runner/run.sh && echo "run.sh present"
+
+# Drop back to the upstream image's default user. ARC chart's listener
+# does NOT override command, so the default /home/runner/run.sh entrypoint
+# from the upstream image is what gets invoked.
+USER runner
+WORKDIR /home/runner
