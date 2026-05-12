@@ -91,11 +91,15 @@ jobs:
           WORKER_IP: ${{ steps.worker.outputs.worker_ip }}
         run: |
           set -euo pipefail
+          # Worker nodes' worker_node_worker SSH key authorises root, not appadm
+          # — same pattern as ops-portal-* deploys. Don't change without
+          # verifying the key's authorized_keys on the worker.
           ssh -o StrictHostKeyChecking=no -i keys/worker_ssh \
-            "appadm@${WORKER_IP}" 'sudo cat /etc/rancher/k3s/k3s.yaml' \
+            "root@${WORKER_IP}" 'cat /etc/rancher/k3s/k3s.yaml' \
             | sed "s/127.0.0.1/${WORKER_IP}/g" > "$KUBECONFIG"
           chmod 600 "$KUBECONFIG"
-          kubectl get nodes
+          # kubectl isn't installed yet; defer the get nodes check to the
+          # subsequent install step.
 
       - name: Install kubectl + helm if missing
         run: |
