@@ -164,6 +164,19 @@ jobs:
             --values manifests/arc/values/controller.yaml \
             --wait --timeout 5m
 
+      - name: Patch controller deployment with ndots:1
+        # gha-runner-scale-set-controller v0.10.1's chart doesn't expose
+        # dnsConfig on the pod template, so we patch it on after install.
+        # Without this the controller's calls to api.github.com TLS-fail —
+        # the pod's search path includes databaes.net and Cloudflare's
+        # wildcard answers api.github.com.databaes.net with a cert that
+        # doesn't match. Idempotent: re-running applies the same patch.
+        run: |
+          kubectl -n "${ARC_NAMESPACE}" patch deployment arc-gha-rs-controller \
+            --type=strategic \
+            -p '{"spec":{"template":{"spec":{"dnsPolicy":"ClusterFirst","dnsConfig":{"options":[{"name":"ndots","value":"1"}]}}}}}'
+          kubectl -n "${ARC_NAMESPACE}" rollout status deployment/arc-gha-rs-controller --timeout=2m
+
       - name: Render + install scale sets for this env
         env:
           IMAGE_TAG: ${{ inputs.runner_image_tag }}
