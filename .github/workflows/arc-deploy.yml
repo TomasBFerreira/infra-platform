@@ -1,0 +1,185 @@
+name: Deploy ARC (Actions Runner Controller)
+
+# Installs / upgrades the actions-runner-controller and one Helm release per
+# entry in manifests/arc/scale-sets.yml that matches the chosen env.
+#
+# Pre-requisites (one-time, manual):
+#   1. Create a GitHub App in the personal account settings:
+#        Repository permissions: Actions: read+write, Administration: read+write,
+#        Metadata: read, Self-hosted runners: read+write (org-level not applicable
+#        for a personal account, repo-level is enough).
+#        Save: App ID, install on the workspace repos and grab the Installation ID,
+#        download a private key.
+#   2. Write to bootstrap vault:
+#        vault kv put secret/arc/github-app \
+#          app_id=<id> installation_id=<id> private_key=@<path-to-pem>
+#   3. Add VAULT_BOOTSTRAP_ADDR + VAULT_BOOTSTRAP_ROOT_TOKEN as repo secrets
+#      (already present from existing pipelines).
+#   4. Make the GHCR `arc-runner` package public — kubelet pulls have no auth
+#      otherwise. The image only bakes public tooling so this is safe. See
+#      docs/runbooks.md § "Migrating from LXC runners to ARC".
+#
+# Note on chicken-and-egg: this workflow runs on [self-hosted, <env>], i.e.
+# the legacy LXC runner. Once the LXC is decommissioned in a later phase,
+# switch this to [self-hosted, management] (CT 200) so we can still re-deploy
+# ARC even after the env's pods are torn down.
+#
+# Phase 0: dispatch with env=dev runs only the pilot scale set. No production
+# workflows are affected because nothing references [self-hosted, dev-arc] yet
+# besides arc-smoketest.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target env's k3s cluster
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+        default: dev
+      controller_chart_version:
+        description: gha-runner-scale-set-controller chart version
+        required: false
+        default: "0.10.1"
+      scale_set_chart_version:
+        description: gha-runner-scale-set chart version
+        required: false
+        default: "0.10.1"
+      runner_image_tag:
+        description: ghcr.io/tomasbferreira/arc-runner tag (default = latest)
+        required: false
+        default: "latest"
+
+concurrency:
+  group: arc-deploy-${{ inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, "${{ inputs.env }}"]
+    env:
+      ENV: ${{ inputs.env }}
+      KUBECONFIG: ${{ github.workspace }}/.kubeconfig
+      ARC_NAMESPACE: arc-runners
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve worker-node IP
+        id: worker
+        run: |
+          set -euo pipefail
+          WORKER_IP=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/worker-node/${ENV}/active-slot" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ip'])")
+          [ -n "$WORKER_IP" ] || { echo "ERROR: empty worker IP for env=${ENV}"; exit 1; }
+          echo "worker_ip=${WORKER_IP}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch worker SSH key
+        run: |
+          set -euo pipefail
+          mkdir -p keys
+          curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/ssh_keys/worker_node_worker" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['private_key'])" \
+            > keys/worker_ssh
+          chmod 600 keys/worker_ssh
+
+      - name: Build kubeconfig
+        env:
+          WORKER_IP: ${{ steps.worker.outputs.worker_ip }}
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh \
+            "appadm@${WORKER_IP}" 'sudo cat /etc/rancher/k3s/k3s.yaml' \
+            | sed "s/127.0.0.1/${WORKER_IP}/g" > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          kubectl get nodes
+
+      - name: Install kubectl + helm if missing
+        run: |
+          if ! command -v kubectl &>/dev/null; then
+            curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /tmp/kubectl
+            sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          fi
+          if ! command -v helm &>/dev/null; then
+            curl -fsSL https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz | tar -xz -C /tmp
+            sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          fi
+          kubectl version --client && helm version
+
+      - name: Ensure namespace
+        run: |
+          kubectl get ns "${ARC_NAMESPACE}" 2>/dev/null \
+            || kubectl create ns "${ARC_NAMESPACE}"
+
+      - name: Sync GitHub App secret from Vault
+        run: |
+          set -euo pipefail
+          APP_ID=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/arc/github-app" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['app_id'])")
+          INSTALL_ID=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/arc/github-app" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['installation_id'])")
+          PRIV_KEY=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/arc/github-app" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['private_key'])")
+          # Chart expects keys: github_app_id, github_app_installation_id, github_app_private_key
+          kubectl -n "${ARC_NAMESPACE}" create secret generic arc-github-app \
+              --from-literal=github_app_id="${APP_ID}" \
+              --from-literal=github_app_installation_id="${INSTALL_ID}" \
+              --from-literal=github_app_private_key="${PRIV_KEY}" \
+              --dry-run=client -o yaml \
+            | kubectl apply -f -
+
+      - name: Install / upgrade controller
+        run: |
+          helm upgrade --install arc \
+            oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
+            --version "${{ inputs.controller_chart_version }}" \
+            --namespace "${ARC_NAMESPACE}" \
+            --create-namespace \
+            --values manifests/arc/values/controller.yaml \
+            --wait --timeout 5m
+
+      - name: Render + install scale sets for this env
+        env:
+          IMAGE_TAG: ${{ inputs.runner_image_tag }}
+        run: |
+          set -euo pipefail
+          # Read scale-sets.yml, filter to entries matching the current env.
+          mapfile -t ENTRIES < <(python3 -c "
+          import yaml
+          data = yaml.safe_load(open('manifests/arc/scale-sets.yml')) or {}
+          for s in data.get('scale_sets', []) or []:
+              if s.get('env') != '${ENV}':
+                  continue
+              print(f\"{s['name']}|{s['repo']}|{s['label']}|{s['min_runners']}|{s['max_runners']}\")
+          ")
+          if [ ${#ENTRIES[@]} -eq 0 ]; then
+            echo "No scale sets configured for env=${ENV} — controller installed but no runners."
+            exit 0
+          fi
+          for entry in "${ENTRIES[@]}"; do
+            IFS='|' read -r NAME REPO_FULL RUNNER_LABEL MIN_RUNNERS MAX_RUNNERS <<< "$entry"
+            export NAME REPO_FULL RUNNER_LABEL MIN_RUNNERS MAX_RUNNERS IMAGE_TAG
+            export RUNNER_SCALE_SET_NAME="${NAME}"
+            echo "── Installing scale set: ${NAME} (repo=${REPO_FULL}, label=${RUNNER_LABEL}) ──"
+            envsubst < manifests/arc/values/scale-set.tpl.yaml > "/tmp/${NAME}.values.yaml"
+            helm upgrade --install "${NAME}" \
+              oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set \
+              --version "${{ inputs.scale_set_chart_version }}" \
+              --namespace "${ARC_NAMESPACE}" \
+              --values "/tmp/${NAME}.values.yaml" \
+              --wait --timeout 5m
+          done
+
+      - name: Status
+        run: |
+          kubectl -n "${ARC_NAMESPACE}" get pods,autoscalingrunnersets
+
+      - name: Cleanup
+        if: always()
+        run: rm -f keys/worker_ssh

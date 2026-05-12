@@ -1,0 +1,62 @@
+name: ARC smoketest
+
+# Tiny canary that lands on an ARC runner pod and validates the basics:
+#   1. Pod actually scheduled (it ran at all)
+#   2. Pre-baked tools work (kubectl, vault, terraform, ansible, gh)
+#   3. Network to the bootstrap vault from inside the cluster
+#   4. ndots:1 fix is in effect (api.github.com resolves correctly)
+#
+# Run via:
+#   gh workflow run arc-smoketest.yml -f label=dev-arc
+#
+# Once the dev-arc pilot is green, change the default to "dev" and re-run on
+# every cutover env.
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Runner label to target (e.g. dev-arc, qa, prod)
+        required: true
+        default: dev-arc
+        type: string
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, "${{ inputs.label }}"]
+    steps:
+      - name: Identify the runner
+        run: |
+          echo "── runner ──"
+          hostname
+          uname -a
+          id
+          echo
+          echo "── pre-baked tools ──"
+          kubectl version --client
+          terraform version
+          vault version
+          ansible --version | head -1
+          gh --version | head -1
+          python3 --version
+
+      - name: DNS check (ndots:1 sanity)
+        run: |
+          # If ndots > 1 the search-path expands these to *.databaes.net and
+          # Cloudflare's wildcard answers — we'd see CF's IPs, not the real
+          # ones. Just confirm the names resolve to something plausible.
+          getent hosts api.github.com   | head -1
+          getent hosts api.anthropic.com | head -1
+          getent hosts ghcr.io          | head -1
+
+      - name: Bootstrap vault reachability
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/auth/token/lookup-self")
+          [ "$STATUS" = "200" ] || { echo "Vault returned HTTP $STATUS"; exit 1; }
+          echo "Vault reachable, token valid."

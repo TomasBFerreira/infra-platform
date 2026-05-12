@@ -425,6 +425,58 @@ Re-run the same workflow. The Ansible playbook is idempotent — it de-registers
 
 ---
 
+## Migrating from LXC runners to ARC (ephemeral runner pods)
+
+The LXC-runner pattern above is being replaced by GitHub's Actions Runner Controller (ARC), which spawns one runner pod per job in the env's k3s cluster and tears it down after — zero idle footprint, no state bleed between jobs. Migration is in `feat/arc-migration-phase-0` and proceeds env by env.
+
+### One-time bootstrap (before first `arc-deploy.yml` run)
+
+1. **Create a GitHub App** in the personal account settings:
+   - Repository permissions: `Actions: read+write`, `Administration: read+write`, `Metadata: read`, `Self-hosted runners: read+write`.
+   - Subscribe to `workflow_job` webhook events.
+   - Install on the workspace repos (or "All repositories" — easier).
+   - Save: App ID, Installation ID, download a private key (`.pem`).
+2. **Write to bootstrap vault** (one path, all envs share it):
+   ```
+   vault kv put secret/arc/github-app \
+     app_id=<id> \
+     installation_id=<id> \
+     private_key=@<path-to-pem>
+   ```
+3. **Build the runner image** — push to `main` after merging Phase 0 (or `gh workflow run arc-runner-image.yml`). Verifies in `ghcr.io/tomasbferreira/arc-runner:<sha>`.
+4. **Make the `arc-runner` GHCR package public** — settings → Packages → arc-runner → Change visibility → Public. The image bakes only public tooling (no secrets), so this is safe and avoids needing a long-lived pull secret in every cluster. If you prefer private, create a PAT with `read:packages` and provision a `ghcr-pull` secret in the `arc-runners` namespace, then add `imagePullSecrets: [name: ghcr-pull]` to `manifests/arc/values/scale-set.tpl.yaml`'s `template.spec`.
+
+### Deploy ARC to an env
+
+```
+gh workflow run arc-deploy.yml --field env=dev
+```
+
+This installs the controller into the `arc-runners` namespace in the env's k3s cluster, syncs the GitHub App secret from vault, and helm-installs one scale set per matching entry in `manifests/arc/scale-sets.yml`.
+
+### Verify
+
+```
+gh workflow run arc-smoketest.yml --field label=dev-arc
+```
+
+The smoketest job lands on an ARC pod and validates pre-baked tools, DNS (ndots:1), and vault reachability. Watch the pod show up in `arc-runners` namespace and exit cleanly.
+
+### Add a new repo to ARC
+
+1. Add an entry to `manifests/arc/scale-sets.yml` (env, repo, label, min/max replicas).
+2. Re-run `arc-deploy.yml` for that env.
+3. The repo's workflows that already use `runs-on: [self-hosted, <env>]` get scheduled on the new pool — provided the LXC runner for that repo is gone (or the labels differ during pilot).
+
+### Cutting a repo over from LXC to ARC
+
+1. Confirm the ARC scale set is up and the smoketest passes.
+2. (Pilot phase) Change one repo's `runs-on` to the pilot label (e.g. `dev-arc`).
+3. (Cutover) When the LXC runner is decommissioned, set the scale set's label back to `dev` and revert the repo's `runs-on`.
+4. Remove the repo from `ansible/github-runner/registered-repos.yml`.
+
+---
+
 ## Deploying to a new environment (QA or Prod)
 
 1. Ensure the LXC template is on the target Proxmox node

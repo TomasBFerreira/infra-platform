@@ -1,0 +1,61 @@
+# Helm values template for one gha-runner-scale-set release.
+# Rendered per (repo, env) pair by arc-deploy.yml — placeholders below are
+# substituted via envsubst; everything else is literal.
+#
+# Placeholders (set as env vars by the deploy workflow):
+#   ${REPO_FULL}       owner/repo, e.g. TomasBFerreira/traefik-gitops
+#   ${RUNNER_LABEL}    label workflows match against in runs-on, e.g. dev-arc
+#   ${IMAGE_TAG}       arc-runner image tag (a git SHA from the image build)
+#   ${MIN_RUNNERS}     usually 0 (scale to zero when idle)
+#   ${MAX_RUNNERS}     ceiling so a runaway can't spawn N pods
+#
+# Doc: https://github.com/actions/actions-runner-controller/blob/master/charts/gha-runner-scale-set/values.yaml
+
+githubConfigUrl: "https://github.com/${REPO_FULL}"
+
+# Auth uses the GitHub App created in the workspace's GitHub account. Secret is
+# created in-cluster by arc-deploy.yml from values fetched out of the env vault
+# (secret/arc/github-app/{app_id,installation_id,private_key}).
+githubConfigSecret: arc-github-app
+
+minRunners: ${MIN_RUNNERS}
+maxRunners: ${MAX_RUNNERS}
+
+runnerScaleSetName: ${RUNNER_SCALE_SET_NAME}
+
+# The pod template every job runs in. Custom image baked with our tools; see
+# docker/arc-runner/Dockerfile for the inventory.
+template:
+  spec:
+    # Match the LXC's nofile defaults so jobs don't surprise-fail on fd exhaustion.
+    securityContext:
+      fsGroup: 1001
+    containers:
+      - name: runner
+        image: ghcr.io/tomasbferreira/arc-runner:${IMAGE_TAG}
+        command: ["/home/runner/run.sh"]
+        env:
+          # The runner advertises this label to GitHub. Workflows pick a runner
+          # by matching runs-on; this is what makes the routing work.
+          - name: RUNNER_LABELS
+            value: "self-hosted,linux,${RUNNER_LABEL}"
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            # Hard cap on memory — the original pain point. A leaky job pod gets
+            # OOM-killed instead of starving the rest of the cluster.
+            cpu: "2"
+            memory: 2Gi
+
+    # External-API DNS gotcha: pods talking to api.github.com etc. need ndots:1
+    # or the search-path expands "api.github.com" -> "api.github.com.databaes.net"
+    # and Cloudflare's wildcard answers. See infra-platform/docs/network.md.
+    dnsPolicy: ClusterFirst
+    dnsConfig:
+      options:
+        - name: ndots
+          value: "1"
+
+# imagePullSecrets is patched in by arc-deploy.yml so private GHCR images pull.
