@@ -54,6 +54,13 @@ concurrency:
   group: arc-deploy-${{ inputs.env }}
   cancel-in-progress: false
 
+# Needs packages: read so the workflow's GITHUB_TOKEN can pull the ARC
+# Helm charts from oci://ghcr.io/actions/... — anonymous OCI pulls from
+# GHCR return 403 even for public packages in our network path.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   deploy:
     runs-on: [self-hosted, "${{ inputs.env }}"]
@@ -137,6 +144,15 @@ jobs:
               --from-literal=github_app_private_key="${PRIV_KEY}" \
               --dry-run=client -o yaml \
             | kubectl apply -f -
+
+      - name: Log helm into GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Anonymous helm-OCI pulls from ghcr.io return 403; auth with the
+          # workflow's GITHUB_TOKEN (packages:read scope from permissions).
+          echo "$GITHUB_TOKEN" | helm registry login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
 
       - name: Install / upgrade controller
         run: |
