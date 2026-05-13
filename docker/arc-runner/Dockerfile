@@ -38,9 +38,14 @@ USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         jq unzip ca-certificates gnupg lsb-release \
+        gettext-base \
         python3 python3-pip python3-yaml \
         ansible \
     && rm -rf /var/lib/apt/lists/*
+# gettext-base gives us envsubst, used by traefik-gitops's deploy.yml to
+# render OTLP endpoint into the Traefik config before SCP'ing to network-vm.
+# Add any further missing tools alongside this line; don't sprinkle apt-get
+# install steps across the workflow files themselves.
 
 # kubectl
 RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
