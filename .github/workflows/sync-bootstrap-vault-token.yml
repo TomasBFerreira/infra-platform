@@ -1,0 +1,175 @@
+name: Sync bootstrap-vault root token across repos
+
+# Distributes a fresh orphan root token from the bootstrap vault (CT 200)
+# into every repo's VAULT_BOOTSTRAP_ROOT_TOKEN GitHub Actions secret.
+#
+# Why this exists: every repo that talks to bootstrap vault (vault kv get
+# on secret/ssh_keys/*, secret/<service>/<env>/state, etc.) keeps a
+# VAULT_BOOTSTRAP_ROOT_TOKEN secret. If that secret is set to a value
+# that turns out to be stale (token revoked, wrong policy, typo on
+# rotation), every workflow in that repo silently breaks the next time
+# it tries to read vault — usually with a misleading error like "Vault
+# unreachable or key missing". Manually re-pushing the right token to
+# 19 dev repos is tedious and easy to skip half of. This automates it.
+#
+# Pre-reqs (these MUST be in this repo's secrets already):
+#   - VAULT_BOOTSTRAP_ADDR        (e.g. http://192.168.50.200:8200)
+#   - VAULT_BOOTSTRAP_ROOT_TOKEN  (a CURRENTLY-VALID root token — used
+#                                  to mint the new one. If this is itself
+#                                  stale, bootstrap manually via
+#                                  ssh benedict + pct exec 200, then
+#                                  re-run.)
+#   - GH_PAT  (classic PAT with repo + workflow scopes; needed to update
+#              secrets across the workspace repos. The workflow's own
+#              GITHUB_TOKEN is scoped to this repo only.)
+#
+# Usage:
+#   gh workflow run sync-bootstrap-vault-token.yml      # default: all
+#                                                       # repos from
+#                                                       # registered-repos.yml
+#   gh workflow run sync-bootstrap-vault-token.yml \
+#     -f repos="TomasBFerreira/foo TomasBFerreira/bar"  # explicit list
+
+on:
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: 'Override repo list (space-separated owner/repo). Empty = unique union of dev/qa/prod from ansible/github-runner/registered-repos.yml plus this repo.'
+        required: false
+        default: ''
+      include_self:
+        description: 'Also update infra-platform itself (recommended on rotation; defaults true)'
+        type: boolean
+        required: false
+        default: true
+      dry_run:
+        description: 'Report what would change without touching any secrets'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: sync-bootstrap-vault-token
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: [self-hosted, dev]
+    env:
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify current token can talk to vault
+        run: |
+          set -euo pipefail
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/auth/token/lookup-self")
+          if [ "$STATUS" != "200" ]; then
+            echo "ERROR: VAULT_BOOTSTRAP_ROOT_TOKEN in this repo is itself stale (HTTP $STATUS)."
+            echo "Bootstrap manually first:"
+            echo "  ssh -i ~/.ssh/proxmox_access root@192.168.50.4 'pct exec 200 -- bash -c \"vault kv ... \"' "
+            echo "See memory: reference_bootstrap_vault_root_token.md"
+            exit 1
+          fi
+          echo "OK: current token valid"
+
+      - name: Build target repo list
+        id: repos
+        env:
+          OVERRIDE_REPOS: ${{ inputs.repos }}
+          INCLUDE_SELF: ${{ inputs.include_self }}
+          SELF_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE_REPOS}" ]; then
+            # Trust the explicit input; it bypasses registered-repos.yml entirely.
+            REPOS="${OVERRIDE_REPOS}"
+          else
+            REPOS=$(python3 -c "
+          import yaml
+          data = yaml.safe_load(open('ansible/github-runner/registered-repos.yml')) or {}
+          seen = set()
+          for env in ('dev','qa','prod'):
+              for r in data.get(env, []) or []:
+                  seen.add(r)
+          print(' '.join(sorted(seen)))
+          ")
+            if [ "${INCLUDE_SELF}" = "true" ]; then
+              case " ${REPOS} " in *" ${SELF_REPO} "*) ;; *) REPOS="${REPOS} ${SELF_REPO}";; esac
+            fi
+          fi
+          echo "Target repos:"
+          for R in $REPOS; do echo "  - $R"; done
+          echo "repos=${REPOS}" >> "$GITHUB_OUTPUT"
+
+      - name: Mint new orphan root token
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          set -euo pipefail
+          NEW_TOKEN=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" -X POST \
+            --data '{"policies":["root"],"no_parent":true,"no_default_policy":true,"ttl":"0","display_name":"ci-bootstrap-root-sync"}' \
+            "${VAULT_ADDR}/v1/auth/token/create" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['auth']['client_token'])")
+          [ -n "${NEW_TOKEN}" ] || { echo "ERROR: vault token create returned empty"; exit 1; }
+          # Mask the new token in all subsequent logs.
+          echo "::add-mask::${NEW_TOKEN}"
+          # Don't echo to GITHUB_ENV plaintext; write to a tempfile mode 600
+          # so the next step can use it without it appearing in any log line.
+          umask 077
+          printf '%s' "${NEW_TOKEN}" > "${RUNNER_TEMP}/new_token"
+          echo "Minted new orphan root token (length $(wc -c < "${RUNNER_TEMP}/new_token") chars)"
+
+      - name: Push to each repo
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPOS: ${{ steps.repos.outputs.repos }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "ERROR: GH_PAT secret missing — required to update secrets on other repos."
+            exit 1
+          fi
+          UPDATED=()
+          SKIPPED=()
+          FAILED=()
+          for R in ${REPOS}; do
+            echo "── ${R} ──"
+            # Check whether the repo actually has the secret. If not, skip
+            # (some repos may not talk to vault at all).
+            if ! gh secret list -R "${R}" 2>/dev/null | awk '{print $1}' | grep -qx 'VAULT_BOOTSTRAP_ROOT_TOKEN'; then
+              echo "  (no VAULT_BOOTSTRAP_ROOT_TOKEN secret — skipping)"
+              SKIPPED+=("${R}")
+              continue
+            fi
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "  [dry-run] would push new token"
+              continue
+            fi
+            if cat "${RUNNER_TEMP}/new_token" | gh secret set VAULT_BOOTSTRAP_ROOT_TOKEN -R "${R}" >/dev/null 2>&1; then
+              echo "  updated"
+              UPDATED+=("${R}")
+            else
+              echo "  FAILED"
+              FAILED+=("${R}")
+            fi
+          done
+          echo
+          echo "── Summary ──"
+          echo "Updated: ${#UPDATED[@]}"
+          for R in "${UPDATED[@]}"; do echo "  ✓ ${R}"; done
+          echo "Skipped (no secret): ${#SKIPPED[@]}"
+          for R in "${SKIPPED[@]}"; do echo "  - ${R}"; done
+          echo "Failed: ${#FAILED[@]}"
+          for R in "${FAILED[@]}"; do echo "  ✗ ${R}"; done
+          [ ${#FAILED[@]} -eq 0 ] || exit 1
+
+      - name: Cleanup
+        if: always()
+        run: shred -u "${RUNNER_TEMP}/new_token" 2>/dev/null || rm -f "${RUNNER_TEMP}/new_token" 2>/dev/null || true
