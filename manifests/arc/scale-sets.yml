@@ -58,6 +58,16 @@ scale_sets:
     min_runners: 0
     max_runners: 2
 
+  # ── signup-page onboarding (ARC-first new SPA, 2026-05-13) ──────────────
+  # Public signup page for friends/family tomajflix accounts. Same
+  # build-on-ubuntu-latest + crane-pull + k3s-import pattern as landing-page.
+  - repo: TomasBFerreira/signup-page
+    env: dev
+    label: dev
+    name: signup-page-dev
+    min_runners: 0
+    max_runners: 2
+
   # ── NOTE: streambox CD remains on the LXC runner ─────────────────────────
   # The 2026-05-13 cutover attempt was reverted because streambox builds its
   # image with `docker build` directly on the deploy runner (no GHCR push),
