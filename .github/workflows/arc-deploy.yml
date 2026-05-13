@@ -213,6 +213,21 @@ jobs:
         run: |
           kubectl -n "${ARC_NAMESPACE}" get pods,autoscalingrunnersets
 
+      - name: Pre-pull runner image on worker
+        # When the runner image is bumped (Dockerfile change → arc-runner-image
+        # workflow pushes new :latest), the first pod that schedules has to pull
+        # ~680MB+. K3s default kubelet timeouts + ARC's 5-retry-then-fail logic
+        # combine to mark the EphemeralRunner CR Failed mid-pull. Pre-pulling
+        # here means the worker has the new image cached before any job lands.
+        # The pull is a no-op if the image is already current.
+        env:
+          WORKER_IP: ${{ steps.worker.outputs.worker_ip }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh \
+            "root@${WORKER_IP}" \
+            'k3s crictl pull ghcr.io/tomasbferreira/arc-runner:latest' \
+            || echo "WARN: pre-pull failed; first runner pod may stall on initial cold pull"
+
       - name: Cleanup
         if: always()
         run: rm -f keys/worker_ssh
