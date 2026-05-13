@@ -17,7 +17,13 @@
 #   - jq                — table stakes
 # (curl, git, unzip, openssh-client are already in the upstream image.)
 
-ARG ACTIONS_RUNNER_VERSION=2.321.0
+# Bump in lockstep with GitHub's runner-version deprecation cadence. They
+# block versions ~6 months old: a deprecated runner connects to the broker
+# but every message-poll returns 403 with "Runner version vX.Y.Z is
+# deprecated and cannot receive messages." (caught 2026-05-13 on 2.321.0;
+# bumped to 2.334.0). Check https://github.com/actions/runner/releases
+# before bumping if you don't know the current floor.
+ARG ACTIONS_RUNNER_VERSION=2.334.0
 FROM ghcr.io/actions/actions-runner:${ACTIONS_RUNNER_VERSION}
 
 ARG TERRAFORM_VERSION=1.9.8
