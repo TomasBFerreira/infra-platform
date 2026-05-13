@@ -22,14 +22,19 @@ scale_sets:
     min_runners: 0
     max_runners: 2
 
-  # ── Real repos (commented until pilot is green) ──────────────────────────
-  # - repo: TomasBFerreira/traefik-gitops
-  #   env: dev
-  #   label: dev
-  #   name: traefik-gitops-dev
-  #   min_runners: 0
-  #   max_runners: 3
-  #
+  # ── First real cutover (2026-05-13) ──────────────────────────────────────
+  # Only the deploy.yml's two self-hosted jobs in traefik-gitops are wired to
+  # this scale set; the ~48 diagnostic workflows in that repo still target the
+  # LXC runner via `runs-on: self-hosted`. We'll migrate those once deploy.yml
+  # has a week of clean runs through ARC.
+  - repo: TomasBFerreira/traefik-gitops
+    env: dev
+    label: dev          # unused under ARC v0.10's name-based routing; kept for future modes
+    name: traefik-gitops-dev
+    min_runners: 0
+    max_runners: 3
+
+  # ── Queued for later cutover (uncomment when the repo above is green) ────
   # - repo: TomasBFerreira/landing-page
   #   env: dev
   #   label: dev
