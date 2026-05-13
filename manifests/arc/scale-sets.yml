@@ -34,6 +34,18 @@ scale_sets:
     min_runners: 0
     max_runners: 3
 
+  # ── Streambox cutover (2026-05-13, push branch only initially) ──────────
+  # Streambox is the user's most-active CD path (Tomaj Flix deploys land
+  # frequently). Migrating its push-to-main deploy through ARC gives daily
+  # signal that the stack is healthy. workflow_dispatch path stays on the
+  # LXC runner as a fallback for now.
+  - repo: TomasBFerreira/streambox
+    env: dev
+    label: dev
+    name: streambox-dev
+    min_runners: 0
+    max_runners: 2
+
   # ── Queued for later cutover (uncomment when the repo above is green) ────
   # - repo: TomasBFerreira/landing-page
   #   env: dev
