@@ -33,11 +33,16 @@ template:
     containers:
       - name: runner
         image: ghcr.io/tomasbferreira/arc-runner:${IMAGE_TAG}
-        # No explicit command — the chart leaves it to the upstream
-        # actions-runner image's default entrypoint (/home/runner/run.sh).
-        # Setting it explicitly here used to break because our base image
-        # didn't have that script; now that we FROM the upstream image,
-        # the default is correct.
+        # Explicit command is required: the upstream actions-runner image's
+        # default entrypoint is NOT /home/runner/run.sh, so without this
+        # override the pod goes Pending -> Succeeded with the container
+        # never starting (caught after redeploy on 2026-05-13). Do NOT
+        # remove this without verifying the image's entrypoint first.
+        command: ["/home/runner/run.sh"]
+        # Intentionally no RUNNER_LABELS env var: ARC v0.10 routes jobs by
+        # scale-set name, not classic labels. Setting RUNNER_LABELS makes
+        # the runner advertise wrong labels and GitHub never assigns the
+        # job to it.
         resources:
           requests:
             cpu: 200m
