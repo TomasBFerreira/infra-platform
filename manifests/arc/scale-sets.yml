@@ -46,10 +46,22 @@ scale_sets:
     min_runners: 0
     max_runners: 2
 
-  # ── Queued for later cutover (uncomment when the repo above is green) ────
-  # - repo: TomasBFerreira/landing-page
-  #   env: dev
-  #   label: dev
-  #   name: landing-page-dev
-  #   min_runners: 0
-  #   max_runners: 2
+  # ── landing-page cutover (build-on-ubuntu-latest + deploy-on-arc) ───────
+  # Uses the standard ops-portal-style pattern: build/push on GH-hosted, then
+  # deploy step crane-pulls the image and `k3s ctr images import`s it onto
+  # the worker (airgap-friendly). Needs crane + kustomize baked in the
+  # runner image (see Dockerfile).
+  - repo: TomasBFerreira/landing-page
+    env: dev
+    label: dev
+    name: landing-page-dev
+    min_runners: 0
+    max_runners: 2
+
+  # ── NOTE: streambox CD remains on the LXC runner ─────────────────────────
+  # The 2026-05-13 cutover attempt was reverted because streambox builds its
+  # image with `docker build` directly on the deploy runner (no GHCR push),
+  # then `docker save` + scp + `k3s ctr images import`. ARC runner pods have
+  # no Docker daemon, so this needs a Kaniko-with-tarball-output rewrite
+  # before re-attempting. The streambox-dev scale set above stays — its
+  # listener idles harmlessly until that rewrite lands.
