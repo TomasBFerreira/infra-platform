@@ -479,6 +479,115 @@ The smoketest job lands on an ARC pod and validates pre-baked tools, DNS (ndots:
 
 ---
 
+## Onboarding a new SPA / web app from scratch (ARC-first)
+
+For brand-new repos (Angular, SvelteKit, React, etc.) that deploy to k3s. **Skips LXC runner registration** — the old `register-runner.yml` flow is deprecated for new apps. The Claude skill `onboard-spa` automates these steps end-to-end; this section is the human-readable reference.
+
+The pattern landing-page follows (build on GitHub-hosted runner, deploy job crane-pulls + ctr-imports + kustomize-applies on an ARC ephemeral pod) is the canonical shape. **Don't use** the `docker build` + `docker save` + `scp` + `k3s ctr images import` shape — that needs a Docker daemon which ARC pods don't have (see streambox revert note in `manifests/arc/scale-sets.yml`).
+
+### Pre-reqs
+- Repo exists with `Dockerfile`, `nginx.conf`, `manifests/{base,overlays/{dev,qa,prod}}`, `.github/workflows/deploy.yml`. Copy `landing-page`'s shape if scaffolding from scratch.
+- ARC controller + at least one scale set already running in dev k3s (one-time, already in place).
+- A free NodePort in the `301xx` range — verify via `grep -r "30[0-9][0-9][0-9]" /app/infra-platform/CLAUDE.md /app/traefik-gitops/config/dynamic/services.yml` before claiming.
+
+### Inputs you need
+- **Repo name** (`signup-page`)
+- **Hostname** (`signup-dev.databaes.net`)
+- **NodePort** (e.g. `30081`)
+- **SSO** (yes — wrap with `authentik-dev`; or no for explicitly-public apps)
+- **Envs** (default dev only; qa/prod follow later)
+
+### Steps (3 PRs + 1 dispatch)
+
+**1. Seed initial vault secrets on the new repo.**
+The `sync-bootstrap-vault-token.yml` workflow only updates *existing* secrets, so a brand-new repo needs bootstrapping. Mint a fresh orphan root token in CT 200, pipe straight into `gh secret set` so it never crosses your terminal:
+```bash
+gh secret set VAULT_BOOTSTRAP_ADDR -R TomasBFerreira/<repo> \
+  --body 'http://192.168.50.200:8200'
+
+ssh -i ~/.ssh/proxmox_access root@192.168.50.4 'pct exec 200 -- bash -s' <<'INNER' \
+  | gh secret set VAULT_BOOTSTRAP_ROOT_TOKEN -R TomasBFerreira/<repo>
+set -euo pipefail
+ROOT_TOKEN=$(python3 -c "import json; print(json.load(open('/root/vault-init.json'))['root_token'])")
+VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN="$ROOT_TOKEN" \
+  vault token create -policy=root -orphan -no-default-policy -ttl=0 -format=json 2>/dev/null \
+  | python3 -c "import json,sys; sys.stdout.write(json.load(sys.stdin)['auth']['client_token'])"
+INNER
+```
+
+**2. PR in infra-platform: scale set + AdGuard rewrite.**
+Append to `manifests/arc/scale-sets.yml`:
+```yaml
+  - repo: TomasBFerreira/<repo>
+    env: dev
+    label: dev
+    name: <repo>-dev
+    min_runners: 0
+    max_runners: 2
+```
+Append `<hostname>` to `adguard_dev_rewrites` in `ansible/network-vm/roles/adguard/vars/main.yml` (any `*-dev.databaes.net` hostname needs this — skipping it means Tailscale clients hit Cloudflare's wildcard and 404). Merge.
+
+Then dispatch:
+```bash
+gh workflow run arc-deploy.yml -R TomasBFerreira/infra-platform --field env=dev
+gh workflow run update-network-vm-services.yml \
+  --repo TomasBFerreira/infra-platform -f environment=dev
+```
+
+**3. PR in traefik-gitops: route entry.**
+Add to `config/dynamic/services.yml`:
+```yaml
+http:
+  routers:
+    <repo>-dev:
+      rule: "Host(`<hostname>`)"
+      entryPoints: [websecure]
+      service: <repo>-dev
+      middlewares: [authentik-dev]    # OMIT if SSO=no
+      tls:
+        certResolver: cloudflare
+  services:
+    <repo>-dev:
+      loadBalancer:
+        servers:
+          - url: "http://<worker-ip>:<nodeport>"
+```
+Merge → `traefik-gitops` deploy workflow scps services.yml to dev network-vm, Traefik hot-reloads, `sync-dns.yml` upserts the Cloudflare CNAME.
+
+**4. PR in the new repo: ARC-routed deploy.yml.**
+Patch the `deploy` job's `runs-on` from the LXC form to the scale-set name. From:
+```yaml
+runs-on: ${{ fromJSON(github.event_name == 'push' && '["self-hosted","dev"]' || format('["self-hosted","{0}"]', inputs.env)) }}
+```
+To:
+```yaml
+runs-on: ${{ fromJSON(github.event_name == 'push' && '"<repo>-dev"' || format('["self-hosted","{0}"]', inputs.env)) }}
+```
+String form (single-quoted name) routes to the ARC scale set by name. Dispatch path keeps the LXC fallback. Squash-merge — the merge itself triggers the first deploy on ARC.
+
+**5. Verify.**
+- GH Actions run shows runner name `<repo>-dev-…-runner-…`.
+- `kubectl -n <repo> get pods` shows the Deployment Ready.
+- `curl https://<hostname>` from Tailscale (or LAN, or Cloudflare for prod) returns 200 (or 401 from Authentik if SSO).
+- If anything fails: dispatch path is intact — `gh workflow run deploy.yml -R TomasBFerreira/<repo> --field env=dev` to fall back through the LXC.
+
+**6. CMDB record.** Dispatch `record-cmdb-change.yml` with the three PR numbers in the description.
+
+### Things to skip vs the legacy onboarding checklist
+- **Rule #4 (VMID + IP):** N/A. k8s pods don't get VMIDs.
+- **Rule #5 (blue/green pipeline):** N/A. Rolling Deployments handle this.
+- **Rule #9-11 (Terraform/Ansible/LXC template/standard users):** N/A. No VM provisioned.
+- **Rule #12 (`register-runner.yml`):** Skip. ARC is the runner.
+
+What still applies: Rule #3 (worker-node-bound), Rule #6 (SSO unless explicitly public), Rule #7 (Traefik + Cloudflare CNAME), Rule #8 (vault paths for any secrets), Rule #13 (CMDB on every change).
+
+### Gotchas
+- **GHCR package private by default.** After the first `build-and-push` run, make the package public via GHCR settings or k8s pulls 403.
+- **NodePort collision.** Verify the port isn't in use; `kubectl get svc -A` on the worker is the authoritative check.
+- **First pod cold-start.** ~30-90s on the first deploy if the runner image isn't cached on the worker. `arc-deploy.yml` pre-pulls, so usually fine. If pods stall in `ContainerCreating` for minutes, force a pull via SSH: `ssh root@<worker-ip> 'k3s crictl pull ghcr.io/tomasbferreira/arc-runner:latest'`.
+
+---
+
 ## Deploying to a new environment (QA or Prod)
 
 1. Ensure the LXC template is on the target Proxmox node

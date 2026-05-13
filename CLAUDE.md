@@ -5,6 +5,8 @@
 
 ## New app onboarding checklist
 
+> **Brand-new SPA / web app?** This 11-point checklist is shaped for VM-based services (vault, network-vm, rancher, etc.). For Kubernetes-deployed apps that don't need their own VM — SPAs, ops-portal-*, status-api — most of the VM rules (#4, #5, #9-11) don't apply. Use the **ARC-first onboarding** at [`docs/runbooks.md`](docs/runbooks.md#onboarding-a-new-spa--web-app-from-scratch-arc-first) or invoke the `onboard-spa` Claude skill. The relevant rules from the list below for SPAs are #3 (worker-node-bound), #6 (SSO), #7 (Cloudflare CNAME), #8 (Vault paths if needed), and #13 (CMDB).
+
 Every new app/service being onboarded must satisfy all of the following before it is considered complete:
 
 3. **Deploy on a worker node or static host** — must be provisioned on a Proxmox worker node (benedict/heaton/betsy) or a designated static host. Ad-hoc deployments directly on the hypervisor are not allowed.
@@ -16,7 +18,7 @@ Every new app/service being onboarded must satisfy all of the following before i
 9. **Terraform/Ansible paths** — new services go in `terraform/<service>/` and `ansible/<service>/` (shared, env-injected via variables). The legacy `terraform/dev/<service>/` and `ansible/dev/<service>/` paths are frozen — nothing new goes there.
 10. **LXC template** — use `local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst` unless there is a specific technical reason not to; any deviation must be documented.
 11. **Standard users on every VM/LXC** — every Ansible playbook must create two users: `appadm` (owns the service — runs processes, owns files) and `tomas` (admin for interactive access, member of `sudo` group). No service should run as root, and no interactive access should rely solely on the root account.
-12. **Register a GitHub Actions runner for every new repo** — any repo that needs CI/CD must have a runner registered on the shared env runner LXC. Use the `register-runner.yml` workflow in infra-platform (one-time per repo per env). See [docs/runbooks.md](docs/runbooks.md#registering-a-github-actions-runner-for-a-new-repo) for the full procedure.
+12. **GitHub Actions runners.** For **new repos**, route through the ARC ephemeral-runner stack on dev k3s — add an entry to `manifests/arc/scale-sets.yml` and use `runs-on: <scale-set-name>` instead of `runs-on: [self-hosted, <env>]`. See [docs/runbooks.md § Onboarding a new SPA](docs/runbooks.md#onboarding-a-new-spa--web-app-from-scratch-arc-first) and § Migrating from LXC runners to ARC. Existing repos still on the LXC runners are being migrated incrementally; `register-runner.yml` + `ansible/github-runner/registered-repos.yml` are the legacy path and should not be used for net-new repos.
 13. **CMDB recording from day one** — every service must wire `cmdb.change.requested` publishes for any state-mutating action it performs (deploys it triggers, configs it writes, infra it touches). Issues found during normal work that aren't fixed immediately must be recorded as open `cmdb_incidents` (problems). When fixing a known problem, check the CMDB first and close the open entry. The full rule (with HTTP endpoints, NATS subject, payload shape) lives at [`/app/.claude/rules/cmdb-discipline.md`](/app/.claude/rules/cmdb-discipline.md) and the wiki page [`/operations/cmdb-discipline`](https://wikijs.databaes.net/operations/cmdb-discipline). Adding this requirement at onboarding time avoids the "we'll wire it up next sprint" trap.
 
 ---
