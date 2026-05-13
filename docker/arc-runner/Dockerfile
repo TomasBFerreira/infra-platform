@@ -29,6 +29,8 @@ FROM ghcr.io/actions/actions-runner:${ACTIONS_RUNNER_VERSION}
 ARG TERRAFORM_VERSION=1.9.8
 ARG KUBECTL_VERSION=1.32.0
 ARG VAULT_VERSION=1.18.2
+ARG KUSTOMIZE_VERSION=5.4.3
+ARG CRANE_VERSION=0.19.1
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
@@ -51,6 +53,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
         -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
+
+# kustomize — used by ops-portal-* + landing-page deploys via `kubectl apply -k`.
+# The self-install step in those workflows tries to write to /usr/local/bin
+# without sudo and fails as the non-root `runner` user; bake it in instead.
+RUN curl -fsSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
+        | tar -xz -C /usr/local/bin kustomize \
+    && chmod +x /usr/local/bin/kustomize
+
+# crane — used by landing-page deploy to `crane pull --format=tarball` the
+# built image from GHCR before `k3s ctr images import` on the worker.
+RUN curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+        | tar -xz -C /usr/local/bin crane \
+    && chmod +x /usr/local/bin/crane
 
 # terraform — extract only the binary; the zip ships a LICENSE.txt that
 # collides with vault's LICENSE.txt below if both are extracted whole, and
@@ -77,6 +92,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # Sanity check at build time — broken image fails the build, not the
 # first pod scheduling.
 RUN kubectl version --client \
+    && kustomize version \
+    && crane version \
     && terraform version \
     && vault version \
     && ansible --version | head -1 \
