@@ -34,11 +34,15 @@ scale_sets:
     min_runners: 0
     max_runners: 3
 
-  # ── Streambox cutover (2026-05-13, push branch only initially) ──────────
+  # ── Streambox cutover (re-attempted 2026-05-14, push branch only) ───────
   # Streambox is the user's most-active CD path (Tomaj Flix deploys land
-  # frequently). Migrating its push-to-main deploy through ARC gives daily
-  # signal that the stack is healthy. workflow_dispatch path stays on the
-  # LXC runner as a fallback for now.
+  # frequently). The push-to-main deploy now routes through this scale set
+  # via the same build-on-ubuntu-latest + crane-pull-tarball + k3s-import
+  # pattern that landing-page uses (the original 2026-05-13 cutover was
+  # reverted because streambox previously built with `docker build` on the
+  # deploy runner — ARC pods have no Docker daemon; that's been fixed in
+  # streambox#52 + #54). workflow_dispatch path stays on the LXC runner as
+  # a fallback during soak and is what prod deploys use.
   - repo: TomasBFerreira/streambox
     env: dev
     label: dev
@@ -68,10 +72,3 @@ scale_sets:
     min_runners: 0
     max_runners: 2
 
-  # ── NOTE: streambox CD remains on the LXC runner ─────────────────────────
-  # The 2026-05-13 cutover attempt was reverted because streambox builds its
-  # image with `docker build` directly on the deploy runner (no GHCR push),
-  # then `docker save` + scp + `k3s ctr images import`. ARC runner pods have
-  # no Docker daemon, so this needs a Kaniko-with-tarball-output rewrite
-  # before re-attempting. The streambox-dev scale set above stays — its
-  # listener idles harmlessly until that rewrite lands.
