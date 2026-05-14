@@ -483,7 +483,7 @@ The smoketest job lands on an ARC pod and validates pre-baked tools, DNS (ndots:
 
 For brand-new repos (Angular, SvelteKit, React, etc.) that deploy to k3s. **Skips LXC runner registration** — the old `register-runner.yml` flow is deprecated for new apps. The Claude skill `onboard-spa` automates these steps end-to-end; this section is the human-readable reference.
 
-The pattern landing-page follows (build on GitHub-hosted runner, deploy job crane-pulls + ctr-imports + kustomize-applies on an ARC ephemeral pod) is the canonical shape. **Don't use** the `docker build` + `docker save` + `scp` + `k3s ctr images import` shape — that needs a Docker daemon which ARC pods don't have (see streambox revert note in `manifests/arc/scale-sets.yml`).
+The pattern landing-page follows (build on GitHub-hosted runner, deploy job crane-pulls + ctr-imports + kustomize-applies on an ARC ephemeral pod) is the canonical shape. **Don't use** the `docker build` + `docker save` + `scp` + `k3s ctr images import` shape — that needs a Docker daemon which ARC pods don't have. streambox's first ARC cutover (2026-05-13) was reverted for exactly this reason and re-landed on 2026-05-14 once the build step had been moved to `ubuntu-latest` (streambox#52). One gotcha worth carrying forward: when the Deployment manifest uses `imagePullPolicy: Never`, the deploy step must `crane pull --format=tarball` the *same tag the manifest references* (e.g. `:latest`), not just `:<sha>` — the tarball is single-tag and kubelet looks up the tag literally (streambox#54).
 
 ### Pre-reqs
 - Repo exists with `Dockerfile`, `nginx.conf`, `manifests/{base,overlays/{dev,qa,prod}}`, `.github/workflows/deploy.yml`. Copy `landing-page`'s shape if scaffolding from scratch.
