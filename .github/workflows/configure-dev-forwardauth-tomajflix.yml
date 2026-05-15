@@ -68,25 +68,37 @@ jobs:
       - name: Create or update TomajFlix Dev Forward Auth Proxy Provider
         if: steps.check-sso.outputs.skip != 'true'
         run: |
+          # Authentik forward_domain matching keys on external_host's host —
+          # it MUST be a hostname under cookie_domain or the provider is
+          # silently inactive. auth-dev.tomajflix.app is wired via traefik-gitops.
+          EXTERNAL_HOST="https://auth-dev.tomajflix.app"
+          COOKIE_DOMAIN="tomajflix.app"
+
           ALL_PROVIDERS=$(curl -sf "http://${SSO_IP}:9000/api/v3/providers/proxy/?page_size=100" \
             -H "Authorization: Bearer $AUTHENTIK_TOKEN")
           PROVIDER_PK=$(echo "$ALL_PROVIDERS" | python3 -c \
             "import sys,json; r=json.load(sys.stdin); m=[p for p in r['results'] if p['name']=='TomajFlix Dev Forward Auth' and p['mode']=='forward_domain']; print(m[0]['pk'] if m else '0')")
 
+          PAYLOAD=$(jq -nc \
+            --arg name "TomajFlix Dev Forward Auth" \
+            --arg auth "$AUTH_FLOW" \
+            --arg inv "$INVALIDATION_FLOW" \
+            --arg ext "$EXTERNAL_HOST" \
+            --arg ck "$COOKIE_DOMAIN" \
+            '{name:$name, authorization_flow:$auth, invalidation_flow:$inv, mode:"forward_domain", external_host:$ext, cookie_domain:$ck}')
+
           if [ "$PROVIDER_PK" != "0" ]; then
-            echo "TomajFlix Dev Forward Auth Provider already exists (pk=$PROVIDER_PK)"
+            echo "TomajFlix Dev Forward Auth Provider exists (pk=$PROVIDER_PK) — PATCHing to keep external_host/cookie_domain current"
+            curl -sf -X PATCH "http://${SSO_IP}:9000/api/v3/providers/proxy/${PROVIDER_PK}/" \
+              -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              | python3 -c "import sys,json; r=json.load(sys.stdin); print('Patched provider — external_host='+r['external_host']+' cookie_domain='+r['cookie_domain'])"
           else
             RESP=$(curl -sf -X POST "http://${SSO_IP}:9000/api/v3/providers/proxy/" \
               -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{
-                \"name\": \"TomajFlix Dev Forward Auth\",
-                \"authorization_flow\": \"$AUTH_FLOW\",
-                \"invalidation_flow\": \"$INVALIDATION_FLOW\",
-                \"mode\": \"forward_domain\",
-                \"external_host\": \"https://auth-dev.databaes.net\",
-                \"cookie_domain\": \"tomajflix.app\"
-              }")
+              -d "$PAYLOAD")
             PROVIDER_PK=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['pk'])")
             echo "Created TomajFlix Dev Forward Auth Provider (pk=$PROVIDER_PK)"
           fi
