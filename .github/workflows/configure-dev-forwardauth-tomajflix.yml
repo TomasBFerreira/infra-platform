@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, dev]
     env:
       VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
 
     steps:
       - name: Check SSO is deployed
@@ -159,21 +159,25 @@ jobs:
       - name: Verify ForwardAuth resolves a provider for dev.tomajflix.app
         if: steps.check-sso.outputs.skip != 'true'
         run: |
-          sleep 5
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-            "http://${SSO_IP}:9000/outpost.goauthentik.io/auth/traefik" \
-            -H "X-Forwarded-Host: dev.tomajflix.app" \
-            -H "X-Forwarded-Proto: https" || echo "000")
-          echo "ForwardAuth health check (port 9000): HTTP $HTTP"
-          if [ "$HTTP" = "000" ]; then
-            echo "ERROR: Authentik not reachable on port 9000"
-            exit 1
-          elif [ "$HTTP" = "404" ]; then
-            echo "ERROR: ForwardAuth returned 404 — no matching provider for dev.tomajflix.app"
-            echo "Expected: forward_domain provider with cookie_domain=tomajflix.app should catch this"
-            exit 1
-          fi
-          echo "ForwardAuth is working correctly (HTTP $HTTP)"
+          # The embedded outpost polls Authentik for config every ~60s, so a
+          # newly added provider may not be visible to forwardAuth immediately.
+          # Retry up to 90s.
+          for i in $(seq 1 18); do
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+              "http://${SSO_IP}:9000/outpost.goauthentik.io/auth/traefik" \
+              -H "X-Forwarded-Host: dev.tomajflix.app" \
+              -H "X-Forwarded-Proto: https" || echo "000")
+            echo "Attempt $i: HTTP $HTTP"
+            if [ "$HTTP" != "404" ] && [ "$HTTP" != "000" ]; then
+              echo "ForwardAuth is working correctly (HTTP $HTTP)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "ERROR: ForwardAuth still returning $HTTP after 90s"
+          [ "$HTTP" = "000" ] && echo "Authentik not reachable on port 9000"
+          [ "$HTTP" = "404" ] && echo "No matching forward_domain provider for dev.tomajflix.app — check Authentik outpost binding"
+          exit 1
 
       - name: Cleanup
         if: always()
