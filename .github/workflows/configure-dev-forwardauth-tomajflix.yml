@@ -168,6 +168,28 @@ jobs:
               | python3 -c "import sys,json; r=json.load(sys.stdin); print('Outpost updated — providers:', r['providers'])"
           fi
 
+      - name: Bounce authentik-server so the embedded outpost reloads providers
+        if: steps.check-sso.outputs.skip != 'true'
+        run: |
+          # The embedded outpost caches provider config in-memory. A model save
+          # is supposed to trigger a WebSocket refresh, but in practice the
+          # cache stays stale for forward_domain providers added via the API
+          # until the next refresh interval (default 5 min) or a process
+          # restart. Bouncing the container is the cleanest fix; user sessions
+          # live in Postgres so existing logins are preserved.
+          ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "docker restart authentik-server" >/dev/null
+          echo "Container restarted; waiting for /-/health/ready/"
+          for i in $(seq 1 30); do
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+              "http://${SSO_IP}:9000/-/health/ready/" || echo "000")
+            if [ "$HTTP" = "200" ]; then
+              echo "authentik-server healthy after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
       - name: Verify ForwardAuth resolves a provider for dev.tomajflix.app
         if: steps.check-sso.outputs.skip != 'true'
         run: |
