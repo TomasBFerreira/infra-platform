@@ -42,6 +42,8 @@ adguard_dev_rewrites:
   - domain: radarr-dev.databaes.net
   - domain: sonarr-dev.databaes.net
   - domain: dev.databaes.net
+  - domain: dev.tomajflix.app
+  - domain: auth-dev.tomajflix.app
 
 adguard_qa_rewrites:
   - domain: auth-qa.databaes.net
