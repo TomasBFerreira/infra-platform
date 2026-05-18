@@ -1,0 +1,106 @@
+name: CMDB notify (Renovate PR)
+
+# Reusable workflow: called from each managed repo on Renovate PR events.
+# Records the proposed/completed change in CMDB so we have an audit trail of
+# what Renovate suggested and what we accepted.
+#
+# Network constraint: posts to the prod CMDB NodePort (192.168.10.21:30092)
+# which is only reachable from prod-subnet runners. The caller must pin
+# runs-on: [self-hosted, prod].
+
+on:
+  workflow_call:
+    inputs:
+      action:
+        description: PR action — 'opened' or 'closed-merged' or 'closed-unmerged'
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: number
+      pr_title:
+        required: true
+        type: string
+      pr_url:
+        required: true
+        type: string
+      affected_ci:
+        description: CI name in CMDB for the affected service/repo
+        required: true
+        type: string
+      repo:
+        description: owner/repo for correlation
+        required: true
+        type: string
+
+jobs:
+  notify:
+    runs-on: [self-hosted, prod]
+    timeout-minutes: 2
+    steps:
+      - name: Record / update CMDB entry
+        env:
+          ACTION: ${{ inputs.action }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_TITLE: ${{ inputs.pr_title }}
+          PR_URL: ${{ inputs.pr_url }}
+          AFFECTED_CI: ${{ inputs.affected_ci }}
+          REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+
+          # CMDBChange.Status enum: draft | approved | in_progress | completed |
+          # rolled_back | cancelled. We map Renovate PR lifecycle to:
+          #   PR opened   → draft     (proposal, awaiting human review)
+          #   PR merged   → completed (accepted and rolled out by deploy.yml)
+          #   PR closed   → cancelled (declined by reviewer)
+          case "${ACTION}" in
+            opened)
+              status="draft"
+              title="[Renovate] ${PR_TITLE}"
+              ;;
+            closed-merged)
+              status="completed"
+              title="[Renovate] ${PR_TITLE}"
+              ;;
+            closed-unmerged)
+              status="cancelled"
+              title="[Renovate] ${PR_TITLE} (declined)"
+              ;;
+            *)
+              echo "unknown action: ${ACTION}" >&2
+              exit 1
+              ;;
+          esac
+
+          # Correlation key lives in the description (no correlation_id field
+          # on CMDBChange). Format kept stable so future queries can grep it.
+          description="Renovate dependency update.
+          PR: ${PR_URL}
+          correlation: renovate-${REPO//\//-}-pr-${PR_NUMBER}"
+
+          payload=$(jq -nc \
+            --arg title "${title}" \
+            --arg description "${description}" \
+            --arg status "${status}" \
+            --arg ci "${AFFECTED_CI}" \
+            '{
+              title: $title,
+              description: $description,
+              affected_cis: [$ci],
+              status: $status,
+              risk: "low",
+              change_type: "auto",
+              requested_by: "renovate"
+            }')
+
+          echo "Posting to CMDB:"
+          echo "${payload}" | jq .
+
+          response=$(curl -sS --fail-with-body --max-time 10 \
+            -X POST http://192.168.10.21:30092/api/cmdb/changes \
+            -H 'Content-Type: application/json' \
+            -d "${payload}")
+
+          echo "CMDB response:"
+          echo "${response}" | jq .
