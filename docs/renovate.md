@@ -51,8 +51,9 @@ In github.com → Settings → Developer settings → GitHub Apps → New GitHub
 - **Where can this GitHub App be installed**: Only on this account
 - Generate a private key (`.pem`) — download and keep safe
 
-After creation, note the **App ID** and **Installation ID** (the latter is
-visible in the install URL once you install it).
+After creation, note the **App ID**. (The Installation ID is not needed —
+`actions/create-github-app-token@v1` auto-discovers the installation from
+the `owner` parameter.)
 
 ### 2. Install the app on the pilot repo
 
@@ -67,8 +68,21 @@ live in the **dev env vault** (not bootstrap):
 ```bash
 vault kv put secret/renovate/github-app \
   app_id=<numeric app id> \
-  installation_id=<numeric installation id> \
   private_key=@/path/to/renovate.private-key.pem
+```
+
+Or via HTTP API if you don't have the `vault` CLI handy (this is the path I
+used during pilot bootstrap — from a host with vmbr20 reach to the active
+dev vault CT, currently `192.168.20.45`):
+
+```bash
+PEM=$(cat renovate.private-key.pem)
+curl -X POST \
+  -H "X-Vault-Token: <root-token-from-/root/vault-init.json-on-vault-ct>" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg id <app-id> --arg pk "$PEM" \
+        '{data:{app_id:$id, private_key:$pk}}')" \
+  http://192.168.20.45:8200/v1/secret/data/renovate/github-app
 ```
 
 ### 4. Wire Slack notifications
