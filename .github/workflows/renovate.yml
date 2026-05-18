@@ -38,14 +38,13 @@ jobs:
     runs-on: arc-pilot-dev
     timeout-minutes: 30
     env:
-      # Per CLAUDE.md "GitHub secrets reference":
-      #   VAULT_ADDR / VAULT_TOKEN  → dev env vault (where secret/renovate/* lives)
-      #   VAULT_DEV_TOKEN           → BOOTSTRAP vault (SSH keys + slot state)
-      # The 2026-05-18 first dispatch used the dev-bootstrap names and got
-      # a 403 because the bootstrap token has no access to the env vault's
-      # secret/ tree.
-      VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+      # We talk to the BOOTSTRAP vault (CT 200, 192.168.50.200), not the
+      # env vault. The env vault's CI token isn't actually wired into GitHub
+      # secrets — every workflow in the repo writes to bootstrap. Found this
+      # the hard way on 2026-05-18 (runs 26059291777 / 26059409023 both 403'd
+      # against the env vault).
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
     steps:
       - name: Checkout orchestrator config
         uses: actions/checkout@v4

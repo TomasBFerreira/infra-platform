@@ -60,30 +60,40 @@ the `owner` parameter.)
 Install URL → choose **TomasBFerreira/nextcloud** only for the pilot.
 Add more repos later as we widen scope.
 
-### 3. Seed credentials into the dev env vault
+### 3. Seed credentials into the BOOTSTRAP vault
 
-The orchestrator runs in the dev k3s cluster (ARC pilot), so the credentials
-live in the **dev env vault** (not bootstrap):
+Despite the CLAUDE.md secrets table suggesting otherwise, **every workflow
+in this repo authenticates against the bootstrap vault (CT 200,
+192.168.50.200)**, not the env vaults. The env vaults' CI tokens are not
+wired into GitHub Actions secrets — `VAULT_TOKEN` exists but the value
+behind it isn't a working dev-env-vault token. Use bootstrap.
 
 ```bash
-vault kv put secret/renovate/github-app \
+vault kv put -address=$VAULT_BOOTSTRAP_ADDR secret/renovate/github-app \
   app_id=<numeric app id> \
   private_key=@/path/to/renovate.private-key.pem
 ```
 
-Or via HTTP API if you don't have the `vault` CLI handy (this is the path I
-used during pilot bootstrap — from a host with vmbr20 reach to the active
-dev vault CT, currently `192.168.20.45`):
+Or via HTTP API from a host with mgmt-network reach (e.g. benedict or betsy)
+— this is the path I used during pilot bootstrap on 2026-05-18:
 
 ```bash
+# Get the root token off the bootstrap vault CT itself (benedict in this homelab):
+ssh root@192.168.50.4 'pct exec 200 -- jq -r .root_token /root/vault-init.json'
+
+# Then write:
 PEM=$(cat renovate.private-key.pem)
 curl -X POST \
-  -H "X-Vault-Token: <root-token-from-/root/vault-init.json-on-vault-ct>" \
+  -H "X-Vault-Token: <bootstrap-root-token>" \
   -H 'Content-Type: application/json' \
   -d "$(jq -nc --arg id <app-id> --arg pk "$PEM" \
         '{data:{app_id:$id, private_key:$pk}}')" \
-  http://192.168.20.45:8200/v1/secret/data/renovate/github-app
+  http://192.168.50.200:8200/v1/secret/data/renovate/github-app
 ```
+
+The CI token at `secrets.VAULT_DEV_TOKEN` (named "DEV" but is actually the
+bootstrap-vault CI token) has read/write on `secret/*` and is what the
+orchestrator workflow uses.
 
 ### 4. Wire Slack notifications
 
