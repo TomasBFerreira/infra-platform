@@ -73,7 +73,7 @@ jobs:
           owner: TomasBFerreira
 
       - name: Run Renovate
-        uses: renovatebot/github-action@v40
+        uses: renovatebot/github-action@v46.1.14
         with:
           configurationFile: renovate/config.js
           token: ${{ steps.token.outputs.token }}
