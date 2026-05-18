@@ -17,10 +17,17 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Renovate dry-run mode
+        # Renovate accepts: null (real run) | extract | lookup | full.
+        # We pass these strings through as-is — DO NOT add an alias like
+        # 'none', because GHA's `A && B || C` ternary coalesces empty
+        # strings to C, so any sentinel that maps to '' falls through to
+        # the original value and Renovate enters dry-run anyway (caught
+        # 2026-05-18 in run 26060708126 — passed RENOVATE_DRY_RUN=none and
+        # Renovate treated the non-empty value as dry-run).
+        description: Renovate dry-run mode (null = real run)
         type: choice
-        options: [none, extract, lookup, full]
-        default: none
+        options: ['null', extract, lookup, full]
+        default: 'null'
       log_level:
         description: Log verbosity
         type: choice
@@ -101,6 +108,8 @@ jobs:
           RENOVATE_TOKEN: ${{ steps.token.outputs.token }}
           RENOVATE_CONFIG_FILE: ${{ github.workspace }}/renovate/config.js
           LOG_LEVEL: ${{ inputs.log_level || 'info' }}
-          # Renovate ignores RENOVATE_DRY_RUN when empty/unset.
-          RENOVATE_DRY_RUN: ${{ inputs.dry_run == 'none' && '' || inputs.dry_run }}
+          # Renovate accepts 'null' as the sentinel for "not a dry-run".
+          # Scheduled runs (no inputs.dry_run) pass through as empty string;
+          # Renovate also treats unset / empty as real run.
+          RENOVATE_DRY_RUN: ${{ inputs.dry_run || 'null' }}
         run: renovate
