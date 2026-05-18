@@ -89,7 +89,9 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Renovate latest requires node ^24.11.0 — found 20.20.2 too old
+          # in run 26059905965 with "Unsupported node environment detected".
+          node-version: '24'
 
       - name: Install Renovate CLI
         run: npm install -g renovate@latest
