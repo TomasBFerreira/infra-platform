@@ -1,0 +1,84 @@
+name: Renovate
+
+# Self-hosted Renovate orchestrator. Runs on the ARC pilot scale set in the
+# dev k3s cluster and opens PRs against the repos listed in renovate/config.js.
+#
+# Auth: a GitHub App named "Renovate" (separate from the ARC app — different
+# permission scope). App credentials are seeded into the dev env vault at
+# secret/renovate/github-app with fields {app_id, installation_id, private_key}.
+# See docs/renovate.md for the one-time setup.
+#
+# Cadence: twice daily (08:17 and 20:17 UTC). Use workflow_dispatch with
+# dry_run=full for a no-op preview run that shows what Renovate would do.
+
+on:
+  schedule:
+    - cron: '17 8,20 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Renovate dry-run mode
+        type: choice
+        options: [none, extract, lookup, full]
+        default: none
+      log_level:
+        description: Log verbosity
+        type: choice
+        options: [info, debug]
+        default: info
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    # Routes by ARC scale-set NAME, not classic [self-hosted, label] —
+    # see manifests/arc/scale-sets.yml and arc-smoketest.yml for the pattern.
+    runs-on: arc-pilot-dev
+    timeout-minutes: 30
+    env:
+      VAULT_ADDR: ${{ secrets.VAULT_DEV_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - name: Checkout orchestrator config
+        uses: actions/checkout@v4
+
+      - name: Fetch Renovate GitHub App credentials from vault
+        id: app
+        run: |
+          set -euo pipefail
+          app_id=$(vault kv get -field=app_id secret/renovate/github-app)
+          private_key=$(vault kv get -field=private_key secret/renovate/github-app)
+
+          # Mask both before exporting. add-mask is applied line-by-line for the
+          # private key, so the PEM body is mostly safe even if a step echoes it.
+          echo "::add-mask::${app_id}"
+          while IFS= read -r line; do echo "::add-mask::${line}"; done <<< "${private_key}"
+
+          echo "app_id=${app_id}" >> "$GITHUB_OUTPUT"
+          delimiter="EOF_$(openssl rand -hex 8)"
+          {
+            echo "private_key<<${delimiter}"
+            printf '%s\n' "${private_key}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Mint installation token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ steps.app.outputs.app_id }}
+          private-key: ${{ steps.app.outputs.private_key }}
+          owner: TomasBFerreira
+
+      - name: Run Renovate
+        uses: renovatebot/github-action@v40
+        with:
+          configurationFile: renovate/config.js
+          token: ${{ steps.token.outputs.token }}
+        env:
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
+          # Renovate reads RENOVATE_DRY_RUN as 'null' when unset — passing
+          # an empty string here makes it a no-op default.
+          RENOVATE_DRY_RUN: ${{ inputs.dry_run == 'none' && '' || inputs.dry_run }}
