@@ -80,13 +80,19 @@ jobs:
           private-key: ${{ steps.app.outputs.private_key }}
           owner: TomasBFerreira
 
+      # renovatebot/github-action runs renovate inside a docker container via
+      # /var/run/docker.sock. ARC pods don't have a Docker daemon, so we
+      # install renovate as a plain Node CLI and invoke it directly. The
+      # arc-runner image (docker/arc-runner/Dockerfile) is based on
+      # ghcr.io/actions/actions-runner which already ships Node.
+      - name: Install Renovate CLI
+        run: npm install -g renovate@latest
+
       - name: Run Renovate
-        uses: renovatebot/github-action@v46.1.14
-        with:
-          configurationFile: renovate/config.js
-          token: ${{ steps.token.outputs.token }}
         env:
+          RENOVATE_TOKEN: ${{ steps.token.outputs.token }}
+          RENOVATE_CONFIG_FILE: ${{ github.workspace }}/renovate/config.js
           LOG_LEVEL: ${{ inputs.log_level || 'info' }}
-          # Renovate reads RENOVATE_DRY_RUN as 'null' when unset — passing
-          # an empty string here makes it a no-op default.
+          # Renovate ignores RENOVATE_DRY_RUN when empty/unset.
           RENOVATE_DRY_RUN: ${{ inputs.dry_run == 'none' && '' || inputs.dry_run }}
+        run: renovate
