@@ -38,13 +38,16 @@ jobs:
     runs-on: arc-pilot-dev
     timeout-minutes: 30
     env:
-      # We talk to the BOOTSTRAP vault (CT 200, 192.168.50.200), not the
-      # env vault. The env vault's CI token isn't actually wired into GitHub
-      # secrets — every workflow in the repo writes to bootstrap. Found this
-      # the hard way on 2026-05-18 (runs 26059291777 / 26059409023 both 403'd
-      # against the env vault).
+      # We talk to the BOOTSTRAP vault (CT 200, 192.168.50.200). The
+      # `VAULT_DEV_TOKEN` CI token is stale (last rotated 2026-03-23; runs
+      # 26059409023 / 26059584590 both 403'd with it), while
+      # `VAULT_BOOTSTRAP_ROOT_TOKEN` was rotated 2026-05-13 and is what every
+      # other workflow that writes app secrets uses (e.g.
+      # nextcloud/seed-vault.yml). Using root is heavier than needed — a
+      # follow-up should mint a scoped `renovate` token via the vault-ct
+      # playbook and add it as `VAULT_RENOVATE_TOKEN` to GitHub secrets.
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
     steps:
       - name: Checkout orchestrator config
         uses: actions/checkout@v4
