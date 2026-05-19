@@ -116,56 +116,67 @@ scale_sets:
   #   - ops-portal-pipelines (no deploy.yml; only diagnostic workflows)
   - repo: TomasBFerreira/ops-portal-identity
     env: dev
+    label: dev
     name: ops-portal-identity-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/ops-portal-cmdb
     env: dev
+    label: dev
     name: ops-portal-cmdb-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/ops-portal-audit
     env: dev
+    label: dev
     name: ops-portal-audit-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/ops-portal-infrastructure
     env: dev
+    label: dev
     name: ops-portal-infrastructure-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/ops-portal-deployments
     env: dev
+    label: dev
     name: ops-portal-deployments-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/ops-portal-domain
     env: dev
+    label: dev
     name: ops-portal-domain-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/ops-portal-shell
     env: dev
+    label: dev
     name: ops-portal-shell-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/databaes-status-api
     env: dev
+    label: dev
     name: databaes-status-api-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/wikijs
     env: dev
+    label: dev
     name: wikijs-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/media-stack
     env: dev
+    label: dev
     name: media-stack-dev
     min_runners: 0
     max_runners: 2
   - repo: TomasBFerreira/otel-monitoring
     env: dev
+    label: dev
     name: otel-monitoring-dev
     min_runners: 0
     max_runners: 2
