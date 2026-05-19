@@ -248,7 +248,7 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
-          TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+          TS_AUTHKEY=$(vault kv get -field=authkey "secret/tailscale/${ENV}")
           CF_DNS_API_TOKEN=$(vault kv get -field=dns_api_token secret/cloudflare 2>/dev/null || echo "")
           echo "::add-mask::$TS_AUTHKEY"
           echo "::add-mask::$CF_DNS_API_TOKEN"

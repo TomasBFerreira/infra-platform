@@ -240,7 +240,7 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
-          TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+          TS_AUTHKEY=$(vault kv get -field=authkey "secret/tailscale/${ENV}")
           ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
           ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
           echo "::add-mask::$TS_AUTHKEY"
