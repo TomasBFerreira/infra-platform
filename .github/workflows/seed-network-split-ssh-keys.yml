@@ -1,0 +1,57 @@
+name: Seed Network-Split SSH Keys (one-off)
+
+# Generates ed25519 keypairs in-runner for the new traefik / adguard /
+# cloudflared services and writes them to the bootstrap vault. The
+# private key never leaves the runner pod (no workflow_dispatch input,
+# no log output). Keys land at:
+#   secret/ssh_keys/traefik_worker
+#   secret/ssh_keys/adguard_worker
+#   secret/ssh_keys/cloudflared_worker
+#
+# Idempotent guard: if a key already exists in vault, the run for that
+# service is skipped so re-running is safe and never rotates keys
+# behind your back.
+#
+# Run-once: dispatch with env=dev after the network-vm-split Phase 1 PR
+# lands. Public keys are printed (non-sensitive) so the matching
+# proxmox_lxc.<svc> resources can ssh into the LXCs they provision.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: seed-network-split-ssh-keys
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: arc-pilot-dev
+    env:
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - name: Generate + seed keys
+        run: |
+          set -euo pipefail
+          for SVC in traefik adguard cloudflared; do
+            PATH_="secret/ssh_keys/${SVC}_worker"
+            echo "── ${SVC} ──────────────────────────────"
+            if vault kv get -field=public_key "${PATH_}" >/dev/null 2>&1; then
+              echo "${PATH_} already exists — skipping generation"
+              echo "Public key:"
+              vault kv get -field=public_key "${PATH_}"
+              echo
+              continue
+            fi
+            TMP=$(mktemp -d)
+            ssh-keygen -t ed25519 -f "${TMP}/key" -N "" -C "${SVC}_worker" -q
+            vault kv put "${PATH_}" \
+              private_key=@"${TMP}/key" \
+              public_key=@"${TMP}/key.pub"
+            echo "Seeded ${PATH_}"
+            echo "Public key:"
+            cat "${TMP}/key.pub"
+            rm -rf "${TMP}"
+            echo
+          done
+          echo "Done. All three services have keys at secret/ssh_keys/<svc>_worker."
