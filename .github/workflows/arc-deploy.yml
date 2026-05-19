@@ -125,6 +125,44 @@ jobs:
           kubectl get ns "${ARC_NAMESPACE}" 2>/dev/null \
             || kubectl create ns "${ARC_NAMESPACE}"
 
+      - name: Ensure terraform-state namespace + RBAC
+        # Pipelines that use the `kubernetes` terraform backend store tfstate
+        # as Secrets in this ns. Runner pods get a SA bound to a Role scoped
+        # ONLY to `terraform-state` ns — non-terraform-using pipelines
+        # (renovate, traefik-gitops deploys, etc.) get the SA too but the
+        # permission is useless to them since they never touch this ns.
+        # First user: infra-platform's traefik/adguard/cloudflared pipelines.
+        run: |
+          kubectl get ns terraform-state 2>/dev/null \
+            || kubectl create ns terraform-state
+          kubectl -n "${ARC_NAMESPACE}" create sa terraform-state-writer \
+            --dry-run=client -o yaml | kubectl apply -f -
+          cat <<'YAML' | kubectl apply -f -
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: terraform-state-writer
+            namespace: terraform-state
+          rules:
+            - apiGroups: [""]
+              resources: ["secrets"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: terraform-state-writer
+            namespace: terraform-state
+          subjects:
+            - kind: ServiceAccount
+              name: terraform-state-writer
+              namespace: arc-runners
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: terraform-state-writer
+          YAML
+
       - name: Sync GitHub App secret from Vault
         run: |
           set -euo pipefail

@@ -27,6 +27,11 @@ runnerScaleSetName: ${RUNNER_SCALE_SET_NAME}
 # docker/arc-runner/Dockerfile for the inventory.
 template:
   spec:
+    # SA gives runner pods Secrets RW on the `terraform-state` namespace only
+    # (Role scoped there) — used by pipelines that store tfstate via the
+    # `kubernetes` terraform backend. Non-terraform pipelines never touch
+    # that ns and the privilege is a no-op for them. Created by arc-deploy.yml.
+    serviceAccountName: terraform-state-writer
     # Match the LXC's nofile defaults so jobs don't surprise-fail on fd exhaustion.
     securityContext:
       fsGroup: 1001
