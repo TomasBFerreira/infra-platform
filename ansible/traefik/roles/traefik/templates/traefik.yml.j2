@@ -1,0 +1,100 @@
+global:
+  checkNewVersion: true
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  insecure: true
+
+entryPoints:
+  web:
+    address: ":80"
+    forwardedHeaders:
+      trustedIPs:
+        - "127.0.0.1/32"
+        - "::1/128"
+        - "192.168.0.0/16"
+        - "100.64.0.0/10"
+  websecure:
+    address: ":443"
+    forwardedHeaders:
+      # Trust X-Forwarded-Proto from Tailscale and internal subnets
+      trustedIPs:
+        - "127.0.0.1/32"
+        - "::1/128"
+        - "192.168.10.0/24"
+        - "192.168.20.0/24"
+        - "192.168.30.0/24"
+        - "192.168.50.0/24"
+        - "100.64.0.0/10"
+    # Default TLS for all routers on websecure — uses per-domain certs from acme.json.
+    # Routers on [web, websecure] get HTTPS without needing per-router tls: blocks.
+    http:
+      tls:
+        certResolver: letsencrypt
+
+  # Internal-only entrypoints for Authentik forwardAuth.
+  # Routing auth checks via loopback prevents external headers from corrupting X-Forwarded-Host.
+  internal-dev:
+    address: "127.0.0.1:9099"
+    forwardedHeaders:
+      trustedIPs:
+        - "127.0.0.1/32"
+        - "::1/128"
+
+  internal-prod:
+    address: "127.0.0.1:9098"
+    forwardedHeaders:
+      trustedIPs:
+        - "127.0.0.1/32"
+        - "::1/128"
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@databaes.net
+      storage: /data/acme/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+
+# OTLP metrics and traces to the central monitoring LXC.
+# Note: Traefik's static YAML does NOT expand ${VAR} env vars (Go yaml parser
+# limitation — confirmed by `Unable to create OpenTelemetry meter provider:
+# invalid collector endpoint "${OTEL_COLLECTOR_ENDPOINT}"` on 2026-04-23), so
+# the endpoint must be baked in by Ansible at render time — not a ${...}
+# placeholder.
+#
+# Only render metrics/tracing blocks when otel_collector_endpoint is a
+# concrete host:port. If it's empty (monitoring not deployed yet in this env)
+# or still contains a ${...} placeholder (upstream pipeline didn't resolve
+# it), skip the sections entirely — Traefik then starts cleanly with
+# telemetry disabled instead of erroring in a crash loop.
+{% set _otel = otel_collector_endpoint | default('') %}
+{% if _otel and ':' in _otel and '${' not in _otel %}
+metrics:
+  otlp:
+    grpc:
+      endpoint: "{{ _otel }}"
+      insecure: true
+
+tracing:
+  otlp:
+    grpc:
+      endpoint: "{{ _otel }}"
+      insecure: true
+{% else %}
+# otel_collector_endpoint = {{ _otel | default('<unset>') }} — metrics/tracing disabled
+{% endif %}
+
+log:
+  level: INFO
+
+accessLog: {}
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true

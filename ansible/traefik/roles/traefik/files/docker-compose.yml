@@ -1,0 +1,52 @@
+services:
+  traefik:
+    image: traefik:v3.2
+    container_name: traefik
+    hostname: network-vm-blue
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    network_mode: host
+    environment:
+      - TZ=Europe/London
+      # Surfaced to the container for sidecars / debugging only.
+      # Traefik's static YAML does NOT expand ${...} in-config — the actual
+      # OTLP endpoint is baked into traefik.yml at Ansible render time (see
+      # roles/traefik/templates/traefik.yml.j2).
+      - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT}
+      - DEPLOY_ENV=${DEPLOY_ENV:-dev}
+      # Cloudflare DNS API token for Let's Encrypt DNS-01 wildcard cert (*.databaes.net).
+      # Needs Zone:Zone:Read + Zone:DNS:Edit permission. Populated by Ansible from Vault.
+      # LEGO (Traefik's ACME lib) requires CLOUDFLARE_ prefix; ZONE_API_TOKEN can be same token.
+      - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN}
+      - CLOUDFLARE_ZONE_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/traefik/config/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /opt/traefik/config/dynamic:/etc/traefik/dynamic:ro
+      - /opt/traefik/data/logs:/var/log/traefik
+      - /opt/traefik/data/acme:/data/acme
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.databaes.net`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.entrypoints=web"
+
+  # OTel Collector sidecar — collects Docker container stats, host metrics, and Traefik logs.
+  # Forwards all telemetry to the central monitoring-lxc via OTLP gRPC.
+  # Disabled automatically if OTEL_COLLECTOR_ENDPOINT is not set (see otelcol-lxc.yml).
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    container_name: otelcol
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/otelcol-lxc.yml"]
+    user: "0"  # run as root — needed to read docker socket and container log files
+    environment:
+      - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-localhost:4317}
+      - DEPLOY_ENV=${DEPLOY_ENV:-dev}
+    volumes:
+      - /opt/traefik/config/otelcol-lxc.yml:/etc/otelcol/otelcol-lxc.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /opt/traefik/data/logs:/var/log/traefik:ro
+    network_mode: host

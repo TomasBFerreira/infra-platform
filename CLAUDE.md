@@ -55,6 +55,9 @@ Existing assignments:
 - torrent: prod=165/166 (192.168.10.65/.66), dev=265/266 (192.168.20.65/.66), qa=365/366 (192.168.30.65/.66)
 - sso: prod=175/176 (192.168.10.75/.76), dev=275/276 (192.168.20.75/.76), qa=375/376 (192.168.30.75/.76)
 - semaphore: prod=185/186 (192.168.10.85/.86), dev=285/286 (192.168.20.85/.86), qa=385/386 (192.168.30.85/.86)
+- cloudflared: prod=193/194 (192.168.10.93/.94), dev=293/294 (192.168.20.93/.94), qa=393/394 (192.168.30.93/.94) — *reserved, not yet deployed (see /app/issues/network-vm-split-2026-05-19.md)*
+- traefik: prod=195/196 (192.168.10.95/.96), dev=295/296 (192.168.20.95/.96), qa=395/396 (192.168.30.95/.96) — *reserved, not yet deployed (see /app/issues/network-vm-split-2026-05-19.md)*
+- adguard: prod=197/198 (192.168.10.97/.98), dev=297/298 (192.168.20.97/.98), qa=397/398 (192.168.30.97/.98) — *reserved, not yet deployed (see /app/issues/network-vm-split-2026-05-19.md)*
 
 **Worker nodes — numbered singletons:**
 - Prod (betsy):  VMID = 110+N, IP = 192.168.10.(10+N)  → 111→.11, 112→.12, 113→.13…

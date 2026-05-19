@@ -1,0 +1,105 @@
+---
+- name: Configure Traefik LXC
+  hosts: all
+  gather_facts: true
+  become: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+  tasks:
+    # ── Standard users ───────────────────────────────────────────────────────
+    # appadm  — service/app owner (Traefik runs in Docker, files owned by appadm)
+    # tomas   — admin user for interactive access (sudo)
+
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
+    # ── System base ──────────────────────────────────────────────────────────
+
+    - name: Stop unattended-upgrades to prevent dpkg lock
+      shell: |
+        systemctl stop unattended-upgrades 2>/dev/null || true
+        killall unattended-upgrades 2>/dev/null || true
+      changed_when: false
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install base packages
+      apt:
+        name:
+          - curl
+          - jq
+        state: present
+
+    - name: Disable unattended upgrades
+      apt:
+        name: unattended-upgrades
+        state: absent
+        purge: yes
+
+    # ── Tailscale (client mode — no subnet routing, that's gateway-lxc's job) ───
+
+    - name: Add Tailscale GPG key
+      shell: |
+        curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+          -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
+
+    - name: Add Tailscale APT repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian bookworm main"
+        state: present
+        filename: tailscale
+
+    - name: Install Tailscale
+      apt:
+        name: tailscale
+        state: present
+        update_cache: yes
+
+    - name: Enable and start tailscaled
+      systemd:
+        name: tailscaled
+        enabled: yes
+        state: started
+
+    - name: Check if Tailscale is already connected
+      command: tailscale status --json
+      register: ts_status
+      changed_when: false
+      failed_when: false
+
+    - name: Set tailscale_connected fact
+      set_fact:
+        tailscale_connected: "{{ (ts_status.stdout | from_json).BackendState == 'Running' }}"
+      when: ts_status.rc == 0
+
+    - name: Authenticate Tailscale (client mode — no routes advertised)
+      command: >
+        timeout 90
+        tailscale up
+        --authkey={{ tailscale_authkey }}
+        --reset
+        --hostname={{ tailscale_hostname }}
+      when: not (tailscale_connected | default(false))
+      no_log: true
+
+  roles:
+    - role: traefik
