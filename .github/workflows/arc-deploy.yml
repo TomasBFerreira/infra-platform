@@ -147,6 +147,13 @@ jobs:
             - apiGroups: [""]
               resources: ["secrets"]
               verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            # terraform's kubernetes backend uses Leases for state locking
+            # (lock-<state-name>). Without this, `terraform init` fails with
+            # "leases.coordination.k8s.io ... is forbidden" before any state
+            # is even read. Caught on 2026-05-19 first adguard-lxc canary.
+            - apiGroups: ["coordination.k8s.io"]
+              resources: ["leases"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
           ---
           apiVersion: rbac.authorization.k8s.io/v1
           kind: RoleBinding
