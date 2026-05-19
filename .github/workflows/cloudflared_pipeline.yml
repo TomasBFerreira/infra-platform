@@ -137,6 +137,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fetch Proxmox SSH key from vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+            | awk 'NF > 0' > /tmp/pve_key
+          chmod 600 /tmp/pve_key
+
       - name: Terraform Init
         working-directory: terraform/cloudflared
         run: |
@@ -152,7 +161,7 @@ jobs:
           terraform destroy -no-color -input=false -auto-approve || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+          ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
 
       - name: Terraform Apply
@@ -166,6 +175,15 @@ jobs:
       STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
       STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
     steps:
+      - name: Fetch Proxmox SSH key from vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+            | awk 'NF > 0' > /tmp/pve_key
+          chmod 600 /tmp/pve_key
+
       - name: Configure TUN device via SSH to Proxmox host
         env:
           PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
@@ -173,7 +191,7 @@ jobs:
         run: |
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} bash -s -- "${STAGING_VMID}" << 'SSHEOF'
+          ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} bash -s -- "${STAGING_VMID}" << 'SSHEOF'
             VMID="$1"
             grep -q 'lxc.cgroup2.devices.allow: c 10:200 rwm' /etc/pve/lxc/${VMID}.conf \
               || echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >> /etc/pve/lxc/${VMID}.conf
@@ -290,6 +308,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fetch Proxmox SSH key from vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+            | awk 'NF > 0' > /tmp/pve_key
+          chmod 600 /tmp/pve_key
+
       - name: Tailscale logout on old active LXC
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -317,7 +344,7 @@ jobs:
           terraform destroy -no-color -input=false -auto-approve || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+          ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${ACTIVE_VMID} 2>/dev/null || true; pct destroy ${ACTIVE_VMID} 2>/dev/null || true"
 
   cleanup-on-failure:
@@ -343,6 +370,15 @@ jobs:
       TF_VAR_ip_address: ${{ needs.resolve-slots.outputs.staging_ip }}
       TF_VAR_vm_hostname: ${{ needs.resolve-slots.outputs.staging_host }}
     steps:
+      - name: Fetch Proxmox SSH key from vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+            | awk 'NF > 0' > /tmp/pve_key
+          chmod 600 /tmp/pve_key
+
       - name: Collect failure logs from CT
         env:
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
@@ -356,7 +392,7 @@ jobs:
             echo "=== cloudflared failure log: run ${{ github.run_id }}, env=${ENV}, vmid=${STAGING_VMID} ==="
             echo "=== $(date -u) ==="
             echo "--- system journal (last 100 lines) ---"
-            ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+            ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} \
               "pct exec ${STAGING_VMID} -- journalctl -n 100 --no-pager 2>/dev/null || echo '(journal unavailable)'" 2>/dev/null || echo "(pct exec failed)"
           } | tee "$LOG_FILE" || true
 
@@ -383,5 +419,5 @@ jobs:
           terraform destroy -no-color -input=false -auto-approve || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
-          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
+          ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
