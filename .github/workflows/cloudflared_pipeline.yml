@@ -239,7 +239,7 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
-          TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+          TS_AUTHKEY=$(vault kv get -field=authkey "secret/tailscale/${ENV}")
           if [ "$ENV" = "prod" ]; then
             CF_TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel 2>/dev/null || echo "")
           else
