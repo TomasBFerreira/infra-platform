@@ -234,7 +234,12 @@ jobs:
           for s in data.get('scale_sets', []) or []:
               if s.get('env') != '${ENV}':
                   continue
-              print(f\"{s['name']}|{s['repo']}|{s['label']}|{s['min_runners']}|{s['max_runners']}\")
+              # `label` is unused under ARC v0.10's name-based routing; fall
+              # back to env so omitting it doesn't KeyError + abort the loop
+              # (silently leaving later entries uninstalled, caught 2026-05-19
+              # on the batched fleet cutover when 11 new entries didn't get
+              # `label` set).
+              print(f\"{s['name']}|{s['repo']}|{s.get('label', s['env'])}|{s['min_runners']}|{s['max_runners']}\")
           ")
           if [ ${#ENTRIES[@]} -eq 0 ]; then
             echo "No scale sets configured for env=${ENV} — controller installed but no runners."
