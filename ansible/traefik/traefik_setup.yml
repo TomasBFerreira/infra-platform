@@ -6,7 +6,10 @@
   environment:
     DEBIAN_FRONTEND: noninteractive
 
-  tasks:
+  # pre_tasks (NOT tasks) — these must run BEFORE the traefik role. With
+  # `tasks:` the order would be: roles -> tasks, which means the role
+  # runs before Tailscale is installed. `pre_tasks:` reverses that.
+  pre_tasks:
     # ── Standard users ───────────────────────────────────────────────────────
     # appadm  — service/app owner (Traefik runs in Docker, files owned by appadm)
     # tomas   — admin user for interactive access (sudo)

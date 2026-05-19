@@ -6,7 +6,10 @@
   environment:
     DEBIAN_FRONTEND: noninteractive
 
-  tasks:
+  # pre_tasks (NOT tasks) — these must run BEFORE the cloudflare-tunnel role.
+  # With `tasks:` the order would be: roles -> tasks, which means the role
+  # runs before the user setup + apt update. `pre_tasks:` reverses that.
+  pre_tasks:
     # ── Standard users ───────────────────────────────────────────────────────
     # appadm  — service/app owner
     # tomas   — admin user for interactive access (sudo)
