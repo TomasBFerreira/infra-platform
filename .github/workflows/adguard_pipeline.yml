@@ -46,7 +46,7 @@ jobs:
         id: slots
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           ENV="${{ github.event.inputs.environment || 'dev' }}"
 
@@ -126,7 +126,7 @@ jobs:
       TF_VAR_pve_user: ${{ secrets.PVE_USER }}
       TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
       TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-      TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
       TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
       TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
@@ -225,7 +225,7 @@ jobs:
       - name: Fetch SSH key from Vault
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/adguard_worker \
             | awk 'NF > 0' > /tmp/adguard_key
@@ -275,7 +275,7 @@ jobs:
       - name: Write new active slot to Vault
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           ENV="${{ needs.resolve-slots.outputs.environment }}"
           vault kv put secret/adguard/$ENV/active-slot \
@@ -297,7 +297,7 @@ jobs:
       TF_VAR_pve_user: ${{ secrets.PVE_USER }}
       TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
       TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-      TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
       TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
       TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
@@ -320,7 +320,7 @@ jobs:
       - name: Tailscale logout on old active LXC
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/adguard_worker \
@@ -361,7 +361,7 @@ jobs:
       TF_VAR_pve_user: ${{ secrets.PVE_USER }}
       TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
       TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-      TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
       TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
       TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
