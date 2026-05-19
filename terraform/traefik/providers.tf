@@ -12,8 +12,13 @@ terraform {
     }
   }
 
-  backend "local" {
-    path = "terraform.tfstate"
+  # State lives as a Kubernetes Secret in the same cluster the ARC runner is in.
+  # `secret_suffix` is set per (slot, env) at terraform init time via -backend-config
+  # so the pipeline can keep distinct blue/green/env state files in one namespace.
+  # See arc-deploy.yml for the `terraform-state` ns + RBAC.
+  backend "kubernetes" {
+    namespace         = "terraform-state"
+    in_cluster_config = true
   }
 }
 

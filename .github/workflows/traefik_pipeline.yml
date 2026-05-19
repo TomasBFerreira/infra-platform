@@ -1,4 +1,10 @@
-name: Traefik Pipeline (Self-Hosted)
+name: Traefik Pipeline (ARC)
+
+# Blue/green deploy of the traefik LXC via the ARC ephemeral-runner stack.
+# Prereq: arc-deploy.yml has been dispatched for the target env so the
+# `arc-pilot-<env>` scale set + the `terraform-state` namespace + RBAC exist.
+# State is stored as Kubernetes Secrets in `terraform-state` (same cluster as
+# the pod), keyed by `secret_suffix=traefik-<slot>-<env>`.
 
 on:
   workflow_dispatch:
@@ -19,7 +25,7 @@ concurrency:
 
 jobs:
   resolve-slots:
-    runs-on: [self-hosted, "${{ github.event.inputs.environment || 'dev' }}"]
+    runs-on: arc-pilot-${{ github.event.inputs.environment || 'dev' }}
     outputs:
       environment: ${{ steps.slots.outputs.environment }}
       pve_api_url: ${{ steps.slots.outputs.pve_api_url }}
@@ -33,7 +39,7 @@ jobs:
       staging_ip: ${{ steps.slots.outputs.staging_ip }}
       staging_host: ${{ steps.slots.outputs.staging_host }}
       first_run: ${{ steps.slots.outputs.first_run }}
-      gateway:        ${{ steps.slots.outputs.gateway }}
+      gateway: ${{ steps.slots.outputs.gateway }}
       network_bridge: ${{ steps.slots.outputs.network_bridge }}
     steps:
       - name: Resolve active and staging slots
@@ -74,7 +80,6 @@ jobs:
           ACTIVE_SLOT=$(vault kv get -field=slot secret/traefik/$ENV/active-slot 2>/dev/null || echo "none")
 
           if [ "$ACTIVE_SLOT" = "none" ]; then
-            echo "No active slot found — first run, deploying to blue"
             STAGING_SLOT="blue"
             STAGING_VMID="$BLUE_VMID"; STAGING_IP="$BLUE_IP"; STAGING_HOST="$BLUE_HOST"
             ACTIVE_VMID=""; ACTIVE_IP=""; ACTIVE_HOST=""
@@ -110,92 +115,53 @@ jobs:
 
   terraform-staging:
     needs: resolve-slots
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
     env:
       ENV: ${{ needs.resolve-slots.outputs.environment }}
       STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
       STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
       STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
       STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+      TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
+      TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+      TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+      TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+      TF_VAR_gateway: ${{ needs.resolve-slots.outputs.gateway }}
+      TF_VAR_vmid: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      TF_VAR_ip_address: ${{ needs.resolve-slots.outputs.staging_ip }}
+      TF_VAR_vm_hostname: ${{ needs.resolve-slots.outputs.staging_host }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Sync code to persistent clone
-        run: |
-          cd /app/infra-platform
-          git fetch origin
-          git checkout ${{ github.ref_name }}
-          git pull origin ${{ github.ref_name }}
+      - uses: actions/checkout@v4
 
       - name: Terraform Init
-        env:
-          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
-          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
-          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
-          TF_VAR_vmid: ${{ env.STAGING_VMID }}
-          TF_VAR_ip_address: ${{ env.STAGING_IP }}
-          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
+        working-directory: terraform/traefik
         run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/traefik init -input=false
+          terraform init -input=false \
+            -backend-config="secret_suffix=traefik-${STAGING_SLOT}-${ENV}"
 
-      - name: Pre-flight — destroy any stale staging VM
+      - name: Pre-flight — destroy any stale staging LXC
+        working-directory: terraform/traefik
         env:
-          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
-          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
-          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
-          TF_VAR_vmid: ${{ env.STAGING_VMID }}
-          TF_VAR_ip_address: ${{ env.STAGING_IP }}
-          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
           PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/traefik destroy \
-            -no-color -input=false -auto-approve \
-            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
+          terraform destroy -no-color -input=false -auto-approve || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
-          rm -f /app/infra-platform/terraform/traefik/terraform.${STAGING_SLOT}.${ENV}.tfstate
 
       - name: Terraform Apply
-        env:
-          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
-          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
-          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
-          TF_VAR_vmid: ${{ env.STAGING_VMID }}
-          TF_VAR_ip_address: ${{ env.STAGING_IP }}
-          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
-        run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/traefik apply \
-            -no-color -input=false -auto-approve \
-            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate
+        working-directory: terraform/traefik
+        run: terraform apply -no-color -input=false -auto-approve
 
   configure-tun-staging:
     needs: [resolve-slots, terraform-staging]
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
     env:
       STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
       STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
@@ -228,7 +194,7 @@ jobs:
 
   ansible-staging:
     needs: [resolve-slots, configure-tun-staging]
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
     env:
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -236,33 +202,15 @@ jobs:
       STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
       STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
     steps:
-      - name: Checkout code
+      - name: Checkout infra-platform
         uses: actions/checkout@v4
 
-      - name: Sync code to persistent clone
-        run: |
-          cd /app/infra-platform
-          git fetch origin
-          git checkout ${{ github.ref_name }}
-          git pull origin ${{ github.ref_name }}
-
-      - name: Pull latest traefik-gitops (canonical Traefik config source)
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          printf 'machine github.com\nlogin x-access-token\npassword %s\n' "${GH_TOKEN}" > ~/.netrc
-          chmod 600 ~/.netrc
-          if [ -d /app/traefik-gitops/.git ]; then
-            git -C /app/traefik-gitops pull --rebase origin main
-          else
-            git clone https://github.com/TomasBFerreira/traefik-gitops /app/traefik-gitops
-          fi
-          rm -f ~/.netrc
-
-      - name: Install Ansible collections
-        run: |
-          ansible-galaxy collection install -r ansible/requirements.yml
-          pip3 install hvac --quiet --break-system-packages
+      - name: Checkout traefik-gitops (canonical Traefik config source)
+        uses: actions/checkout@v4
+        with:
+          repository: TomasBFerreira/traefik-gitops
+          path: traefik-gitops
+          token: ${{ secrets.GH_PAT }}
 
       - name: Fetch SSH key from Vault
         env:
@@ -285,22 +233,19 @@ jobs:
           CF_DNS_API_TOKEN=$(vault kv get -field=dns_api_token secret/cloudflare 2>/dev/null || echo "")
           echo "::add-mask::$TS_AUTHKEY"
           echo "::add-mask::$CF_DNS_API_TOKEN"
-          TS_TAGS="tag:container,tag:${ENV}"
-          echo "TS_TAGS=$TS_TAGS" >> $GITHUB_ENV
-          echo "TS_AUTHKEY=$TS_AUTHKEY" >> $GITHUB_ENV
-          echo "CF_DNS_API_TOKEN=$CF_DNS_API_TOKEN" >> $GITHUB_ENV
-          # OTel endpoint (optional)
+          {
+            echo "TS_AUTHKEY=$TS_AUTHKEY"
+            echo "CF_DNS_API_TOKEN=$CF_DNS_API_TOKEN"
+            echo "TS_TAGS=tag:container,tag:${ENV}"
+          } >> "$GITHUB_ENV"
           OTEL_ENDPOINT=$(vault kv get -field=collector_endpoint secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
           if [ -z "$OTEL_ENDPOINT" ] || [[ "$OTEL_ENDPOINT" == \$\{*\} ]]; then
             MON_IP=$(vault kv get -field=ip secret/monitoring/${ENV}/active-slot 2>/dev/null || echo "")
             [ -n "$MON_IP" ] && OTEL_ENDPOINT="${MON_IP}:4317"
           fi
-          echo "OTEL_ENDPOINT=$OTEL_ENDPOINT" >> $GITHUB_ENV
+          echo "OTEL_ENDPOINT=$OTEL_ENDPOINT" >> "$GITHUB_ENV"
 
       - name: Run Ansible playbook
-        env:
-          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           ssh-keygen -R "${STAGING_IP}" || true
           ansible-playbook \
@@ -315,11 +260,12 @@ jobs:
             -e "cf_dns_api_token=$CF_DNS_API_TOKEN" \
             -e "otel_collector_endpoint=$OTEL_ENDPOINT" \
             -e "deploy_env=${ENV}" \
+            -e "traefik_gitops_path=${GITHUB_WORKSPACE}/traefik-gitops" \
             ansible/traefik/traefik_setup.yml
 
   flip-active:
     needs: [resolve-slots, ansible-staging]
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
     steps:
       - name: Write new active slot to Vault
         env:
@@ -335,23 +281,27 @@ jobs:
   teardown-old-active:
     needs: [resolve-slots, flip-active]
     if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
     env:
       ENV: ${{ needs.resolve-slots.outputs.environment }}
       ACTIVE_SLOT: ${{ needs.resolve-slots.outputs.active_slot }}
       ACTIVE_VMID: ${{ needs.resolve-slots.outputs.active_vmid }}
       ACTIVE_IP: ${{ needs.resolve-slots.outputs.active_ip }}
       ACTIVE_HOST: ${{ needs.resolve-slots.outputs.active_host }}
+      TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
+      TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+      TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+      TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+      TF_VAR_gateway: ${{ needs.resolve-slots.outputs.gateway }}
+      TF_VAR_vmid: ${{ needs.resolve-slots.outputs.active_vmid }}
+      TF_VAR_ip_address: ${{ needs.resolve-slots.outputs.active_ip }}
+      TF_VAR_vm_hostname: ${{ needs.resolve-slots.outputs.active_host }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Sync code to persistent clone
-        run: |
-          cd /app/infra-platform
-          git fetch origin
-          git checkout ${{ github.ref_name }}
-          git pull origin ${{ github.ref_name }}
+      - uses: actions/checkout@v4
 
       - name: Tailscale logout on old active LXC
         env:
@@ -366,44 +316,18 @@ jobs:
             ${SSH_USER}@${ACTIVE_IP} "tailscale logout || true" || true
 
       - name: Terraform Init
-        env:
-          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
-          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
-          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
-          TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
-          TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
-          TF_VAR_vm_hostname: ${{ env.ACTIVE_HOST }}
+        working-directory: terraform/traefik
         run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/traefik init -input=false
+          terraform init -input=false \
+            -backend-config="secret_suffix=traefik-${ACTIVE_SLOT}-${ENV}"
 
       - name: Terraform Destroy old active LXC
+        working-directory: terraform/traefik
         env:
-          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
-          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
-          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
-          TF_VAR_vmid: ${{ env.ACTIVE_VMID }}
-          TF_VAR_ip_address: ${{ env.ACTIVE_IP }}
-          TF_VAR_vm_hostname: ${{ env.ACTIVE_HOST }}
           PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/traefik destroy \
-            -no-color -input=false -auto-approve \
-            -state=terraform.${ACTIVE_SLOT}.${ENV}.tfstate || true
+          terraform destroy -no-color -input=false -auto-approve || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
@@ -412,22 +336,33 @@ jobs:
   cleanup-on-failure:
     needs: [resolve-slots, terraform-staging, configure-tun-staging, ansible-staging]
     if: failure()
-    runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
     env:
       ENV: ${{ needs.resolve-slots.outputs.environment }}
       STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
       STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
       STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
       STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+      TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
+      TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+      TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+      TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+      TF_VAR_gateway: ${{ needs.resolve-slots.outputs.gateway }}
+      TF_VAR_vmid: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      TF_VAR_ip_address: ${{ needs.resolve-slots.outputs.staging_ip }}
+      TF_VAR_vm_hostname: ${{ needs.resolve-slots.outputs.staging_host }}
     steps:
       - name: Collect failure logs from CT
         env:
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
-          LOG_DIR="/app/infra-platform/logs/traefik-failures"
-          mkdir -p "$LOG_DIR"
-          LOG_FILE="$LOG_DIR/traefik-${ENV}-$(date -u +%Y%m%dT%H%M%SZ)-run${{ github.run_id }}.log"
+          mkdir -p failure-logs
+          LOG_FILE="failure-logs/traefik-${ENV}-${STAGING_VMID}.log"
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           {
@@ -437,59 +372,29 @@ jobs:
             ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
               "pct exec ${STAGING_VMID} -- journalctl -n 100 --no-pager 2>/dev/null || echo '(journal unavailable)'" 2>/dev/null || echo "(pct exec failed)"
           } | tee "$LOG_FILE" || true
-          echo "Failure log saved to $LOG_FILE"
 
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: traefik-failure-${{ env.ENV }}-run${{ github.run_id }}
+          path: failure-logs/
+          if-no-files-found: warn
 
-      - name: Sync code to persistent clone
-        run: |
-          cd /app/infra-platform
-          git fetch origin
-          git checkout ${{ github.ref_name }}
-          git pull origin ${{ github.ref_name }}
+      - uses: actions/checkout@v4
 
       - name: Terraform Init
-        env:
-          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
-          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
-          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
-          TF_VAR_vmid: ${{ env.STAGING_VMID }}
-          TF_VAR_ip_address: ${{ env.STAGING_IP }}
-          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
+        working-directory: terraform/traefik
         run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/traefik init -input=false
+          terraform init -input=false \
+            -backend-config="secret_suffix=traefik-${STAGING_SLOT}-${ENV}"
 
       - name: Terraform Destroy staging LXC
+        working-directory: terraform/traefik
         env:
-          TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
-          TF_VAR_pve_user: ${{ secrets.PVE_USER }}
-          TF_VAR_pve_pass: ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
-          TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token: ${{ secrets.VAULT_DEV_TOKEN }}
-          TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
-          TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
-          TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
-          TF_VAR_vmid: ${{ env.STAGING_VMID }}
-          TF_VAR_ip_address: ${{ env.STAGING_IP }}
-          TF_VAR_vm_hostname: ${{ env.STAGING_HOST }}
           PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
-          cd /app/infra-platform
-          ./scripts/run-terraform.sh -chdir terraform/traefik destroy \
-            -no-color -input=false -auto-approve \
-            -state=terraform.${STAGING_SLOT}.${ENV}.tfstate || true
+          terraform destroy -no-color -input=false -auto-approve || true
           PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
           PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
           ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@${PVE_HOST} \
             "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
-          rm -f /app/infra-platform/terraform/traefik/terraform.${STAGING_SLOT}.${ENV}.tfstate

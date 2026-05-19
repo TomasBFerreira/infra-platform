@@ -66,10 +66,11 @@
     mode: '0644'
 
 - name: Copy Traefik dynamic config from traefik-gitops (canonical source)
-  # The runner always has traefik-gitops at /app/traefik-gitops. The pipeline
-  # pulls latest before running Ansible so this is always up-to-date.
+  # `traefik_gitops_path` is passed by the pipeline. Under ARC it's the
+  # actions/checkout target ($GITHUB_WORKSPACE/traefik-gitops); under any
+  # fallback runner it's whatever the pipeline points at.
   copy:
-    src: /app/traefik-gitops/config/dynamic/services.yml
+    src: "{{ traefik_gitops_path }}/config/dynamic/services.yml"
     dest: /opt/traefik/config/dynamic/services.yml
     mode: '0644'
 
