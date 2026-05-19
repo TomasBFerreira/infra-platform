@@ -72,3 +72,16 @@ scale_sets:
     min_runners: 0
     max_runners: 2
 
+  # ── nextcloud dev path (staging for LXC → k3s migration, 2026-05-19) ────
+  # Prod nextcloud still serves cloud.databaes.net from CT 105 on betsy; this
+  # scale set is for the dev path so we can validate the k3s manifests under
+  # ARC before any data move. Prod stays on the [self-hosted, prod] LXC
+  # runner until ARC is rolled out to the prod cluster. Migration scoping:
+  # /app/issues/nextcloud-lxc-to-k3s-migration.md.
+  - repo: TomasBFerreira/nextcloud
+    env: dev
+    label: dev
+    name: nextcloud-dev
+    min_runners: 0
+    max_runners: 2
+
