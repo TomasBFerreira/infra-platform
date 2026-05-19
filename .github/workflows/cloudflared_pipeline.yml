@@ -231,15 +231,15 @@ jobs:
           chmod 600 /tmp/cloudflared_key
 
       - name: Fetch secrets from Vault
+        # secret/tailscale + secret/cloudflare-tunnel live in the BOOTSTRAP
+        # vault per docs/vaults.md. Dev/qa tunnel token is still sourced
+        # from the GH secret because there's no dev tunnel entry in vault
+        # (it's prod-only — matches the network-vm pattern).
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
-          case "$ENV" in
-            dev)  VAULT_ADDR="${{ secrets.VAULT_ADDR }}";       VAULT_TOKEN="${{ secrets.VAULT_TOKEN }}" ;;
-            qa)   VAULT_ADDR="${{ secrets.VAULT_QA_ADDR }}";    VAULT_TOKEN="${{ secrets.VAULT_QA_TOKEN }}" ;;
-            prod) VAULT_ADDR="${{ secrets.VAULT_PROD_ADDR }}";  VAULT_TOKEN="${{ secrets.VAULT_PROD_TOKEN }}" ;;
-          esac
-          export VAULT_ADDR VAULT_TOKEN
           TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
-          # Prod tunnel token from env vault; dev/qa use the GH secret directly (matches network-vm pattern)
           if [ "$ENV" = "prod" ]; then
             CF_TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel 2>/dev/null || echo "")
           else
