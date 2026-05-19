@@ -89,6 +89,19 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Node + renovate — for .github/workflows/renovate.yml. The upstream
+# actions-runner image bundles Node internally for executing JS actions
+# but doesn't expose `npm` on PATH for shell steps, and `renovate@latest`
+# requires node ^24.11.0. Baking both here drops the ~40s setup-node +
+# npm install -g cost from every orchestrator dispatch and removes one
+# external dependency (NodeSource) from the runtime path.
+ARG NODE_MAJOR=24
+ARG RENOVATE_VERSION=latest
+RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g renovate@${RENOVATE_VERSION}
+
 # Sanity check at build time — broken image fails the build, not the
 # first pod scheduling.
 RUN kubectl version --client \
@@ -99,6 +112,8 @@ RUN kubectl version --client \
     && ansible --version | head -1 \
     && gh --version | head -1 \
     && python3 --version \
+    && node --version \
+    && renovate --version \
     && test -x /home/runner/run.sh && echo "run.sh present"
 
 # Drop back to the upstream image's default user. ARC chart's listener
