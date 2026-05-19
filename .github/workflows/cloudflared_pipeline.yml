@@ -203,9 +203,10 @@ jobs:
           sleep 15
 
       - name: Wait for SSH to be ready
+        # arc-runner image has no netcat; use bash /dev/tcp instead.
         run: |
           echo "Waiting for SSH on ${STAGING_IP}..."
-          timeout 120 bash -c "until nc -z ${STAGING_IP} 22; do sleep 5; done"
+          timeout 120 bash -c "until (echo > /dev/tcp/${STAGING_IP}/22) 2>/dev/null; do sleep 5; done"
           echo "SSH is up"
 
   ansible-staging:
