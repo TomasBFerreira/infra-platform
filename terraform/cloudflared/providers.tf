@@ -1,0 +1,43 @@
+terraform {
+  required_version = ">= 1.0"
+
+  required_providers {
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "~> 2.9"
+    }
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 5.0"
+    }
+  }
+
+  # State lives as a Kubernetes Secret in the same cluster the ARC runner is in.
+  # `secret_suffix` is set per (slot, env) at terraform init time via -backend-config
+  # so the pipeline can keep distinct blue/green/env state files in one namespace.
+  # See arc-deploy.yml for the `terraform-state` ns + RBAC.
+  backend "kubernetes" {
+    namespace         = "terraform-state"
+    in_cluster_config = true
+  }
+}
+
+provider "proxmox" {
+  pm_api_url      = var.pve_api
+  pm_user         = var.pve_user
+  pm_password     = var.pve_pass
+  pm_tls_insecure = true
+  pm_log_enable   = true
+  pm_log_file     = "terraform-plugin-proxmox.log"
+  pm_debug        = true
+  pm_log_levels = {
+    _default    = "debug"
+    _capturelog = ""
+  }
+}
+
+provider "vault" {
+  address          = var.vault_address
+  token            = var.vault_token
+  skip_child_token = true
+}
