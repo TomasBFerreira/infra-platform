@@ -45,16 +45,13 @@ jobs:
     runs-on: arc-pilot-dev
     timeout-minutes: 30
     env:
-      # We talk to the BOOTSTRAP vault (CT 200, 192.168.50.200). The
-      # `VAULT_DEV_TOKEN` CI token is stale (last rotated 2026-03-23; runs
-      # 26059409023 / 26059584590 both 403'd with it), while
-      # `VAULT_BOOTSTRAP_ROOT_TOKEN` was rotated 2026-05-13 and is what every
-      # other workflow that writes app secrets uses (e.g.
-      # nextcloud/seed-vault.yml). Using root is heavier than needed — a
-      # follow-up should mint a scoped `renovate` token via the vault-ct
-      # playbook and add it as `VAULT_RENOVATE_TOKEN` to GitHub secrets.
+      # Bootstrap vault (CT 200, 192.168.50.200), authenticated with a
+      # scoped token that can only read `secret/data/renovate/*` and
+      # `secret/metadata/renovate/*` — see vault policy `renovate` upserted
+      # 2026-05-19. Token is `period=768h` (auto-renews on each use, valid
+      # as long as Renovate keeps running at least every 32 days).
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      VAULT_TOKEN: ${{ secrets.VAULT_RENOVATE_TOKEN }}
     steps:
       - name: Checkout orchestrator config
         uses: actions/checkout@v4
