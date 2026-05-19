@@ -84,22 +84,9 @@ jobs:
           private-key: ${{ steps.app.outputs.private_key }}
           owner: TomasBFerreira
 
-      # renovatebot/github-action runs renovate inside a docker container via
-      # /var/run/docker.sock. ARC pods have no Docker daemon, so we install
-      # renovate as a plain Node CLI and invoke it directly. The arc-runner
-      # image is based on ghcr.io/actions/actions-runner which bundles Node
-      # internally for JS-action execution, but doesn't expose `npm` on PATH
-      # for shell steps — so use setup-node to provision a usable Node.
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          # Renovate latest requires node ^24.11.0 — found 20.20.2 too old
-          # in run 26059905965 with "Unsupported node environment detected".
-          node-version: '24'
-
-      - name: Install Renovate CLI
-        run: npm install -g renovate@latest
-
+      # renovate + Node 24 are pre-baked into the arc-runner image as of
+      # infra-platform#223 (2026-05-19). Drop the setup-node + npm install
+      # steps that previously provisioned them per-dispatch (~40s overhead).
       - name: Run Renovate
         env:
           RENOVATE_TOKEN: ${{ steps.token.outputs.token }}
