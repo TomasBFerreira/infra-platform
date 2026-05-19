@@ -144,6 +144,7 @@ Per-node NFS layout. All exports are `rw,sync,no_subtree_check,no_root_squash` a
 | benedict | `/mnt/nfs-monitoring-data/monitoring/{dev,prod,qa}/...` | Monitoring stack (Prometheus/Loki/Tempo/Grafana) across envs | `ansible/benedict_nfs_setup.yml` |
 | benedict | `/mnt/nfs-monitoring-data/ops-portal/dev` | ops-portal dev persistent volumes (per-service Postgres, etc.) | `ansible/benedict_ops_portal_nfs_setup.yml` |
 | betsy | `/mnt/nfs-shared-data/monitoring/...` | Prod monitoring NFS | `ansible/betsy_nfs_setup.yml` |
+| betsy | `/mnt/nfs-shared-data/nextcloud` | Prod Nextcloud data PVC (staged 2026-05-19 for LXC → k3s migration) | `ansible/betsy_nextcloud_nfs_setup.yml` |
 
 ops-portal dev consumes the benedict `ops-portal/dev` export via the `nfs-subdir-external-provisioner` installed into the dev k3s cluster, which exposes it as the `nfs-ops-portal` StorageClass. Prod ops-portal storage is TBD (2 TB SATA SSD unused on betsy, not yet formatted).
 

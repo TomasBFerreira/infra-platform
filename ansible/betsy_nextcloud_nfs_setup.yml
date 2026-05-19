@@ -1,0 +1,64 @@
+---
+# Sets up the NFS export on betsy (192.168.50.2) for the prod Nextcloud
+# data PVC, in preparation for the LXC → k3s migration tracked in
+# /app/issues/nextcloud-lxc-to-k3s-migration.md.
+#
+# The Nextcloud container in nextcloud:32 runs as www-data (uid 33). The
+# export directory is created owned 33:33 so the pod can write without
+# relying on root-squashing being disabled. (no_root_squash is set anyway
+# for symmetry with the other betsy exports, but the explicit uid keeps
+# the perms model honest.)
+#
+# Run once before the prod cutover:
+#   ansible-playbook -i 192.168.50.2, -u root ansible/betsy_nextcloud_nfs_setup.yml
+#
+# Prerequisites: nfs-kernel-server installed on betsy + /mnt/nfs-shared-data
+# mounted (already satisfied — `betsy_nfs_setup.yml` made those a hard
+# requirement for the monitoring export).
+
+- name: Configure NFS export on betsy for Nextcloud data
+  hosts: all
+  gather_facts: false
+  become: yes
+
+  vars:
+    nextcloud_export_path: /mnt/nfs-shared-data/nextcloud
+    # All homelab subnets — prod worker (10.x) is what'll actually mount.
+    nfs_allowed_network: 192.168.0.0/16
+    nfs_export_opts: "rw,sync,no_subtree_check,no_root_squash"
+    # nextcloud:32 image runs as uid 33 (www-data).
+    nextcloud_uid: 33
+    nextcloud_gid: 33
+
+  tasks:
+    - name: Ensure nfs-kernel-server is installed
+      apt:
+        name: nfs-kernel-server
+        state: present
+        update_cache: yes
+
+    - name: Create Nextcloud NFS export directory
+      file:
+        path: "{{ nextcloud_export_path }}"
+        state: directory
+        owner: "{{ nextcloud_uid }}"
+        group: "{{ nextcloud_gid }}"
+        mode: '0750'
+
+    - name: Add Nextcloud NFS export to /etc/exports
+      lineinfile:
+        path: /etc/exports
+        line: "{{ nextcloud_export_path }} {{ nfs_allowed_network }}({{ nfs_export_opts }})"
+        regexp: "^{{ nextcloud_export_path | regex_escape() }}\\s"
+        state: present
+      notify: reload exports
+
+    - name: Ensure NFS server is enabled and started
+      systemd:
+        name: nfs-kernel-server
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: reload exports
+      command: exportfs -ra
