@@ -105,3 +105,67 @@ scale_sets:
     min_runners: 0
     max_runners: 2
 
+  # ── Batched easy-lane fleet cutover (2026-05-19) ────────────────────────
+  # 11 repos that share the build-on-ubuntu-latest + deploy-on-self-hosted
+  # shape (crane pull + ctr import or kubectl apply). Each one needs only a
+  # one-line `runs-on` flip in its own deploy.yml — no per-repo Dockerfile
+  # / workflow rewrite. Tracking sheet:
+  # /app/issues/arc-migration-2026-05.md.
+  # Excluded from this batch:
+  #   - ops-portal-incidents (other Claude session is active on it)
+  #   - ops-portal-pipelines (no deploy.yml; only diagnostic workflows)
+  - repo: TomasBFerreira/ops-portal-identity
+    env: dev
+    name: ops-portal-identity-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-cmdb
+    env: dev
+    name: ops-portal-cmdb-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-audit
+    env: dev
+    name: ops-portal-audit-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-infrastructure
+    env: dev
+    name: ops-portal-infrastructure-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-deployments
+    env: dev
+    name: ops-portal-deployments-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-domain
+    env: dev
+    name: ops-portal-domain-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-shell
+    env: dev
+    name: ops-portal-shell-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/databaes-status-api
+    env: dev
+    name: databaes-status-api-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/wikijs
+    env: dev
+    name: wikijs-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/media-stack
+    env: dev
+    name: media-stack-dev
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/otel-monitoring
+    env: dev
+    name: otel-monitoring-dev
+    min_runners: 0
+    max_runners: 2
