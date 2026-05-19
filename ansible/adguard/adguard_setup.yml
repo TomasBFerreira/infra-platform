@@ -96,12 +96,16 @@
       when: ts_status.rc == 0
 
     - name: Authenticate Tailscale (client mode — no routes advertised)
+      # --advertise-tags is REQUIRED — the auth key is tag-restricted in the
+      # Tailscale ACL. Without it `tailscale up` registers but the control
+      # plane returns machineAuthorized=false and tailscale times out.
       command: >
         timeout 90
         tailscale up
         --authkey={{ tailscale_authkey }}
         --reset
         --hostname={{ tailscale_hostname }}
+        --advertise-tags={{ tailscale_advertise_tags }}
       when: not (tailscale_connected | default(false))
       no_log: true
 
