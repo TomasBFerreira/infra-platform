@@ -91,9 +91,19 @@ curl -X POST \
   http://192.168.50.200:8200/v1/secret/data/renovate/github-app
 ```
 
-The CI token at `secrets.VAULT_DEV_TOKEN` (named "DEV" but is actually the
-bootstrap-vault CI token) has read/write on `secret/*` and is what the
-orchestrator workflow uses.
+The orchestrator workflow authenticates with `secrets.VAULT_RENOVATE_TOKEN`,
+a scoped periodic token (`period=768h`) attached to the `renovate` vault
+policy. The policy allows read+list on `secret/data/renovate/*` and
+`secret/metadata/renovate/*` and nothing else. To rotate the token, on a
+host with bootstrap-vault root-token access:
+
+```bash
+ROOT=$(ssh root@192.168.50.4 'pct exec 200 -- jq -r .root_token /root/vault-init.json')
+NEW_TOKEN=$(curl -sS -H "X-Vault-Token: $ROOT" \
+  -d '{"policies":["renovate"],"period":"768h","display_name":"renovate","no_default_policy":true,"renewable":true}' \
+  http://192.168.50.200:8200/v1/auth/token/create | jq -r .auth.client_token)
+echo -n "$NEW_TOKEN" | gh secret set VAULT_RENOVATE_TOKEN --repo TomasBFerreira/infra-platform
+```
 
 ### 4. Wire Slack notifications
 
