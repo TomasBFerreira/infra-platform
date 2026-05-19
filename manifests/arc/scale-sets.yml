@@ -22,6 +22,26 @@ scale_sets:
     min_runners: 0
     max_runners: 2
 
+  # ── QA + prod pilots (added 2026-05-19 for network-vm split Phase 1) ────
+  # Mirrors arc-pilot-dev so the network-vm-split pipelines have a per-env
+  # ARC target. Labels stay {env}-arc to keep the "pilot is distinct from
+  # the legacy LXC label" convention. Run arc-deploy.yml with env=qa then
+  # env=prod to provision the controller + scale set on each env's k3s.
+  # Same-cluster terraform state lives in the `terraform-state` namespace
+  # created by the deploy workflow (see network-vm-split-2026-05-19.md).
+  - repo: TomasBFerreira/infra-platform
+    env: qa
+    label: qa-arc
+    name: arc-pilot-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/infra-platform
+    env: prod
+    label: prod-arc
+    name: arc-pilot-prod
+    min_runners: 0
+    max_runners: 2
+
   # ── First real cutover (2026-05-13) ──────────────────────────────────────
   # Only the deploy.yml's two self-hosted jobs in traefik-gitops are wired to
   # this scale set; the ~48 diagnostic workflows in that repo still target the
