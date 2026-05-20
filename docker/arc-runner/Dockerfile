@@ -41,6 +41,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
         jq unzip ca-certificates gnupg lsb-release \
         gettext-base \
+        rsync \
         python3 python3-pip python3-yaml python3-venv \
         ansible \
     && rm -rf /var/lib/apt/lists/*
@@ -48,6 +49,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # render OTLP endpoint into the Traefik config before SCP'ing to network-vm.
 # python3-venv supplies ensurepip + the matching python3.X-venv package so
 # media-stack's deploy.yml can `python3 -m venv /tmp/buildarr-venv`.
+# rsync is used by otel-monitoring's deploy.yml to ship config files to the
+# monitoring-lxc.
 # Add any further missing tools alongside this line; don't sprinkle apt-get
 # install steps across the workflow files themselves.
 
