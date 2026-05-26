@@ -17,7 +17,12 @@ adguard_data_path: /opt/adguard
 # Update these when convenient (e.g. post-slot-flip) so a freshly provisioned
 # netvm doesn't serve wrong answers for up to 2 min before the first sync.
 adguard_env_tailscale_ips:
-  dev:  100.71.47.6    # dev-network-vm-blue (updated 2026-04-21)
+  # Bootstrap values only — the adguard-rewrite-sync systemd timer overrides
+  # these from `tailscale status --json` using DEV/QA/PROD_HOSTNAME_RE.
+  # dev was cut over to traefik-lxc on 2026-05-26 as part of the network-vm
+  # split (Phase 3b). qa + prod still resolve via network-vm pending their
+  # own cutover.
+  dev:  100.81.178.128 # dev-traefik-lxc-blue (cut over 2026-05-26)
   qa:   100.123.3.27   # qa-network-vm-green
   prod: 100.125.152.26 # prod-network-vm-blue
 
