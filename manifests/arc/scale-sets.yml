@@ -14,13 +14,12 @@
 # docs/arc-migration.md for the per-phase steps.
 
 scale_sets:
-  # ── Pilot ────────────────────────────────────────────────────────────────
-  - repo: TomasBFerreira/infra-platform
-    env: dev
-    label: dev-arc          # intentionally distinct from "dev" during pilot
-    name: arc-pilot-dev
-    min_runners: 0
-    max_runners: 2
+  # Note: the original `arc-pilot-dev` scale set has been retired (2026-05-26).
+  # It was the smoketest target during initial ARC bring-up; once real repos
+  # were cut over it became dead weight. arc-deploy.yml's "Uninstall orphan
+  # scale-set releases" step cleans it up automatically on the next run.
+  # arc-pilot-qa and arc-pilot-prod below are still in use by the
+  # network-vm-split workstream.
 
   # ── QA + prod pilots (added 2026-05-19 for network-vm split Phase 1) ────
   # Mirrors arc-pilot-dev so the network-vm-split pipelines have a per-env

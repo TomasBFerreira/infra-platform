@@ -245,6 +245,7 @@ jobs:
             echo "No scale sets configured for env=${ENV} — controller installed but no runners."
             exit 0
           fi
+          EXPECTED_NAMES=""
           for entry in "${ENTRIES[@]}"; do
             IFS='|' read -r NAME REPO_FULL RUNNER_LABEL MIN_RUNNERS MAX_RUNNERS <<< "$entry"
             export NAME REPO_FULL RUNNER_LABEL MIN_RUNNERS MAX_RUNNERS IMAGE_TAG
@@ -257,7 +258,34 @@ jobs:
               --namespace "${ARC_NAMESPACE}" \
               --values "/tmp/${NAME}.values.yaml" \
               --wait --timeout 5m
+            EXPECTED_NAMES="${EXPECTED_NAMES} ${NAME}"
           done
+          # Persist the expected list for the next step to diff against.
+          echo "${EXPECTED_NAMES}" | tr ' ' '\n' | grep -v '^$' | sort -u > /tmp/arc-expected-releases.txt
+
+      - name: Uninstall orphan scale-set releases
+        # Any gha-runner-scale-set helm release in the arc-runners namespace
+        # that ISN'T in scale-sets.yml for this env is an orphan — usually
+        # from a scale-set entry that was deleted from the YAML. Without this
+        # cleanup, removing an entry just leaves the listener running forever.
+        # The controller release `arc` is explicitly excluded.
+        run: |
+          set -euo pipefail
+          ACTUAL=$(helm list -n "${ARC_NAMESPACE}" --short 2>/dev/null | grep -vx 'arc' | sort -u || true)
+          EXPECTED=$(cat /tmp/arc-expected-releases.txt 2>/dev/null || true)
+          # Orphans = actual minus expected.
+          ORPHANS=$(comm -23 <(echo "$ACTUAL") <(echo "$EXPECTED"))
+          if [ -z "$ORPHANS" ]; then
+            echo "No orphan scale-set releases."
+          else
+            echo "Orphan releases to uninstall:"
+            echo "$ORPHANS" | sed 's/^/  /'
+            for r in $ORPHANS; do
+              echo "── Uninstalling ${r} ──"
+              helm uninstall "$r" -n "${ARC_NAMESPACE}" --wait --timeout 2m || \
+                echo "WARN: uninstall of ${r} returned non-zero — may need manual cleanup"
+            done
+          fi
 
       - name: Status
         run: |
