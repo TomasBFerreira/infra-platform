@@ -1,0 +1,14 @@
+---
+# Minimal playbook for re-asserting the adguard role against an already-
+# provisioned adguard-lxc. Skips Tailscale install/auth (the LXC is already
+# joined) so this can run in seconds against the active slot whenever
+# adguard_dev/qa/prod_rewrites, HOSTNAME_RE patterns, or other role inputs
+# change in main. Used by .github/workflows/update-adguard-rewrites.yml.
+- name: Update AdGuard rewrites (no reprovision)
+  hosts: all
+  become: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+  roles:
+    - role: adguard
