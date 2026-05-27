@@ -1,0 +1,152 @@
+name: Diagnose ARC runners
+
+# One-shot diag for the ARC stack on a given env's k3s cluster. Dumps:
+#   - Worker node conditions (DiskPressure, MemoryPressure, PIDPressure)
+#   - All arc-runners-namespace pods (Running + Pending + ContainerCreating)
+#   - Events sorted by time (catches Failed*Scheduling, ImagePull errors)
+#   - `kubectl describe pod` for any pod NOT in Running phase
+#   - Worker disk usage on /var/lib/rancher/k3s + containerd state
+#   - Last 50 lines of k3s journal
+#
+# Born 2026-05-27 after a signup-page-dev runner pod sat in
+# ContainerCreating for 10+ min on the dev worker. Pre-pull confirmed the
+# image was cached, so root cause was something else (suspected disk /
+# CNI / volume mount).
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target env's k3s cluster
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+        default: dev
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: [self-hosted, "${{ inputs.env }}"]
+    env:
+      ENV: ${{ inputs.env }}
+      KUBECONFIG: ${{ github.workspace }}/.kubeconfig
+      ARC_NAMESPACE: arc-runners
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - name: Resolve worker-node IP
+        id: worker
+        run: |
+          set -euo pipefail
+          WORKER_IP=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/worker-node/${ENV}/active-slot" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ip'])")
+          [ -n "$WORKER_IP" ] || { echo "ERROR: empty worker IP for env=${ENV}"; exit 1; }
+          echo "worker_ip=${WORKER_IP}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch worker SSH key
+        run: |
+          set -euo pipefail
+          mkdir -p keys
+          curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/ssh_keys/worker_node_worker" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['private_key'])" \
+            > keys/worker_ssh
+          chmod 600 keys/worker_ssh
+
+      - name: Build kubeconfig
+        env:
+          WORKER_IP: ${{ steps.worker.outputs.worker_ip }}
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh \
+            "root@${WORKER_IP}" 'cat /etc/rancher/k3s/k3s.yaml' \
+            | sed "s/127.0.0.1/${WORKER_IP}/g" > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+
+      - name: Install kubectl if missing
+        run: |
+          if ! command -v kubectl &>/dev/null; then
+            curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /tmp/kubectl
+            sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          fi
+
+      - name: Node conditions
+        run: |
+          echo "── Node ──"
+          kubectl get nodes -o wide
+          echo
+          echo "── Node conditions ──"
+          kubectl get nodes -o json | python3 -c "
+          import sys,json
+          for n in json.load(sys.stdin)['items']:
+              print(f\"node: {n['metadata']['name']}\")
+              for c in n['status']['conditions']:
+                  print(f\"  {c['type']:20s} {c['status']:7s} reason={c.get('reason','')} msg={c.get('message','')[:120]}\")
+              print(f\"  capacity: {n['status']['capacity']}\")
+              print(f\"  allocatable: {n['status']['allocatable']}\")
+          "
+
+      - name: arc-runners pods (all states)
+        run: |
+          echo "── All pods in ${ARC_NAMESPACE} ──"
+          kubectl -n "${ARC_NAMESPACE}" get pods -o wide
+          echo
+          echo "── Autoscalingrunnersets ──"
+          kubectl -n "${ARC_NAMESPACE}" get autoscalingrunnersets
+
+      - name: Describe any non-Running pod
+        run: |
+          set +e
+          NOT_RUNNING=$(kubectl -n "${ARC_NAMESPACE}" get pods --no-headers \
+            | awk '$3 != "Running" && $3 != "Completed" {print $1}')
+          if [ -z "$NOT_RUNNING" ]; then
+            echo "All pods Running/Completed — nothing to describe."
+            exit 0
+          fi
+          for p in $NOT_RUNNING; do
+            echo "═════════ describe pod/${p} ═════════"
+            kubectl -n "${ARC_NAMESPACE}" describe pod "$p" | tail -60
+            echo
+          done
+
+      - name: Recent events (last 30)
+        run: |
+          kubectl -n "${ARC_NAMESPACE}" get events \
+            --sort-by='.lastTimestamp' \
+            -o custom-columns='TIME:.lastTimestamp,TYPE:.type,REASON:.reason,OBJECT:.involvedObject.name,MSG:.message' \
+            | tail -30
+
+      - name: Worker disk + containerd
+        env:
+          WORKER_IP: ${{ steps.worker.outputs.worker_ip }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh "root@${WORKER_IP}" bash -s <<'EOF'
+          echo "── Disk usage ──"
+          df -h | grep -E "Filesystem|/var/lib|/$|/tmp"
+          echo
+          echo "── inode usage ──"
+          df -i | grep -E "Filesystem|/var/lib|/$|/tmp"
+          echo
+          echo "── /var/lib/rancher/k3s size ──"
+          du -sh /var/lib/rancher/k3s 2>/dev/null || true
+          du -sh /var/lib/rancher/k3s/agent/containerd 2>/dev/null || true
+          echo
+          echo "── crictl image count + recent ──"
+          k3s crictl images 2>/dev/null | wc -l
+          k3s crictl images 2>/dev/null | grep -i "arc-runner\|signup-page" | head -5
+          echo
+          echo "── crictl ps (all containers, last 10) ──"
+          k3s crictl ps -a 2>/dev/null | head -11
+          echo
+          echo "── Last 30 lines k3s-agent journal ──"
+          journalctl -u k3s-agent --no-pager -n 30 2>/dev/null \
+            || journalctl -u k3s --no-pager -n 30 2>/dev/null \
+            || echo "(no k3s journal accessible)"
+          EOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f keys/worker_ssh
