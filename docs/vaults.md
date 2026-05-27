@@ -37,12 +37,17 @@ Runner state (singletons, no slot rotation):
 | `secret/ssh_keys/worker_node_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/ssh_keys/github_runner_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/ssh_keys/rancher_worker` | `private_key`, `public_key` | Manual setup |
+| `secret/ssh_keys/traefik_worker` | `private_key`, `public_key` | `seed-network-split-ssh-keys.yml` workflow (one-off, 2026-05-19) |
+| `secret/ssh_keys/adguard_worker` | `private_key`, `public_key` | `seed-network-split-ssh-keys.yml` workflow (one-off, 2026-05-19) |
+| `secret/ssh_keys/cloudflared_worker` | `private_key`, `public_key` | `seed-network-split-ssh-keys.yml` workflow (one-off, 2026-05-19) |
+| `secret/ssh_keys/github_runner_proxmox_access` | `private_key`, `public_key` | Manual setup — authorised on every PVE host's root, used by anything that needs `pct exec`/host-level SSH (LXC env runners had it baked in; ARC pods fetch it per-job, see traefik/adguard/cloudflared pipelines) |
 | `secret/worker-node/<N>/state` | `vmid, ip, hostname, pve_node, provisioned_at` | worker-node pipeline |
 | `secret/github-runner/gh_pat` | `token` | github-runner pipeline (injected from GH_PAT secret each run); **also reused by ops-portal-incidents (prod) to dispatch ops-portal-pipelines workflows** until a dedicated `secret/ops-portal/pipelines/gh-pat` is provisioned |
 | `secret/github-runner/<env>/state` | `vmid, ip, hostname, runner_name, provisioned_at` | github-runner pipeline |
 | `secret/arc/github-app` | `app_id, installation_id, private_key` | Manual setup; consumed by `arc-deploy.yml` to install the ARC controller's GitHub App auth secret per env. See `docs/runbooks.md` § "Migrating from LXC runners to ARC". |
 | `secret/rancher/<env>/state` | `vmid, ip, hostname, provisioned_at` | rancher pipeline |
-| `secret/tailscale` | `authkey` | Manual setup |
+| `secret/tailscale` | `authkey` | Manual setup — legacy single key still read by `ansible/network-vm` |
+| `secret/tailscale/<env>` | `authkey` | Manual setup (per-env, tag-restricted) — added 2026-05-19 for the network-vm split; read by `ansible/{traefik,adguard,cloudflared}` |
 | `secret/wireguard` | `private_key, peer_public_key, endpoint, address, dns` | Manual setup |
 | `secret/adguard` | `username, password` | Manual setup |
 | `secret/cloudflare-tunnel` | `token` | Manual setup (prod tunnel) |
@@ -55,6 +60,9 @@ Runner state (singletons, no slot rotation):
 | `secret/vault-ct/dev/active-slot` | `slot, vmid, ip` | vault-ct pipeline |
 | `secret/vault-ct/prod/active-slot` | `slot, vmid, ip` | vault-ct pipeline |
 | `secret/network-vm/dev/active-slot` | `slot, vmid, ip` | network-vm pipeline |
+| `secret/traefik/<env>/active-slot` | `slot, vmid, ip` | traefik pipeline (network-vm split, 2026-05-19) |
+| `secret/adguard/<env>/active-slot` | `slot, vmid, ip` | adguard pipeline (network-vm split, 2026-05-19) |
+| `secret/cloudflared/<env>/active-slot` | `slot, vmid, ip` | cloudflared pipeline (network-vm split — reserved; auto-created on first deploy) |
 | `secret/network-vm/prod/active-slot` | `slot, vmid, ip` | network-vm pipeline |
 | `secret/sso/dev/active-slot` | `slot, vmid, ip` | SSO pipeline |
 | `secret/sso/prod/active-slot` | `slot, vmid, ip` | SSO pipeline |
