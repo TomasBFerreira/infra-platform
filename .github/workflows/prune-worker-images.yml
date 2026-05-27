@@ -1,0 +1,79 @@
+name: Prune worker images
+
+# Run `k3s crictl rmi --prune` on a worker node to reclaim ephemeral-storage
+# from unused container images. Useful when /var/lib/rancher/k3s/agent/
+# containerd has grown to where ARC ephemeral runner pods can't pull
+# without hitting kubelet's eviction threshold.
+#
+# Born 2026-05-27 — dev worker hit ephemeral-storage eviction loop during
+# a signup-page-dev runner spinup; pre-existing containerd had 18GB cached
+# across 40 images on a 50GB root disk.
+#
+# Safe to run any time. Doesn't touch in-use images.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target env's k3s cluster
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+        default: dev
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    runs-on: [self-hosted, "${{ inputs.env }}"]
+    env:
+      ENV: ${{ inputs.env }}
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+    steps:
+      - name: Resolve worker-node IP
+        id: worker
+        run: |
+          set -euo pipefail
+          WORKER_IP=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/worker-node/${ENV}/active-slot" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ip'])")
+          [ -n "$WORKER_IP" ] || { echo "ERROR: empty worker IP for env=${ENV}"; exit 1; }
+          echo "worker_ip=${WORKER_IP}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch worker SSH key
+        run: |
+          set -euo pipefail
+          mkdir -p keys
+          curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/ssh_keys/worker_node_worker" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['private_key'])" \
+            > keys/worker_ssh
+          chmod 600 keys/worker_ssh
+
+      - name: Prune unused images
+        env:
+          WORKER_IP: ${{ steps.worker.outputs.worker_ip }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh "root@${WORKER_IP}" bash -s <<'EOF'
+          set -e
+          echo "── Pre-prune ──"
+          df -h / | grep -E "Filesystem|/$"
+          echo "image count: $(k3s crictl images 2>/dev/null | tail -n +2 | wc -l)"
+          echo "containerd dir: $(du -sh /var/lib/rancher/k3s/agent/containerd 2>/dev/null | cut -f1)"
+          echo
+
+          echo "── Pruning (k3s crictl rmi --prune) ──"
+          k3s crictl rmi --prune 2>&1 | tail -50 || true
+          echo
+
+          echo "── Post-prune ──"
+          df -h / | grep -E "Filesystem|/$"
+          echo "image count: $(k3s crictl images 2>/dev/null | tail -n +2 | wc -l)"
+          echo "containerd dir: $(du -sh /var/lib/rancher/k3s/agent/containerd 2>/dev/null | cut -f1)"
+          EOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f keys/worker_ssh
