@@ -1,16 +1,20 @@
 name: Resize worker root disk
 
-# Grows a worker-node LXC's root disk on its Proxmox host. Online — no CT
-# stop required (Proxmox handles online resize of ext4 over ZFS/LVM/dir
-# storage backends).
+# Grows a worker-node QEMU VM's scsi0 root disk on its Proxmox host.
+# Online (no VM stop) since scsi disks support live resize. The guest
+# OS then rescans the bus, growpart's the partition, and resize2fs's
+# the filesystem.
+#
+# Workers in this homelab are QEMU VMs (not LXCs) — see
+# infra-platform/terraform/worker-node/main.tf. An earlier draft of
+# this workflow used `pct` and failed with "Configuration file
+# 'nodes/<node>/lxc/<vmid>.conf' does not exist" — see infra-platform
+# run 26527395508 (2026-05-27).
 #
 # Born 2026-05-27 after dev worker's 50 GB root hit kubelet
 # ephemeral-storage eviction threshold during ARC ephemeral runner pod
 # spinup. `k3s crictl rmi --prune` (prune-worker-images.yml) freed only
 # 2 GB — insufficient. This is the durable fix.
-#
-# Default add_gb=50 grows from 50→100 GB. Re-runnable; resizing to the
-# same size or smaller is a no-op via pct.
 
 on:
   workflow_dispatch:
@@ -39,16 +43,16 @@ jobs:
       ENV: ${{ inputs.env }}
       ADD_GB: ${{ inputs.add_gb }}
       PVE_USER: ${{ secrets.PVE_USER }}
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
     steps:
-      - name: Resolve PVE host + worker VMID for env
+      - name: Resolve PVE host + worker VMID + worker IP for env
         id: resolve
         run: |
           set -euo pipefail
           case "${ENV}" in
             dev)
               PVE_HOST=192.168.50.4   # benedict
-              # Standard worker-node-01 (not GPU). See infra-platform/CLAUDE.md
-              # VMID scheme: dev=2xx; worker-node-01 → 211.
               VMID=211
               ;;
             qa)
@@ -57,69 +61,117 @@ jobs:
               ;;
             prod)
               PVE_HOST=192.168.50.2   # betsy
-              # Prod runs workloads on worker-node-gpu-01 (VMID 121),
-              # not worker-node-01 (VMID 111 — not provisioned). See
-              # /app/issues/tomaj-flix-prod-2026-04-10.md Issue 6.
+              # Prod runs workloads on worker-node-gpu-01 (VMID 121).
               VMID=121
               ;;
           esac
+          WORKER_IP=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/worker-node/${ENV}/active-slot" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ip'])")
           echo "pve_host=${PVE_HOST}" >> "$GITHUB_OUTPUT"
           echo "vmid=${VMID}" >> "$GITHUB_OUTPUT"
-          echo "Targeting env=${ENV} PVE_HOST=${PVE_HOST} VMID=${VMID} add_gb=${ADD_GB}"
+          echo "worker_ip=${WORKER_IP}" >> "$GITHUB_OUTPUT"
+          echo "Targeting env=${ENV} PVE_HOST=${PVE_HOST} VMID=${VMID} WORKER_IP=${WORKER_IP} add_gb=${ADD_GB}"
 
-      - name: Pre-resize disk state
+      - name: Fetch worker SSH key
+        run: |
+          set -euo pipefail
+          mkdir -p keys
+          curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+            "${VAULT_ADDR}/v1/secret/data/ssh_keys/worker_node_worker" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['private_key'])" \
+            > keys/worker_ssh
+          chmod 600 keys/worker_ssh
+
+      - name: Pre-resize state
         env:
           PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
           VMID: ${{ steps.resolve.outputs.vmid }}
+          WORKER_IP: ${{ steps.resolve.outputs.worker_ip }}
         run: |
           set -euo pipefail
           PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
-          echo "── pct config (rootfs line) ──"
+          echo "── qm config (scsi0 line) ──"
           ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
-            "pct config ${VMID} | grep -E '^rootfs'"
+            "qm config ${VMID} | grep -E '^scsi'"
           echo
-          echo "── Disk usage inside CT ──"
-          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
-            "pct exec ${VMID} -- df -h / 2>/dev/null"
+          echo "── Disk usage inside VM (SSH worker) ──"
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh "root@${WORKER_IP}" \
+            "df -h /; echo; lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT | grep -v loop"
 
-      - name: Resize
+      - name: Resize qemu disk
         env:
           PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
           VMID: ${{ steps.resolve.outputs.vmid }}
         run: |
           set -euo pipefail
           PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
-          echo "── Running: pct resize ${VMID} rootfs +${ADD_GB}G ──"
+          echo "── Running: qm resize ${VMID} scsi0 +${ADD_GB}G ──"
           ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
-            "pct resize ${VMID} rootfs +${ADD_GB}G"
+            "qm resize ${VMID} scsi0 +${ADD_GB}G"
 
-      - name: Post-resize disk state
+      - name: Grow partition + filesystem inside guest
         env:
-          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
-          VMID: ${{ steps.resolve.outputs.vmid }}
+          WORKER_IP: ${{ steps.resolve.outputs.worker_ip }}
         run: |
           set -euo pipefail
-          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
-          echo "── pct config (rootfs line) ──"
-          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
-            "pct config ${VMID} | grep -E '^rootfs'"
-          echo
-          echo "── Disk usage inside CT ──"
-          # If the underlying storage requires resize2fs (raw block backends),
-          # try it. Most ZFS/dir backends auto-grow during pct resize so this
-          # is idempotent / no-op.
-          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" bash -s <<EOF
-          # Determine the root device inside the CT and resize2fs if ext4.
-          ROOT_DEV=\$(pct exec ${VMID} -- df / --output=source 2>/dev/null | tail -1)
-          echo "Root device inside CT: \$ROOT_DEV"
-          if pct exec ${VMID} -- blkid \$ROOT_DEV 2>/dev/null | grep -q ext4; then
-            echo "ext4 detected — running resize2fs (idempotent)"
-            pct exec ${VMID} -- resize2fs \$ROOT_DEV 2>&1 || \
-              echo "resize2fs returned non-zero — may be already grown"
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh "root@${WORKER_IP}" bash -s <<'EOF'
+          set -e
+          # Rescan the SCSI bus so the kernel sees the new disk size.
+          # The device may be /dev/sda — try common targets.
+          for dev in /sys/block/sda/device/rescan; do
+            [ -e "$dev" ] && echo 1 > "$dev" && echo "rescanned $dev"
+          done
+
+          # Find the root device's parent disk + partition number.
+          ROOT_PART=$(findmnt -n -o SOURCE /)
+          echo "ROOT_PART=$ROOT_PART"
+          # e.g. /dev/sda1 → disk=/dev/sda, part=1
+          DISK=$(lsblk -no PKNAME "$ROOT_PART")
+          PART_NUM=$(echo "$ROOT_PART" | grep -oE '[0-9]+$')
+          echo "DISK=/dev/$DISK PART=$PART_NUM"
+
+          if command -v growpart >/dev/null 2>&1; then
+            growpart "/dev/$DISK" "$PART_NUM" || echo "growpart returned non-zero (may already be at max)"
           else
-            echo "Non-ext4 or unknown backend — skipping resize2fs"
+            echo "growpart not installed — installing cloud-guest-utils"
+            apt-get update -qq && apt-get install -y cloud-guest-utils
+            growpart "/dev/$DISK" "$PART_NUM" || echo "growpart returned non-zero"
           fi
+
+          # Resize the filesystem.
+          FSTYPE=$(blkid -o value -s TYPE "$ROOT_PART")
+          echo "FSTYPE=$FSTYPE"
+          case "$FSTYPE" in
+            ext4|ext3|ext2)
+              resize2fs "$ROOT_PART"
+              ;;
+            xfs)
+              xfs_growfs /
+              ;;
+            *)
+              echo "ERROR: unknown FS $FSTYPE — manual intervention required"
+              exit 1
+              ;;
+          esac
+          EOF
+
+      - name: Post-resize state
+        env:
+          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
+          VMID: ${{ steps.resolve.outputs.vmid }}
+          WORKER_IP: ${{ steps.resolve.outputs.worker_ip }}
+        run: |
+          set -euo pipefail
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          echo "── qm config (scsi0 line) ──"
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
+            "qm config ${VMID} | grep -E '^scsi'"
           echo
           echo "── Final df ──"
-          pct exec ${VMID} -- df -h /
-          EOF
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh "root@${WORKER_IP}" \
+            "df -h /"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f keys/worker_ssh
