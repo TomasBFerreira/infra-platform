@@ -95,8 +95,12 @@ jobs:
           ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
             "qm config ${VMID} | grep -E '^scsi'"
           echo
-          echo "── Disk usage inside VM (SSH worker) ──"
-          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh "root@${WORKER_IP}" \
+          echo "── Disk usage inside VM (SSH via PVE ProxyJump) ──"
+          # management runner can't route directly to env subnets — go via
+          # the PVE host (which owns the bridge to the env subnet).
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh \
+              -o ProxyJump="${PVE_USER_SHORT}@${PVE_HOST}" \
+              "root@${WORKER_IP}" \
             "df -h /; echo; lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT | grep -v loop"
 
       - name: Resize qemu disk
@@ -112,10 +116,14 @@ jobs:
 
       - name: Grow partition + filesystem inside guest
         env:
+          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
           WORKER_IP: ${{ steps.resolve.outputs.worker_ip }}
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh "root@${WORKER_IP}" bash -s <<'EOF'
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh \
+              -o ProxyJump="${PVE_USER_SHORT}@${PVE_HOST}" \
+              "root@${WORKER_IP}" bash -s <<'EOF'
           set -e
           # Rescan the SCSI bus so the kernel sees the new disk size.
           # The device may be /dev/sda — try common targets.
@@ -169,8 +177,9 @@ jobs:
             "qm config ${VMID} | grep -E '^scsi'"
           echo
           echo "── Final df ──"
-          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh "root@${WORKER_IP}" \
-            "df -h /"
+          ssh -o StrictHostKeyChecking=no -i keys/worker_ssh \
+              -o ProxyJump="${PVE_USER_SHORT}@${PVE_HOST}" \
+              "root@${WORKER_IP}" "df -h /"
 
       - name: Cleanup
         if: always()
