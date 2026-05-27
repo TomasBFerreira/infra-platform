@@ -1,0 +1,125 @@
+name: Resize worker root disk
+
+# Grows a worker-node LXC's root disk on its Proxmox host. Online — no CT
+# stop required (Proxmox handles online resize of ext4 over ZFS/LVM/dir
+# storage backends).
+#
+# Born 2026-05-27 after dev worker's 50 GB root hit kubelet
+# ephemeral-storage eviction threshold during ARC ephemeral runner pod
+# spinup. `k3s crictl rmi --prune` (prune-worker-images.yml) freed only
+# 2 GB — insufficient. This is the durable fix.
+#
+# Default add_gb=50 grows from 50→100 GB. Re-runnable; resizing to the
+# same size or smaller is a no-op via pct.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target env's worker node
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+        default: dev
+      add_gb:
+        description: Add this many GB to the root disk (default 50)
+        required: false
+        default: "50"
+
+permissions:
+  contents: read
+
+jobs:
+  resize:
+    # Runs on the management runner (CT 200) so we don't depend on the
+    # target env's runner LXC — which may itself be backed up. Management
+    # runner has SSH keys for all 3 PVE nodes.
+    runs-on: [self-hosted, management]
+    env:
+      ENV: ${{ inputs.env }}
+      ADD_GB: ${{ inputs.add_gb }}
+      PVE_USER: ${{ secrets.PVE_USER }}
+    steps:
+      - name: Resolve PVE host + worker VMID for env
+        id: resolve
+        run: |
+          set -euo pipefail
+          case "${ENV}" in
+            dev)
+              PVE_HOST=192.168.50.4   # benedict
+              # Standard worker-node-01 (not GPU). See infra-platform/CLAUDE.md
+              # VMID scheme: dev=2xx; worker-node-01 → 211.
+              VMID=211
+              ;;
+            qa)
+              PVE_HOST=192.168.50.8   # heaton
+              VMID=311
+              ;;
+            prod)
+              PVE_HOST=192.168.50.2   # betsy
+              # Prod runs workloads on worker-node-gpu-01 (VMID 121),
+              # not worker-node-01 (VMID 111 — not provisioned). See
+              # /app/issues/tomaj-flix-prod-2026-04-10.md Issue 6.
+              VMID=121
+              ;;
+          esac
+          echo "pve_host=${PVE_HOST}" >> "$GITHUB_OUTPUT"
+          echo "vmid=${VMID}" >> "$GITHUB_OUTPUT"
+          echo "Targeting env=${ENV} PVE_HOST=${PVE_HOST} VMID=${VMID} add_gb=${ADD_GB}"
+
+      - name: Pre-resize disk state
+        env:
+          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
+          VMID: ${{ steps.resolve.outputs.vmid }}
+        run: |
+          set -euo pipefail
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          echo "── pct config (rootfs line) ──"
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
+            "pct config ${VMID} | grep -E '^rootfs'"
+          echo
+          echo "── Disk usage inside CT ──"
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
+            "pct exec ${VMID} -- df -h / 2>/dev/null"
+
+      - name: Resize
+        env:
+          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
+          VMID: ${{ steps.resolve.outputs.vmid }}
+        run: |
+          set -euo pipefail
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          echo "── Running: pct resize ${VMID} rootfs +${ADD_GB}G ──"
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
+            "pct resize ${VMID} rootfs +${ADD_GB}G"
+
+      - name: Post-resize disk state
+        env:
+          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
+          VMID: ${{ steps.resolve.outputs.vmid }}
+        run: |
+          set -euo pipefail
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          echo "── pct config (rootfs line) ──"
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
+            "pct config ${VMID} | grep -E '^rootfs'"
+          echo
+          echo "── Disk usage inside CT ──"
+          # If the underlying storage requires resize2fs (raw block backends),
+          # try it. Most ZFS/dir backends auto-grow during pct resize so this
+          # is idempotent / no-op.
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" bash -s <<EOF
+          # Determine the root device inside the CT and resize2fs if ext4.
+          ROOT_DEV=\$(pct exec ${VMID} -- df / --output=source 2>/dev/null | tail -1)
+          echo "Root device inside CT: \$ROOT_DEV"
+          if pct exec ${VMID} -- blkid \$ROOT_DEV 2>/dev/null | grep -q ext4; then
+            echo "ext4 detected — running resize2fs (idempotent)"
+            pct exec ${VMID} -- resize2fs \$ROOT_DEV 2>&1 || \
+              echo "resize2fs returned non-zero — may be already grown"
+          else
+            echo "Non-ext4 or unknown backend — skipping resize2fs"
+          fi
+          echo
+          echo "── Final df ──"
+          pct exec ${VMID} -- df -h /
+          EOF
