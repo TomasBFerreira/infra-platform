@@ -286,3 +286,106 @@ scale_sets:
     name: otel-monitoring-qa
     min_runners: 0
     max_runners: 2
+
+  # ── Prod fleet (2026-05-27) ─────────────────────────────────────────────
+  # Mirrors the dev + qa entries onto the prod k3s cluster. ARC controller
+  # + arc-pilot-prod were already deployed in Phase 0b of the network-vm-split
+  # workstream (2026-05-19). Per-repo deploy.yml conditionals still currently
+  # route env=prod to [self-hosted, prod] (LXC); per-repo PRs flip that to
+  # "<repo>-prod" after these listeners are confirmed online.
+  - repo: TomasBFerreira/traefik-gitops
+    env: prod
+    label: prod
+    name: traefik-gitops-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/streambox
+    env: prod
+    label: prod
+    name: streambox-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/landing-page
+    env: prod
+    label: prod
+    name: landing-page-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/signup-page
+    env: prod
+    label: prod
+    name: signup-page-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/nextcloud
+    env: prod
+    label: prod
+    name: nextcloud-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-identity
+    env: prod
+    label: prod
+    name: ops-portal-identity-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-cmdb
+    env: prod
+    label: prod
+    name: ops-portal-cmdb-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-audit
+    env: prod
+    label: prod
+    name: ops-portal-audit-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-infrastructure
+    env: prod
+    label: prod
+    name: ops-portal-infrastructure-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-deployments
+    env: prod
+    label: prod
+    name: ops-portal-deployments-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-domain
+    env: prod
+    label: prod
+    name: ops-portal-domain-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-shell
+    env: prod
+    label: prod
+    name: ops-portal-shell-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/databaes-status-api
+    env: prod
+    label: prod
+    name: databaes-status-api-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/wikijs
+    env: prod
+    label: prod
+    name: wikijs-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/media-stack
+    env: prod
+    label: prod
+    name: media-stack-prod
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/otel-monitoring
+    env: prod
+    label: prod
+    name: otel-monitoring-prod
+    min_runners: 0
+    max_runners: 2
