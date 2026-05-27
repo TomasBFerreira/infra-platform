@@ -179,3 +179,110 @@ scale_sets:
     name: otel-monitoring-dev
     min_runners: 0
     max_runners: 2
+
+  # ── QA fleet (2026-05-27) ───────────────────────────────────────────────
+  # Mirrors the dev entries above onto the QA k3s cluster. The ARC controller
+  # + arc-pilot-qa were already deployed in Phase 0b of the network-vm-split
+  # workstream (2026-05-19); these 16 entries are the per-repo listeners that
+  # back `<repo>-qa` runs-on labels. min=0 so they cost nothing while idle
+  # (QA promotions are infrequent vs. dev push traffic).
+  #
+  # Repos' deploy.yml still currently routes env=qa to [self-hosted, qa]
+  # (LXC); per-repo PRs flip that conditional to "<repo>-qa" after these
+  # listeners are confirmed online.
+  - repo: TomasBFerreira/traefik-gitops
+    env: qa
+    label: qa
+    name: traefik-gitops-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/streambox
+    env: qa
+    label: qa
+    name: streambox-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/landing-page
+    env: qa
+    label: qa
+    name: landing-page-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/signup-page
+    env: qa
+    label: qa
+    name: signup-page-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/nextcloud
+    env: qa
+    label: qa
+    name: nextcloud-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-identity
+    env: qa
+    label: qa
+    name: ops-portal-identity-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-cmdb
+    env: qa
+    label: qa
+    name: ops-portal-cmdb-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-audit
+    env: qa
+    label: qa
+    name: ops-portal-audit-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-infrastructure
+    env: qa
+    label: qa
+    name: ops-portal-infrastructure-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-deployments
+    env: qa
+    label: qa
+    name: ops-portal-deployments-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-domain
+    env: qa
+    label: qa
+    name: ops-portal-domain-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/ops-portal-shell
+    env: qa
+    label: qa
+    name: ops-portal-shell-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/databaes-status-api
+    env: qa
+    label: qa
+    name: databaes-status-api-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/wikijs
+    env: qa
+    label: qa
+    name: wikijs-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/media-stack
+    env: qa
+    label: qa
+    name: media-stack-qa
+    min_runners: 0
+    max_runners: 2
+  - repo: TomasBFerreira/otel-monitoring
+    env: qa
+    label: qa
+    name: otel-monitoring-qa
+    min_runners: 0
+    max_runners: 2
