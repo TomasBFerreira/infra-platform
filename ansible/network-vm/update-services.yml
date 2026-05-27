@@ -1,9 +1,0 @@
-- name: Update Network-VM Services (traefik + adguard only)
-  hosts: all
-  become: yes
-  environment:
-    DEBIAN_FRONTEND: noninteractive
-
-  roles:
-    - role: traefik
-    - role: adguard

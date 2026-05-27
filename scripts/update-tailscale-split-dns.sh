@@ -21,18 +21,16 @@ API="https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}"
 AUTH="Authorization: Bearer ${TAILSCALE_API_KEY}"
 
 # Fetch all authorized devices, then keep only those whose hostname matches
-# the AdGuard-bearing patterns (network-vm during the parallel-run, plus
-# adguard-lxc going forward). Drop the network-vm half once Phase 3c of the
-# network-vm split lands (issues/network-vm-split-2026-05-19.md) — then
-# only adguard-lxc remains.
+# the adguard-lxc pattern. (network-vm dropped 2026-05-27 with Phase 3c of
+# the network-vm split — see issues/network-vm-split-2026-05-19.md.)
 curl -sS -f -H "$AUTH" "${API}/devices" > /tmp/ts_devices.json
 
 ips_json=$(python3 <<'PY'
 import json, re
 with open("/tmp/ts_devices.json") as f:
     data = json.load(f)
-# Match e.g. "dev-network-vm-blue", "prod-adguard-lxc-green".
-ADGUARD_HOST = re.compile(r"^(dev|qa|prod)-(network-vm|adguard-lxc)-(blue|green)$")
+# Match e.g. "dev-adguard-lxc-blue", "prod-adguard-lxc-green".
+ADGUARD_HOST = re.compile(r"^(dev|qa|prod)-adguard-lxc-(blue|green)$")
 ips = []
 for d in data.get("devices", []):
     if d.get("authorized") is False:
