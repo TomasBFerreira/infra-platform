@@ -1,0 +1,124 @@
+name: Check env runner
+
+# Inspect (and optionally bounce) an env's GitHub Actions runner LXC.
+# Runs on the management runner (CT 200) which has SSH access to all
+# PVE nodes — so this works even when the env runner is wedged and
+# can't pick up jobs.
+#
+# Env runner VMIDs (per infra-platform/CLAUDE.md):
+#   dev=201/benedict  qa=301/heaton  prod=101/betsy
+#
+# Modes:
+#   diagnose         pct status, df -h, runner systemd status, recent logs
+#   restart-service  systemctl restart actions.runner.*
+#   restart-lxc      pct stop + pct start (heavier — only if service restart not enough)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target env
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+        default: dev
+      mode:
+        description: Action to take
+        required: true
+        type: choice
+        options: [diagnose, restart-service, restart-lxc]
+        default: diagnose
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: [self-hosted, management]
+    env:
+      ENV: ${{ inputs.env }}
+      MODE: ${{ inputs.mode }}
+      PVE_USER: ${{ secrets.PVE_USER }}
+    steps:
+      - name: Resolve PVE host + runner VMID
+        id: resolve
+        run: |
+          set -euo pipefail
+          case "${ENV}" in
+            dev)
+              PVE_HOST=192.168.50.4
+              VMID=201
+              ;;
+            qa)
+              PVE_HOST=192.168.50.8
+              VMID=301
+              ;;
+            prod)
+              PVE_HOST=192.168.50.2
+              VMID=101
+              ;;
+          esac
+          echo "pve_host=${PVE_HOST}" >> "$GITHUB_OUTPUT"
+          echo "vmid=${VMID}" >> "$GITHUB_OUTPUT"
+          echo "Targeting env=${ENV} PVE_HOST=${PVE_HOST} VMID=${VMID} mode=${MODE}"
+
+      - name: Diagnose
+        env:
+          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
+          VMID: ${{ steps.resolve.outputs.vmid }}
+        run: |
+          set -euo pipefail
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" bash -s <<EOF
+          set -e
+          echo "── pct status ──"
+          pct status ${VMID}
+          echo
+          echo "── df -h inside CT ──"
+          pct exec ${VMID} -- df -h / 2>&1 | head -5
+          echo
+          echo "── runner systemd units ──"
+          pct exec ${VMID} -- bash -c "systemctl list-units 'actions.runner.*' --all --no-pager --no-legend 2>&1" | head -10
+          echo
+          echo "── recent runner journal (last 20) ──"
+          pct exec ${VMID} -- bash -c "journalctl -u 'actions.runner.*' --no-pager -n 20 2>&1" | tail -25
+          echo
+          echo "── docker disk usage on runner ──"
+          pct exec ${VMID} -- bash -c "docker system df 2>&1 || echo '(no docker or not accessible)'" | head -10
+          EOF
+
+      - name: Restart actions runner service
+        if: inputs.mode == 'restart-service' || inputs.mode == 'restart-lxc'
+        env:
+          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
+          VMID: ${{ steps.resolve.outputs.vmid }}
+        run: |
+          set -euo pipefail
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" bash -s <<EOF
+          echo "── Restarting actions.runner.* services ──"
+          pct exec ${VMID} -- bash -c "systemctl restart 'actions.runner.*' && systemctl is-active 'actions.runner.*'"
+          EOF
+
+      - name: Restart LXC
+        if: inputs.mode == 'restart-lxc'
+        env:
+          PVE_HOST: ${{ steps.resolve.outputs.pve_host }}
+          VMID: ${{ steps.resolve.outputs.vmid }}
+        run: |
+          set -euo pipefail
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" bash -s <<EOF
+          set -e
+          echo "── pct reboot ${VMID} ──"
+          pct reboot ${VMID}
+          echo "Waiting up to 60s for CT to come back up..."
+          for i in 1 2 3 4 5 6; do
+            sleep 10
+            if pct status ${VMID} | grep -q running; then
+              echo "CT ${VMID} is running after \${i}0s"
+              break
+            fi
+          done
+          pct status ${VMID}
+          EOF
