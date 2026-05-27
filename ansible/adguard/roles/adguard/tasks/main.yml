@@ -222,8 +222,8 @@
       QA_DOMAINS="{{ adguard_qa_rewrites | map(attribute='domain') | join(' ') }}"
       PROD_DOMAINS="{{ adguard_prod_rewrites | map(attribute='domain') | join(' ') }}"
       DEV_HOSTNAME_RE=^dev-traefik-lxc-
-      QA_HOSTNAME_RE=^qa-network-vm-
-      PROD_HOSTNAME_RE=^prod-network-vm-
+      QA_HOSTNAME_RE=^qa-traefik-lxc-
+      PROD_HOSTNAME_RE=^prod-traefik-lxc-
   when: adguard_username != '' and adguard_password != ''
   no_log: true
 
