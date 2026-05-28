@@ -195,11 +195,20 @@
         --gc-schedule "03:30"
       changed_when: false
 
-    - name: Configure datastore verify schedule (weekly Sun 05:00)
-      command: >
-        proxmox-backup-manager datastore update {{ pbs_datastore_name }}
-        --verify-schedule "sun 05:00"
+    # PBS 4.x removed --verify-schedule from `datastore update`; verify is
+    # now a separate job object managed via `verify-job`. Idempotent
+    # check-then-create.
+    - name: Check if verify-job exists for this datastore
+      command: proxmox-backup-manager verify-job list --output-format json
+      register: verify_job_list
       changed_when: false
+
+    - name: Create weekly verify job (Sun 05:00)
+      command: >
+        proxmox-backup-manager verify-job create {{ pbs_datastore_name }}-weekly
+        --store {{ pbs_datastore_name }}
+        --schedule "sun 05:00"
+      when: "(pbs_datastore_name + '-weekly') not in (verify_job_list.stdout | from_json | map(attribute='id') | list)"
 
     - name: Show summary
       debug:
