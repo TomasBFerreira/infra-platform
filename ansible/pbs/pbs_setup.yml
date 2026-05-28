@@ -132,10 +132,10 @@
       when: "'pbs-pve@pbs' not in (pbs_user_list.stdout | from_json | map(attribute='userid') | list)"
       no_log: true
 
-    - name: Grant pbs-pve@pbs DatastoreBackup permission
+    - name: Grant pbs-pve@pbs DatastorePowerUser permission
       command: >
         proxmox-backup-manager acl update /datastore/{{ pbs_datastore_name }}
-        DatastoreBackup --auth-id pbs-pve@pbs
+        DatastorePowerUser --auth-id pbs-pve@pbs
       changed_when: false
 
     # ── API token for non-interactive auth ──────────────────────────────────
@@ -163,10 +163,10 @@
       when: pbs_token_create.changed
       no_log: true
 
-    - name: Grant token DatastoreBackup permission
+    - name: Grant token DatastorePowerUser permission
       command: >
         proxmox-backup-manager acl update /datastore/{{ pbs_datastore_name }}
-        DatastoreBackup --auth-id 'pbs-pve@pbs!pve-cluster'
+        DatastorePowerUser --auth-id 'pbs-pve@pbs!pve-cluster'
       changed_when: false
 
     # ── Fingerprint capture ─────────────────────────────────────────────────
