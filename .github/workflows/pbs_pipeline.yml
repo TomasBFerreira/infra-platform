@@ -1,0 +1,338 @@
+name: PBS Pipeline (single-slot)
+
+# Provisions / reconfigures the cluster-wide Proxmox Backup Server.
+#
+# Single-slot deployment (documented exception to rule #5 alongside
+# github-runner): the backup datastore continuity makes blue/green
+# expensive without benefit. PBS lives on betsy because the 10 TB HDD
+# is physically attached there. See terraform/pbs/main.tf for the full
+# rationale.
+#
+# Runs on `[self-hosted, management]` (CT 200, bootstrap-vault host)
+# rather than the env runner — same reasoning as github-runner: PBS is
+# cluster-wide infra that survives env teardowns.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reset:
+        description: 'Destroy and recreate the CT (keeps the datastore on the bind-mount intact)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+concurrency:
+  group: pbs-pipeline
+  cancel-in-progress: false
+
+env:
+  PBS_VMID: 103
+  PBS_IP: 192.168.50.103
+  PBS_HOSTNAME: pbs
+  PBS_TARGET_NODE: betsy
+  PBS_NETWORK_BRIDGE: vmbr0
+  PBS_GATEWAY: 192.168.50.1
+  PBS_DATASTORE_NAME: backup-storage
+  PBS_HOST_MOUNT_PATH: /mnt/backup-storage
+  PBS_CT_MOUNT_PATH: /backup-storage
+  PVE_API_URL: https://192.168.50.2:8006/api2/json
+
+jobs:
+  terraform-apply:
+    runs-on: [self-hosted, management]
+    env:
+      TF_VAR_pve_api:       https://192.168.50.2:8006/api2/json
+      TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass:      ${{ secrets.PVE_PROD_PASS }}
+      TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
+      - name: Terraform Init
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/pbs init -input=false
+
+      - name: Pre-flight — destroy CT if reset=true
+        if: github.event.inputs.reset == 'true'
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/pbs destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.tfstate || true
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 \
+            "pct stop ${PBS_VMID} 2>/dev/null || true; pct destroy ${PBS_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/pbs/terraform.tfstate
+
+      - name: Terraform Apply
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/pbs apply \
+            -no-color -input=false -auto-approve \
+            -state=terraform.tfstate
+
+  configure-mount:
+    needs: terraform-apply
+    runs-on: [self-hosted, management]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+    steps:
+      - name: Configure host bind-mount (mp0) and reboot CT
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 bash -s -- "${PBS_VMID}" "${PBS_HOST_MOUNT_PATH}" "${PBS_CT_MOUNT_PATH}" << 'SSHEOF'
+            VMID="$1"
+            HOST_PATH="$2"
+            CT_PATH="$3"
+
+            # mp0 line in /etc/pve/lxc/${VMID}.conf — idempotent set.
+            # backup=0 excludes the datastore itself from any future vzdump
+            # backup of the PBS CT (would cause a 9 TB self-backup loop).
+            DESIRED="mp0: ${HOST_PATH},mp=${CT_PATH},backup=0"
+            CONF=/etc/pve/lxc/${VMID}.conf
+
+            if grep -q '^mp0:' "$CONF"; then
+              if ! grep -qxF "$DESIRED" "$CONF"; then
+                sed -i "s|^mp0:.*|${DESIRED}|" "$CONF"
+                NEED_REBOOT=1
+              fi
+            else
+              echo "$DESIRED" >> "$CONF"
+              NEED_REBOOT=1
+            fi
+
+            if [ "${NEED_REBOOT:-0}" = "1" ]; then
+              echo "mp0 updated — rebooting CT ${VMID}"
+              pct reboot ${VMID}
+            else
+              echo "mp0 already correct — no reboot needed"
+            fi
+          SSHEOF
+          echo "Waiting 15s for reboot to settle..."
+          sleep 15
+
+      - name: Wait for SSH on the new PBS CT
+        run: |
+          echo "Waiting for SSH on ${PBS_IP}..."
+          timeout 180 bash -c "until nc -z ${PBS_IP} 22; do sleep 5; done"
+          echo "SSH is up"
+
+  ansible-setup:
+    needs: configure-mount
+    runs-on: [self-hosted, management]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Fetch PBS SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          set -o pipefail
+          vault kv get -field=private_key secret/ssh_keys/pbs_worker \
+            | awk 'NF > 0' > /tmp/pbs_key
+          chmod 600 /tmp/pbs_key
+          grep -q "BEGIN OPENSSH PRIVATE KEY" /tmp/pbs_key \
+            || { echo "ERROR: pbs SSH key missing PEM header"; exit 1; }
+
+      - name: Generate PBS-PVE API user password
+        id: pwgen
+        run: |
+          PASSWD=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)
+          echo "::add-mask::$PASSWD"
+          echo "passwd=$PASSWD" >> "$GITHUB_OUTPUT"
+
+      - name: Run Ansible playbook
+        run: |
+          cd /app/infra-platform
+          ssh-keygen -R "${PBS_IP}" || true
+          ansible-playbook \
+            -i "${PBS_IP}," \
+            -v \
+            --private-key /tmp/pbs_key \
+            -e "ansible_host=${PBS_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "pbs_pve_password=${{ steps.pwgen.outputs.passwd }}" \
+            ansible/pbs/pbs_setup.yml
+
+      - name: Fetch fingerprint and token secret from PBS CT
+        run: |
+          mkdir -p /tmp/pbs-out
+          scp -i /tmp/pbs_key -o StrictHostKeyChecking=no \
+            root@${PBS_IP}:/root/pbs-fingerprint.txt /tmp/pbs-out/fingerprint.txt
+          scp -i /tmp/pbs_key -o StrictHostKeyChecking=no \
+            root@${PBS_IP}:/root/pbs-pve-token-secret.txt /tmp/pbs-out/token.txt || \
+            echo "Token already existed — fetching via API recreate not implemented yet (re-run with reset=true to rotate)"
+
+      - name: Save fingerprint + token in bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          FINGERPRINT=$(cat /tmp/pbs-out/fingerprint.txt)
+          TOKEN_SECRET=$(cat /tmp/pbs-out/token.txt 2>/dev/null || true)
+          if [ -n "$TOKEN_SECRET" ]; then
+            vault kv put secret/pbs/cluster-storage \
+              server="${PBS_IP}" \
+              datastore="${PBS_DATASTORE_NAME}" \
+              username="pbs-pve@pbs!pve-cluster" \
+              token_secret="$TOKEN_SECRET" \
+              fingerprint="$FINGERPRINT"
+          else
+            CURRENT=$(vault kv get -format=json secret/pbs/cluster-storage 2>/dev/null || echo '{}')
+            EXISTING_TOKEN=$(echo "$CURRENT" | jq -r '.data.data.token_secret // empty')
+            if [ -n "$EXISTING_TOKEN" ]; then
+              vault kv put secret/pbs/cluster-storage \
+                server="${PBS_IP}" \
+                datastore="${PBS_DATASTORE_NAME}" \
+                username="pbs-pve@pbs!pve-cluster" \
+                token_secret="$EXISTING_TOKEN" \
+                fingerprint="$FINGERPRINT"
+            else
+              echo "ERROR: no token secret available — token must be re-issued. Re-run with reset=true."
+              exit 1
+            fi
+          fi
+
+  register-storage:
+    needs: ansible-setup
+    runs-on: [self-hosted, management]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+    steps:
+      - name: Pull fingerprint + token from vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          FINGERPRINT=$(vault kv get -field=fingerprint secret/pbs/cluster-storage)
+          TOKEN_SECRET=$(vault kv get -field=token_secret secret/pbs/cluster-storage)
+          echo "::add-mask::$TOKEN_SECRET"
+          {
+            echo "FINGERPRINT=$FINGERPRINT"
+            echo "TOKEN_SECRET=$TOKEN_SECRET"
+          } >> "$GITHUB_ENV"
+
+      - name: Register PBS storage in PVE cluster (any node propagates)
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 bash -s -- \
+            "${PBS_IP}" "${PBS_DATASTORE_NAME}" "${FINGERPRINT}" "${TOKEN_SECRET}" << 'SSHEOF'
+            SERVER="$1"
+            DATASTORE="$2"
+            FINGERPRINT="$3"
+            TOKEN_SECRET="$4"
+            STORAGE_ID="pbs-storage"
+
+            # Remove the dead .102 entry if present
+            if pvesm status 2>/dev/null | grep -q "^${STORAGE_ID} "; then
+              pvesm remove "$STORAGE_ID" 2>/dev/null || true
+            fi
+
+            pvesm add pbs "$STORAGE_ID" \
+              --server "$SERVER" \
+              --datastore "$DATASTORE" \
+              --username 'pbs-pve@pbs!pve-cluster' \
+              --password "$TOKEN_SECRET" \
+              --fingerprint "$FINGERPRINT" \
+              --content backup \
+              --prune-backups 'keep-last=3,keep-daily=7,keep-weekly=4,keep-monthly=6'
+
+            sleep 3
+            pvesm status | grep "$STORAGE_ID"
+          SSHEOF
+
+      - name: Replace broken vzdump job with PBS-targeted nightly
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 bash << 'SSHEOF'
+            # Remove the broken vzdump job (storage=local, stale VMIDs)
+            for jobid in $(awk '/^vzdump:/ {print $2}' /etc/pve/jobs.cfg); do
+              pvesh delete /cluster/backup/$jobid 2>/dev/null || true
+            done
+
+            # Create the new nightly job: every CT/VM cluster-wide except
+            # cloud-init/test templates (9000/9001/9002, 999).
+            pvesh create /cluster/backup \
+              --id 'pbs-nightly-all' \
+              --schedule '02:00' \
+              --storage pbs-storage \
+              --mode snapshot \
+              --all 1 \
+              --exclude '999,9000,9001,9002' \
+              --mailto all@tomasbrazao.com \
+              --mailnotification failure \
+              --notes-template '{{guestname}} ({{node}})'
+
+            cat /etc/pve/jobs.cfg
+          SSHEOF
+
+  cleanup-on-failure:
+    needs: [terraform-apply, configure-mount, ansible-setup, register-storage]
+    if: failure() && github.event.inputs.reset == 'true'
+    runs-on: [self-hosted, management]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+      TF_VAR_pve_api:       https://192.168.50.2:8006/api2/json
+      TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass:      ${{ secrets.PVE_PROD_PASS }}
+      TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+    steps:
+      - name: Collect failure logs from PBS CT
+        run: |
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          mkdir -p failure-logs
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 \
+            "pct exec ${PBS_VMID} -- journalctl -n 200 --no-pager 2>/dev/null || echo '(journal unavailable)'" \
+            > failure-logs/pbs-${PBS_VMID}.log 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pbs-failure-run${{ github.run_id }}
+          path: failure-logs/
+          if-no-files-found: warn
+
+      - name: Terraform Destroy
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/pbs destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.tfstate || true
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.2 \
+            "pct stop ${PBS_VMID} 2>/dev/null || true; pct destroy ${PBS_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/pbs/terraform.tfstate

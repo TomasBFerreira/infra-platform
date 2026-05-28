@@ -36,6 +36,7 @@ Runner state (singletons, no slot rotation):
 | `secret/ssh_keys/sso_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/ssh_keys/worker_node_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/ssh_keys/github_runner_worker` | `private_key`, `public_key` | Manual setup |
+| `secret/ssh_keys/pbs_worker` | `private_key`, `public_key` | Manual setup (one-off, 2026-05-28; consumed by `pbs_pipeline.yml`) |
 | `secret/ssh_keys/rancher_worker` | `private_key`, `public_key` | Manual setup |
 | `secret/ssh_keys/traefik_worker` | `private_key`, `public_key` | `seed-network-split-ssh-keys.yml` workflow (one-off, 2026-05-19) |
 | `secret/ssh_keys/adguard_worker` | `private_key`, `public_key` | `seed-network-split-ssh-keys.yml` workflow (one-off, 2026-05-19) |
@@ -64,6 +65,7 @@ Runner state (singletons, no slot rotation):
 | `secret/adguard/<env>/active-slot` | `slot, vmid, ip` | adguard pipeline (network-vm split, 2026-05-19) |
 | `secret/cloudflared/<env>/active-slot` | `slot, vmid, ip` | cloudflared pipeline (network-vm split — reserved; auto-created on first deploy) |
 | `secret/network-vm/prod/active-slot` | `slot, vmid, ip` | network-vm pipeline |
+| `secret/pbs/cluster-storage` | `server, datastore, username, token_secret, fingerprint` | pbs pipeline — used by `pvesm add pbs` on all cluster nodes |
 | `secret/sso/dev/active-slot` | `slot, vmid, ip` | SSO pipeline |
 | `secret/sso/prod/active-slot` | `slot, vmid, ip` | SSO pipeline |
 

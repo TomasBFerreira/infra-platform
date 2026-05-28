@@ -596,3 +596,52 @@ What still applies: Rule #3 (worker-node-bound), Rule #6 (SSO unless explicitly 
 4. Run **network-vm pipeline** for the environment → sets up Traefik + cloudflared
 5. Run **SSO pipeline** for the environment → deploys Authentik, stores OIDC creds
 6. Run **configure-vault-oidc** for the environment → wires up OIDC login
+
+## Proxmox Backup Server (PBS) is down / not backing up
+
+PBS lives at CT 103 / `192.168.50.103` on betsy, with the datastore on the 10 TB HDD bind-mounted at `/backup-storage`. The pipeline is `pbs_pipeline.yml`.
+
+### Quick health check
+```bash
+# From any cluster node:
+pvesm status | grep pbs-storage          # active / inactive
+ssh root@192.168.50.103 'proxmox-backup-manager datastore list'
+ssh root@192.168.50.103 'df -h /backup-storage'
+
+# Last backup time per CT (cluster-wide):
+ssh root@192.168.50.103 'proxmox-backup-manager task list --limit 30'
+```
+
+### If `pvesm status` shows `pbs-storage` inactive
+1. Ping the CT: `ping 192.168.50.103`. If unreachable, `pct start 103` on betsy.
+2. From the CT: `systemctl status proxmox-backup-proxy`. If not running, `systemctl restart proxmox-backup proxmox-backup-proxy`.
+3. Verify the fingerprint in `/etc/pve/storage.cfg` matches `proxmox-backup-manager cert info | grep Fingerprint` on the CT. If they differ (e.g. cert was re-issued), the storage will be inactive. Fix: re-run `pbs_pipeline.yml` (the `register-storage` job updates the fingerprint).
+4. Test connectivity from a PVE node to PBS port 8007: `curl -k https://192.168.50.103:8007/`.
+
+### If the bind-mount is missing inside the CT
+Symptoms: ansible fails with "/backup-storage missing", or `pct exec 103 -- df -h /backup-storage` returns nothing.
+```bash
+# On betsy, check the mp0 line in the CT config:
+grep '^mp0:' /etc/pve/lxc/103.conf
+# Should read:
+# mp0: /mnt/backup-storage,mp=/backup-storage,backup=0
+
+# Re-apply via the pipeline:
+gh workflow run pbs_pipeline.yml --repo TomasBFerreira/infra-platform
+# or directly:
+pct set 103 -mp0 /mnt/backup-storage,mp=/backup-storage,backup=0
+pct reboot 103
+```
+
+### Rebuilding the CT from scratch
+The bind-mounted datastore survives a CT rebuild. PBS will re-recognise the existing `.chunks` on first start.
+```bash
+gh workflow run pbs_pipeline.yml --repo TomasBFerreira/infra-platform -f reset=true
+```
+**Warning:** `reset=true` rotates the API token, which invalidates the secret cached in `secret/pbs/cluster-storage`. The pipeline writes the new token automatically — but if `register-storage` fails partway, all 3 PVE nodes will lose backup access until it's re-run.
+
+### How the pipeline differs from blue/green services
+- Single-slot per rule #5 exception (see CLAUDE.md).
+- Runs on `[self-hosted, management]` (CT 200) — not the env runner — because PBS is cluster-wide infrastructure.
+- No `resolve-slots` / `flip-active` / `teardown-old-active`. State file `terraform.tfstate` (no `${ENV}` suffix).
+- `cleanup-on-failure` only runs when `reset=true` was the trigger — accidental partial-pipeline failures should NOT auto-destroy the running PBS.

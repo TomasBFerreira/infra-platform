@@ -1,0 +1,210 @@
+---
+- name: PBS CT setup
+  hosts: all
+  become: yes
+
+  vars:
+    pbs_datastore_name: "backup-storage"
+    pbs_datastore_path: "/backup-storage"
+    pbs_admin_user: "tomas@pbs"
+
+  tasks:
+    # ── Wait for cloud-init / first-boot to settle ──────────────────────────
+    - name: Wait for dpkg lock to release
+      shell: |
+        for i in $(seq 1 60); do
+          if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+            exit 0
+          fi
+          sleep 2
+        done
+        exit 1
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install base dependencies
+      apt:
+        name:
+          - curl
+          - gnupg
+          - ca-certificates
+          - lsb-release
+        state: present
+
+    # ── Standard users — appadm + tomas (rule #11) ───────────────────────────
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
+    # ── Proxmox PBS no-subscription repo ────────────────────────────────────
+    # No enterprise subscription on this homelab — use the no-subscription repo.
+    # The release key lives at the canonical Proxmox URL.
+    - name: Add Proxmox release key
+      get_url:
+        url: https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg
+        dest: /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
+        mode: '0644'
+
+    - name: Add PBS no-subscription apt repository
+      copy:
+        dest: /etc/apt/sources.list.d/pbs-no-subscription.list
+        content: |
+          deb http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription
+        mode: '0644'
+
+    - name: Remove enterprise repo if present (we don't have a subscription)
+      file:
+        path: /etc/apt/sources.list.d/pbs-enterprise.list
+        state: absent
+
+    - name: Install proxmox-backup-server
+      apt:
+        name: proxmox-backup-server
+        state: present
+        update_cache: yes
+
+    # ── Datastore configuration ─────────────────────────────────────────────
+    # /backup-storage is bind-mounted from the host (/mnt/backup-storage on
+    # betsy → the 10 TB HDD). The mount is configured at the LXC level via
+    # `pct set ... -mp0 ...` in the pipeline before this playbook runs.
+
+    - name: Verify datastore mount point is present
+      stat:
+        path: "{{ pbs_datastore_path }}"
+      register: datastore_mp
+
+    - name: Fail if datastore mount is missing
+      fail:
+        msg: |
+          {{ pbs_datastore_path }} is not present inside the CT. The pipeline
+          must have configured the host bind-mount via `pct set ... -mp0` before
+          this playbook ran. Check the `configure-mount` job in pbs_pipeline.yml.
+      when: not datastore_mp.stat.exists
+
+    - name: Ensure datastore dir is writable by backup user
+      file:
+        path: "{{ pbs_datastore_path }}"
+        owner: backup
+        group: backup
+        mode: '0755'
+        state: directory
+
+    - name: Check if datastore is already registered with PBS
+      command: proxmox-backup-manager datastore list --output-format json
+      register: datastore_list
+      changed_when: false
+
+    - name: Create PBS datastore
+      command: >
+        proxmox-backup-manager datastore create
+        {{ pbs_datastore_name }} {{ pbs_datastore_path }}
+        --comment "Cluster backup target — bind-mount of /mnt/backup-storage on betsy"
+      when: pbs_datastore_name not in (datastore_list.stdout | from_json | map(attribute='name') | list)
+
+    # ── API user for cluster nodes ──────────────────────────────────────────
+    # Each PVE node uses this user (via API token) to push backups.
+
+    - name: Check if pbs-pve user exists
+      command: proxmox-backup-manager user list --output-format json
+      register: pbs_user_list
+      changed_when: false
+
+    - name: Create pbs-pve@pbs user for PVE nodes
+      command: >
+        proxmox-backup-manager user create pbs-pve@pbs
+        --password {{ pbs_pve_password }}
+        --comment "Service account used by PVE nodes to write backups"
+      when: "'pbs-pve@pbs' not in (pbs_user_list.stdout | from_json | map(attribute='userid') | list)"
+      no_log: true
+
+    - name: Grant pbs-pve@pbs DatastoreBackup permission
+      command: >
+        proxmox-backup-manager acl update /datastore/{{ pbs_datastore_name }}
+        DatastoreBackup --auth-id pbs-pve@pbs
+      changed_when: false
+
+    # ── API token for non-interactive auth ──────────────────────────────────
+    # PVE storage.cfg uses the API token rather than the password.
+
+    - name: Check if pbs-pve API token exists
+      command: proxmox-backup-manager user list-tokens pbs-pve@pbs --output-format json
+      register: pbs_token_list
+      changed_when: false
+
+    - name: Create pbs-pve API token
+      command: >
+        proxmox-backup-manager user generate-token pbs-pve@pbs pve-cluster
+        --output-format json
+      register: pbs_token_create
+      when: "'pbs-pve@pbs!pve-cluster' not in (pbs_token_list.stdout | from_json | map(attribute='tokenid') | list)"
+      no_log: true
+
+    - name: Save API token secret for pipeline pickup
+      copy:
+        content: "{{ pbs_token_create.stdout | from_json | json_query('value') }}"
+        dest: /root/pbs-pve-token-secret.txt
+        mode: '0400'
+      when: pbs_token_create.changed
+      no_log: true
+
+    - name: Grant token DatastoreBackup permission
+      command: >
+        proxmox-backup-manager acl update /datastore/{{ pbs_datastore_name }}
+        DatastoreBackup --auth-id 'pbs-pve@pbs!pve-cluster'
+      changed_when: false
+
+    # ── Fingerprint capture ─────────────────────────────────────────────────
+    # PVE storage.cfg references PBS by fingerprint. The pipeline reads this
+    # back over SSH after the playbook completes.
+
+    - name: Capture PBS server fingerprint
+      shell: |
+        proxmox-backup-manager cert info | awk -F: '/Fingerprint/ {gsub(/^ +/, "", $0); print substr($0, index($0,":")+2)}'
+      register: pbs_fingerprint
+      changed_when: false
+
+    - name: Save fingerprint for pipeline pickup
+      copy:
+        content: "{{ pbs_fingerprint.stdout }}"
+        dest: /root/pbs-fingerprint.txt
+        mode: '0444'
+
+    # ── Garbage collection + verify schedules ───────────────────────────────
+    # Daily GC reclaims space from removed snapshots; weekly verify catches
+    # bit-rot. Schedules are PBS calendar-event syntax.
+
+    - name: Configure datastore GC schedule (daily 03:30)
+      command: >
+        proxmox-backup-manager datastore update {{ pbs_datastore_name }}
+        --gc-schedule "03:30"
+      changed_when: false
+
+    - name: Configure datastore verify schedule (weekly Sun 05:00)
+      command: >
+        proxmox-backup-manager datastore update {{ pbs_datastore_name }}
+        --verify-schedule "sun 05:00"
+      changed_when: false
+
+    - name: Show summary
+      debug:
+        msg: |
+          PBS installed and configured.
+          Datastore: {{ pbs_datastore_name }} at {{ pbs_datastore_path }}
+          API user:  pbs-pve@pbs
+          API token: pbs-pve@pbs!pve-cluster (secret in /root/pbs-pve-token-secret.txt)
+          Fingerprint: in /root/pbs-fingerprint.txt
