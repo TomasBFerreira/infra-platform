@@ -48,7 +48,7 @@ jobs:
       TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
       TF_VAR_pve_pass:      ${{ secrets.PVE_PROD_PASS }}
       TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-      TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
       TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
     steps:
       - name: Checkout code
@@ -157,7 +157,7 @@ jobs:
       - name: Fetch PBS SSH key from bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           set -o pipefail
           vault kv get -field=private_key secret/ssh_keys/pbs_worker \
@@ -199,7 +199,7 @@ jobs:
       - name: Save fingerprint + token in bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           FINGERPRINT=$(cat /tmp/pbs-out/fingerprint.txt)
           TOKEN_SECRET=$(cat /tmp/pbs-out/token.txt 2>/dev/null || true)
@@ -235,7 +235,7 @@ jobs:
       - name: Pull fingerprint + token from vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           FINGERPRINT=$(vault kv get -field=fingerprint secret/pbs/cluster-storage)
           TOKEN_SECRET=$(vault kv get -field=token_secret secret/pbs/cluster-storage)
@@ -309,7 +309,7 @@ jobs:
       TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
       TF_VAR_pve_pass:      ${{ secrets.PVE_PROD_PASS }}
       TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-      TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+      TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
       TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
     steps:
       - name: Collect failure logs from PBS CT
