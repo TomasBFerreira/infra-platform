@@ -11,7 +11,9 @@ Every new app/service being onboarded must satisfy all of the following before i
 
 3. **Deploy on a worker node or static host** — must be provisioned on a Proxmox worker node (benedict/heaton/betsy) or a designated static host. Ad-hoc deployments directly on the hypervisor are not allowed.
 4. **VMID and IP registration** — claim the next available VMID slot following the `1xx` (prod) / `2xx` (dev) / `3xx` (QA) prefix scheme and update the assignment table in this file. No unregistered or ad-hoc IPs.
-5. **Blue/green pipeline** — every service must have a pipeline with all 6 standard jobs in order: `resolve-slots` → `terraform-staging` → `ansible-staging` → `flip-active` → `teardown-old-active` → `cleanup-on-failure`. Single-slot deployments are not allowed. Pipelines must use the shared env runner via `runs-on: [self-hosted, <env>]` (e.g. `[self-hosted, dev]`). Do not assume a personal dev machine or ad-hoc host. **Exception:** the `github-runner` pipeline uses `runs-on: [self-hosted, management]` (CT 200) so it can rebuild the env runner even after a full env teardown — never change it back to the env runner label.
+5. **Blue/green pipeline** — every service must have a pipeline with all 6 standard jobs in order: `resolve-slots` → `terraform-staging` → `ansible-staging` → `flip-active` → `teardown-old-active` → `cleanup-on-failure`. Single-slot deployments are not allowed. Pipelines must use the shared env runner via `runs-on: [self-hosted, <env>]` (e.g. `[self-hosted, dev]`). Do not assume a personal dev machine or ad-hoc host. **Exceptions** (single-slot, `runs-on: [self-hosted, management]`):
+   - `github-runner` — must rebuild the env runner even after a full env teardown; never flip back to the env-runner label.
+   - `pbs` — backup datastore continuity. Blue/green would either lose the backup chain on each flip or require detaching+reattaching the 10 TB host bind-mount with brief downtime on every PBS change, for no operational benefit (one PBS serves the whole cluster, not per-env).
 6. **Authentik SSO** — the service must be gated behind Authentik via the Traefik `forwardAuth` middleware (`authentik-dev` / `authentik-prod`). Unauthenticated public exposure is not allowed unless explicitly approved.
 7. **Cloudflare CNAME via traefik-gitops** — routing and the public CNAME must be added to the `TomasBFerreira/traefik-gitops` repo (`config/dynamic/services.yml`). Do not configure ingress directly in pipelines or hardcode hostnames elsewhere.
 8. **Vault secrets structure** — SSH keys go in the bootstrap vault at `secret/ssh_keys/<service>_worker`. Application secrets go in the env-specific vault. All secret paths must be documented in `docs/vaults.md`.
@@ -91,6 +93,9 @@ Current GPU nodes:
 - rancher-prod: VMID 102, IP 192.168.10.2 (betsy)
 - rancher-dev:  VMID 202, IP 192.168.20.2 (benedict)
 - rancher-qa:   VMID 302, IP 192.168.30.2 (heaton)
+
+**Proxmox Backup Server — cluster-wide singleton (management subnet):**
+- pbs: VMID 103, IP 192.168.50.103 (betsy — the 10 TB backup HDD is attached there). Bind-mounts `/mnt/backup-storage` into the CT at `/backup-storage` as the PBS datastore. Single-slot per rule #5 exception. Registered in `pvesm` as `pbs-storage` (cluster-wide). API token credentials in bootstrap vault at `secret/pbs/cluster-storage`.
 
 ## Vault architecture
 
