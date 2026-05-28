@@ -147,16 +147,17 @@
       changed_when: false
 
     - name: Create pbs-pve API token
+      # `generate-token` does NOT accept --output-format; it always prints
+      # `Result: { ... }` to stdout. Strip the prefix to parse the JSON.
       command: >
         proxmox-backup-manager user generate-token pbs-pve@pbs pve-cluster
-        --output-format json
       register: pbs_token_create
       when: "'pbs-pve@pbs!pve-cluster' not in (pbs_token_list.stdout | from_json | map(attribute='tokenid') | list)"
       no_log: true
 
     - name: Save API token secret for pipeline pickup
       copy:
-        content: "{{ pbs_token_create.stdout | from_json | json_query('value') }}"
+        content: "{{ (pbs_token_create.stdout | regex_replace('^Result:\\s*', '') | from_json).value }}"
         dest: /root/pbs-pve-token-secret.txt
         mode: '0400'
       when: pbs_token_create.changed
