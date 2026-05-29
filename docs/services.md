@@ -113,3 +113,36 @@ sudo ./svc.sh status   # check
 sudo ./svc.sh start    # start
 sudo ./svc.sh stop     # stop
 ```
+
+---
+
+## Proxmox Backup Server (CT 103)
+
+**Purpose:** cluster-wide backup target. One PBS serves all three Proxmox nodes; the datastore is the 10 TB HDD physically attached to betsy. Backs up every CT and worker VM nightly.
+
+| | Value |
+|-|-------|
+| Node | betsy |
+| VMID | 103 |
+| IP | 192.168.50.103 (mgmt subnet) |
+| Port | 8007 (PBS UI/API) |
+| Datastore | `backup-storage` at `/backup-storage` (bind-mount of `/mnt/backup-storage` on betsy) |
+| Underlying disk | `sdb`, 9.1 TB ext4, LVM `backup-vg/backup-storage` (2.5 TB LV) |
+| API user | `pbs-pve@pbs` with token `pve-cluster` (role `DatastorePowerUser`) |
+| Credentials | bootstrap vault `secret/pbs/cluster-storage` (server, datastore, username, token_secret, fingerprint) |
+| SSH key | bootstrap vault `secret/ssh_keys/pbs_worker` |
+| Backup schedule | `jobs.cfg: pbs-nightly-all` — all=1, exclude `999,9000,9001,9002`, 02:00 |
+| Retention | `keep-last=3,keep-daily=7,keep-weekly=4,keep-monthly=6` |
+| GC | daily 03:30 |
+| Verify | weekly Sun 05:00 (`verify-job: backup-storage-weekly`) |
+| Pipeline | `pbs_pipeline.yml` (`runs-on: [self-hosted, management]`) |
+
+**Single-slot deployment.** Documented exception to the blue/green rule, alongside `github-runner`. Reason: the backup datastore is the cluster's only authoritative restore source; blue/green flips would either lose the backup chain or require detaching/reattaching the host bind-mount on every change for no operational benefit. The datastore lives on the host disk and survives any CT rebuild — the pipeline's `reset=true` input is safe to use.
+
+**Why on betsy specifically:** the 10 TB HDD is physically attached to betsy. PBS must run on the same host to use a bind-mount (the cleanest, fastest path to the datastore). All three PVE nodes reach the PBS API over the mgmt subnet.
+
+**Privileged CT.** PBS writes as uid 34 (`backup`); unprivileged-LXC uid remapping makes the host-side dir permissions fight ugly. Privileged is the standard pattern for storage-handling CTs in this homelab.
+
+**Off-site sync** (planned): Backblaze B2 mirror of the datastore — tracked at `/app/issues/backblaze-backup.md`. Pre-requisite is this PBS, which is now in place.
+
+**Health check + recovery:** see `docs/runbooks.md § Proxmox Backup Server (PBS) is down / not backing up`.

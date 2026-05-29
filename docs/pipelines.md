@@ -221,6 +221,81 @@ The github-runner pipeline provisions CT 201 (dev) / CT 101 (prod). If it ran on
 
 ---
 
+## PBS Pipeline
+
+**File:** `.github/workflows/pbs_pipeline.yml`
+**Purpose:** Provision / reconfigure the cluster-wide Proxmox Backup Server (singleton, not blue/green).
+**Runs on:** `[self-hosted, management]` (CT 200 — bootstrap vault)
+
+### Why single-slot
+
+PBS holds the cluster's only authoritative backup chain. Blue/green flips would either lose the chain on each deploy or require detaching/reattaching the 10 TB host bind-mount for no benefit. Documented as a rule #5 exception alongside `github-runner` (see top-of-file Rules section). The bind-mounted datastore survives any CT rebuild — `reset=true` is safe.
+
+### Why on the management runner
+
+PBS provisions itself on betsy via the PVE API and then runs on betsy as CT 103. If the pipeline ran on the env runner, the env runner could end up being one of the things PBS backs up while the pipeline is running. The management runner is the stable anchor that survives all env state.
+
+### Jobs
+
+| Job | What it does |
+|-----|-------------|
+| `terraform-apply` | Provisions CT 103 on betsy (privileged, debian-12, 2 cpu / 2 GB RAM / 8 GB root). State at `terraform.tfstate`. |
+| `configure-mount` | SSHes to betsy, sets `mp0: /mnt/backup-storage,mp=/backup-storage,backup=0` in `/etc/pve/lxc/103.conf`, reboots the CT. Idempotent. |
+| `ansible-setup` | Installs `proxmox-backup-server` from the no-subscription repo, creates the `backup-storage` datastore (chunkstore init), the `pbs-pve@pbs` user + `pve-cluster` API token, GC daily 03:30, weekly verify-job Sun 05:00. Captures the cert fingerprint + token to `/root/`. |
+| `register-storage` | Pulls fingerprint + token from bootstrap vault. SSHes to betsy; `pvesm remove pbs-storage` (cleans the dead .102 entry), then `pvesm add pbs pbs-storage --server 192.168.50.103 --datastore backup-storage --username 'pbs-pve@pbs!pve-cluster' --fingerprint <…> --content backup --prune-backups 'keep-last=3,keep-daily=7,keep-weekly=4,keep-monthly=6'`. PVE cluster filesystem propagates to benedict + heaton. Also replaces the broken vzdump job with `pbs-nightly-all` (all=1, exclude `999,9000,9001,9002`, 02:00). |
+| `cleanup-on-failure` | Destroys CT 103 + state file ONLY when triggered with `reset=true`. Accidental partial failures on a re-run do NOT auto-destroy a healthy live PBS. |
+
+### When to run
+
+- Initial PBS bring-up (once).
+- After PBS image upgrade (re-run normally — idempotent).
+- After certificate expiry (rotates fingerprint; re-registers in `pvesm`).
+- Disaster: PBS CT lost. Run with `reset=true` to recreate; the datastore on `/mnt/backup-storage` survives.
+
+### Inputs
+
+| Input | Description |
+|-------|-------------|
+| `reset` | `true` destroys + recreates the CT before applying (datastore persists). Default `false`. |
+
+### Recovery and health-check
+
+See `docs/runbooks.md § Proxmox Backup Server (PBS) is down / not backing up`.
+
+---
+
+## CMDB Record Workflow
+
+**File:** `.github/workflows/cmdb-record.yml`
+**Purpose:** Off-cluster CMDB writes for sessions / automation that can't authenticate to the Authentik-gated public endpoint.
+**Runs on:** `[self-hosted, management]` (CT 200)
+
+The dev `ops-portal-cmdb` is the authoritative CMDB; events propagate to other envs through the normal sync path. The workflow SSHes to benedict (the dev PVE node, which has direct vmbr20 access to the dev worker) and POSTs to `http://192.168.20.11:30092/api/cmdb/...`. Bypasses Traefik forwardAuth — the runner identity is the trust boundary, mirroring the `github-runner` pattern.
+
+### Three kinds
+
+| Kind | Endpoint | Required inputs |
+|------|----------|-----------------|
+| `change` | `POST /api/cmdb/changes` | `title`; recommend `description`, `affected_cis`, `change_type`, `risk`, `status` |
+| `problem-open` | `POST /api/cmdb/problems` | `title`, `severity`; recommend `description`, `affected_cis` |
+| `problem-close` | `POST /api/cmdb/problems/{problem_id}/close` | `problem_id`, `resolution` |
+
+Every record's description gets a trailing `Recorded by: <run url>` so audits trace back to GHA.
+
+### When to use
+
+- Cleaning up a Claude-session change that landed via direct kubectl / SSH / SQL / pct (mandated by CMDB-discipline rule).
+- Recording incidents found during normal work where there's no service to publish from.
+- Closing a known problem after fixing it.
+
+For changes triggered from inside an ops-portal-* service, prefer publishing `cmdb.change.requested` on NATS — this workflow is the fallback path.
+
+### Recovery / runbook
+
+See `docs/runbooks.md § Recording a CMDB change from outside the cluster`.
+
+---
+
 ## Helper / Utility Workflows
 
 | Workflow | Purpose |
