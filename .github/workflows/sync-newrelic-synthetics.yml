@@ -1,0 +1,81 @@
+name: Sync New Relic synthetics
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview changes without applying them"
+        required: false
+        default: true
+        type: boolean
+      prune:
+        description: "Delete repo-managed monitors missing from the config"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/sync-newrelic-synthetics.yml"
+      - "monitoring/newrelic/**"
+      - "scripts/sync_newrelic_synthetics.py"
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: sync-newrelic-synthetics
+  cancel-in-progress: false
+
+env:
+  VAULT_ADDR: http://192.168.50.200:8200
+  VAULT_AUTH_PATH: jwt-github
+  VAULT_ROLE: github-actions-infra-platform-prod
+
+jobs:
+  sync:
+    runs-on:
+      - self-hosted
+      - prod
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read New Relic credentials from Vault
+        id: vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          path: ${{ env.VAULT_AUTH_PATH }}
+          role: ${{ env.VAULT_ROLE }}
+          exportToken: false
+          secrets: |
+            secret/monitoring/shared/newrelic user_api_key | NEWRELIC_API_KEY ;
+            secret/monitoring/shared/newrelic account_id | NEWRELIC_ACCOUNT_ID ;
+            secret/monitoring/shared/newrelic region | NEWRELIC_REGION ;
+
+      - name: Validate desired-state file
+        run: python3 scripts/sync_newrelic_synthetics.py --config monitoring/newrelic/monitors.json --validate
+
+      - name: Sync monitors
+        env:
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          INPUT_PRUNE: ${{ github.event.inputs.prune }}
+        run: |
+          set -euo pipefail
+          args=(--config monitoring/newrelic/monitors.json)
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${INPUT_DRY_RUN:-}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${INPUT_PRUNE:-}" == "true" ]]; then
+            args+=(--allow-delete)
+          fi
+
+          python3 scripts/sync_newrelic_synthetics.py "${args[@]}"

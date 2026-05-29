@@ -1,0 +1,81 @@
+{
+  "defaults": {
+    "namePrefix": "Homelab | ",
+    "frequencyMinutes": 5,
+    "locations": [
+      "AWS_US_EAST_1"
+    ],
+    "status": "ENABLED"
+  },
+  "alerts": {
+    "policy": {
+      "enabled": true,
+      "name": "Homelab | Internet synthetic monitors",
+      "incidentPreference": "PER_POLICY"
+    },
+    "conditionDefaults": {
+      "runbookUrl": "https://wikijs.databaes.net/operations/runbooks"
+    }
+  },
+  "monitors": [
+    {
+      "slug": "landing-page",
+      "name": "databaes.net",
+      "mode": "simple",
+      "enabled": true,
+      "alert": true,
+      "url": "https://databaes.net",
+      "notes": "Primary public front door. If this fails, treat it as an internet-reachability incident."
+    },
+    {
+      "slug": "signup-page",
+      "name": "signup.databaes.net",
+      "mode": "simple",
+      "enabled": true,
+      "alert": true,
+      "url": "https://signup.databaes.net",
+      "notes": "Anonymous public page with separate deploy path from the landing page."
+    },
+    {
+      "slug": "authentik",
+      "name": "auth.databaes.net",
+      "mode": "simple",
+      "enabled": true,
+      "alert": true,
+      "url": "https://auth.databaes.net",
+      "notes": "SSO front door. Critical because it gates most protected apps."
+    },
+    {
+      "slug": "ops-portal",
+      "name": "ops.databaes.net",
+      "mode": "probe-endpoint",
+      "enabled": false,
+      "url": "https://ops.databaes.net/synthetic/ping",
+      "notes": "Behind SSO. Add a dedicated probe endpoint plus Vault-backed token before enabling."
+    },
+    {
+      "slug": "wikijs",
+      "name": "wikijs.databaes.net",
+      "mode": "probe-endpoint",
+      "enabled": false,
+      "url": "https://wikijs.databaes.net/synthetic/ping",
+      "notes": "Behind SSO. Add a dedicated probe endpoint plus Vault-backed token before enabling."
+    },
+    {
+      "slug": "grafana",
+      "name": "grafana.databaes.net",
+      "mode": "probe-endpoint",
+      "enabled": false,
+      "url": "https://grafana.databaes.net/synthetic/ping",
+      "notes": "Behind SSO. Add a dedicated probe endpoint plus Vault-backed token before enabling."
+    },
+    {
+      "slug": "tomajflix",
+      "name": "tomajflix.app",
+      "mode": "probe-endpoint",
+      "enabled": false,
+      "url": "https://tomajflix.app/synthetic/ping",
+      "notes": "Behind SSO. Add a dedicated probe endpoint plus Vault-backed token before enabling."
+    }
+  ]
+}
