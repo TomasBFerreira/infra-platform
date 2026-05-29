@@ -218,13 +218,14 @@ jobs:
           echo "$PAYLOAD" | python3 -m json.tool
 
           # Pipe the payload over SSH; benedict has direct vmbr20 access to
-          # the dev worker. -- captures the HTTP code via curl's -w.
+          # the dev worker. curl -w '%{http_code}' has no trailing newline,
+          # so emit it after, then a separator before the body.
           PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64 -w0)
           RESULT=$(ssh -o StrictHostKeyChecking=no root@${CMDB_HOP_HOST} \
-            "echo '$PAYLOAD_B64' | base64 -d | curl -s -o /tmp/cmdb_resp.json -w '%{http_code}' -X POST '$URL' -H 'Content-Type: application/json' --data-binary @-; echo --SEP--; cat /tmp/cmdb_resp.json")
+            "echo '$PAYLOAD_B64' | base64 -d | curl -s -o /tmp/cmdb_resp.json -w '%{http_code}\n' -X POST '$URL' -H 'Content-Type: application/json' --data-binary @-; echo '--SEP--'; cat /tmp/cmdb_resp.json")
 
-          HTTP_CODE=$(echo "$RESULT" | sed -n '1p')
-          BODY=$(echo "$RESULT" | sed -n '/--SEP--/,$p' | tail -n +2)
+          HTTP_CODE=$(echo "$RESULT" | sed -n '1p' | tr -d '[:space:]')
+          BODY=$(echo "$RESULT" | sed -n '/^--SEP--$/,$p' | tail -n +2)
 
           echo "HTTP $HTTP_CODE"
           echo "$BODY"
