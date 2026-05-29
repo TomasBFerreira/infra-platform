@@ -625,7 +625,7 @@ gh workflow run cmdb-record.yml --repo TomasBFerreira/infra-platform \
   -f resolution="Bumped CPU on CT 395 and added systemd-tmpfiles cleanup"
 ```
 
-The workflow runs on `[self-hosted, management]` (CT 200) and POSTs directly to `http://192.168.20.11:30092/api/cmdb/...` (dev worker NodePort). It bypasses Traefik forwardAuth — the runner identity is the trust boundary. Prefer `cmdb.change.requested` NATS publishes from inside ops-portal-* services; this workflow is the fallback path.
+The workflow runs on `[self-hosted, management]` (CT 200) and hops via SSH to benedict (192.168.50.4) — the dev PVE node has direct vmbr20 access to the worker — then POSTs to `http://192.168.20.11:30092/api/cmdb/...`. It bypasses Traefik forwardAuth; the runner identity is the trust boundary. Prefer `cmdb.change.requested` NATS publishes from inside ops-portal-* services; this workflow is the fallback path.
 
 The dev CMDB is the source of truth; events propagate to prod CMDB through the normal sync path.
 
