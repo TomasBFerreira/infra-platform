@@ -1,0 +1,226 @@
+name: CMDB Record (change/problem)
+
+# Records a CMDB entry from outside the cluster. Use when a session can't
+# hit the Authentik-gated public endpoint (e.g. Claude sessions, ad-hoc
+# automation, post-hoc retro entries).
+#
+# Hits the dev ops-portal-cmdb directly via NodePort (bypasses Traefik
+# forwardAuth — the runner identity is the trust boundary). Dev is the
+# canonical CMDB; prod CMDB is downstream of the same events. The
+# management runner CT has a route to the dev k3s worker via benedict.
+#
+# For changes recorded from inside an ops-portal-* service, prefer the
+# `cmdb.change.requested` NATS subject — this workflow is the off-cluster
+# fallback.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 'Which CMDB record to write'
+        required: true
+        default: 'change'
+        type: choice
+        options:
+          - change
+          - problem-open
+          - problem-close
+      title:
+        description: 'Title (one line)'
+        required: true
+      description:
+        description: 'Description (multi-line OK)'
+        required: false
+        default: ''
+      affected_cis:
+        description: 'Affected CI names — comma-separated (e.g. pbs,betsy)'
+        required: false
+        default: ''
+      requested_by:
+        description: 'Actor — defaults to the workflow run id'
+        required: false
+        default: ''
+      # [change] fields
+      change_type:
+        description: '[change] standard | normal | emergency | auto'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - standard
+          - normal
+          - emergency
+          - auto
+      risk:
+        description: '[change] low | medium | high'
+        required: false
+        default: 'low'
+        type: choice
+        options:
+          - low
+          - medium
+          - high
+      status:
+        description: '[change] draft | completed (auto-record post-hoc = completed)'
+        required: false
+        default: 'completed'
+        type: choice
+        options:
+          - draft
+          - approved
+          - in_progress
+          - completed
+          - rolled_back
+          - cancelled
+      implementation_plan:
+        description: '[change] What was done (multi-line OK)'
+        required: false
+        default: ''
+      rollback_plan:
+        description: '[change] How to revert (multi-line OK)'
+        required: false
+        default: ''
+      # [problem-open] fields
+      severity:
+        description: '[problem-open] critical | warning | info'
+        required: false
+        default: 'warning'
+        type: choice
+        options:
+          - critical
+          - warning
+          - info
+      # [problem-close] fields
+      problem_id:
+        description: '[problem-close] CMDB problem ID'
+        required: false
+        default: ''
+      resolution:
+        description: '[problem-close] How it was resolved (multi-line OK)'
+        required: false
+        default: ''
+
+env:
+  CMDB_BASE: http://192.168.20.11:30092
+
+jobs:
+  record:
+    runs-on: [self-hosted, management]
+    steps:
+      - name: Sanity-check inputs for chosen kind
+        run: |
+          case "${{ github.event.inputs.kind }}" in
+            change)
+              [ -n "${{ github.event.inputs.title }}" ] || { echo "ERROR: title is required"; exit 1; }
+              ;;
+            problem-open)
+              [ -n "${{ github.event.inputs.title }}" ] || { echo "ERROR: title is required"; exit 1; }
+              ;;
+            problem-close)
+              [ -n "${{ github.event.inputs.problem_id }}" ] || { echo "ERROR: problem_id is required for problem-close"; exit 1; }
+              ;;
+          esac
+
+      - name: Health-check the CMDB endpoint
+        run: |
+          if ! curl -sf --max-time 5 "${CMDB_BASE}/healthz" >/dev/null; then
+            echo "ERROR: ${CMDB_BASE}/healthz unreachable — is the dev worker / cmdb pod up?"
+            exit 1
+          fi
+          echo "CMDB healthz OK"
+
+      - name: Build JSON payload and POST
+        env:
+          KIND:                ${{ github.event.inputs.kind }}
+          TITLE:               ${{ github.event.inputs.title }}
+          DESCRIPTION:         ${{ github.event.inputs.description }}
+          AFFECTED_CIS:        ${{ github.event.inputs.affected_cis }}
+          REQUESTED_BY:        ${{ github.event.inputs.requested_by }}
+          CHANGE_TYPE:         ${{ github.event.inputs.change_type }}
+          RISK:                ${{ github.event.inputs.risk }}
+          STATUS:              ${{ github.event.inputs.status }}
+          IMPLEMENTATION_PLAN: ${{ github.event.inputs.implementation_plan }}
+          ROLLBACK_PLAN:       ${{ github.event.inputs.rollback_plan }}
+          SEVERITY:            ${{ github.event.inputs.severity }}
+          PROBLEM_ID:          ${{ github.event.inputs.problem_id }}
+          RESOLUTION:          ${{ github.event.inputs.resolution }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          export ACTOR="${REQUESTED_BY:-cmdb-record-workflow/${{ github.run_id }}}"
+
+          # affected_cis comma-list → JSON array
+          export AFFECTED_JSON=$(python3 -c "
+          import json, os
+          raw = os.environ.get('AFFECTED_CIS', '').strip()
+          items = [x.strip() for x in raw.split(',') if x.strip()] if raw else []
+          print(json.dumps(items))
+          ")
+
+          # Description gets a trailing line linking back to this workflow run
+          # so future audits can find the GHA logs.
+          if [ -n "$DESCRIPTION" ]; then
+            export FULL_DESC="${DESCRIPTION}
+
+          Recorded by: ${RUN_URL}"
+          else
+            export FULL_DESC="Recorded by: ${RUN_URL}"
+          fi
+
+          case "$KIND" in
+            change)        URL="${CMDB_BASE}/api/cmdb/changes" ;;
+            problem-open)  URL="${CMDB_BASE}/api/cmdb/problems" ;;
+            problem-close) URL="${CMDB_BASE}/api/cmdb/problems/${PROBLEM_ID}/close" ;;
+            *) echo "ERROR: unknown kind=$KIND"; exit 1 ;;
+          esac
+
+          PAYLOAD=$(python3 <<'PYEOF'
+          import json, os
+          kind = os.environ['KIND']
+          if kind == 'change':
+              body = {
+                'title':               os.environ['TITLE'],
+                'description':         os.environ['FULL_DESC'],
+                'implementation_plan': os.environ.get('IMPLEMENTATION_PLAN',''),
+                'rollback_plan':       os.environ.get('ROLLBACK_PLAN',''),
+                'affected_cis':        json.loads(os.environ['AFFECTED_JSON']),
+                'status':              os.environ.get('STATUS','completed'),
+                'risk':                os.environ.get('RISK','low'),
+                'change_type':         os.environ.get('CHANGE_TYPE','auto'),
+                'requested_by':        os.environ['ACTOR'],
+              }
+          elif kind == 'problem-open':
+              body = {
+                'title':        os.environ['TITLE'],
+                'description':  os.environ['FULL_DESC'],
+                'severity':     os.environ.get('SEVERITY','warning'),
+                'status':       'open',
+                'affected_cis': json.loads(os.environ['AFFECTED_JSON']),
+                'created_by':   os.environ['ACTOR'],
+              }
+          else:  # problem-close
+              body = {
+                'resolution':  os.environ.get('RESOLUTION',''),
+                'resolved_by': os.environ['ACTOR'],
+              }
+          print(json.dumps(body))
+          PYEOF
+          )
+
+          echo "POST $URL"
+          echo "$PAYLOAD" | python3 -m json.tool
+
+          HTTP_CODE=$(curl -s -o /tmp/cmdb_resp.json -w '%{http_code}' \
+            -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            --data-binary "$PAYLOAD")
+
+          echo "HTTP $HTTP_CODE"
+          cat /tmp/cmdb_resp.json
+          echo
+
+          case "$HTTP_CODE" in
+            200|201|204) echo "Recorded."; exit 0 ;;
+            *)           echo "CMDB rejected the request."; exit 1 ;;
+          esac

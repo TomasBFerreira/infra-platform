@@ -597,6 +597,38 @@ What still applies: Rule #3 (worker-node-bound), Rule #6 (SSO unless explicitly 
 5. Run **SSO pipeline** for the environment → deploys Authentik, stores OIDC creds
 6. Run **configure-vault-oidc** for the environment → wires up OIDC login
 
+## Recording a CMDB change from outside the cluster
+
+The CMDB lives behind Authentik at `ops-dev.databaes.net/api/cmdb/*`, which off-cluster automation (Claude sessions, ad-hoc workflows) can't authenticate to. Use `cmdb-record.yml` to write through the dev NodePort instead.
+
+```bash
+# A retroactive change record
+gh workflow run cmdb-record.yml --repo TomasBFerreira/infra-platform \
+  -f kind=change \
+  -f title="Restored PBS on betsy" \
+  -f description="Replaced dead .102 entry with new CT 103" \
+  -f affected_cis="pbs,betsy" \
+  -f change_type=normal -f risk=low -f status=completed
+
+# Open a problem (something broken you can't fix immediately)
+gh workflow run cmdb-record.yml --repo TomasBFerreira/infra-platform \
+  -f kind=problem-open \
+  -f title="QA traefik flapping under load" \
+  -f severity=warning \
+  -f affected_cis="traefik-lxc-qa"
+
+# Close a known problem
+gh workflow run cmdb-record.yml --repo TomasBFerreira/infra-platform \
+  -f kind=problem-close \
+  -f problem_id=42 \
+  -f title="ignored" \
+  -f resolution="Bumped CPU on CT 395 and added systemd-tmpfiles cleanup"
+```
+
+The workflow runs on `[self-hosted, management]` (CT 200) and POSTs directly to `http://192.168.20.11:30092/api/cmdb/...` (dev worker NodePort). It bypasses Traefik forwardAuth — the runner identity is the trust boundary. Prefer `cmdb.change.requested` NATS publishes from inside ops-portal-* services; this workflow is the fallback path.
+
+The dev CMDB is the source of truth; events propagate to prod CMDB through the normal sync path.
+
 ## Proxmox Backup Server (PBS) is down / not backing up
 
 PBS lives at CT 103 / `192.168.50.103` on betsy, with the datastore on the 10 TB HDD bind-mounted at `/backup-storage`. The pipeline is `pbs_pipeline.yml`.
