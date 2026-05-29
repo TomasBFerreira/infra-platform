@@ -101,6 +101,11 @@ on:
         default: ''
 
 env:
+  # Reached via SSH hop through benedict (192.168.50.4) — the dev PVE node
+  # has direct vmbr20 access to the dev worker. The management runner CT
+  # 200 only has a default route via 192.168.50.1 which doesn't carry the
+  # 192.168.20.0/24 prefix.
+  CMDB_HOP_HOST: 192.168.50.4
   CMDB_BASE: http://192.168.20.11:30092
 
 jobs:
@@ -121,10 +126,11 @@ jobs:
               ;;
           esac
 
-      - name: Health-check the CMDB endpoint
+      - name: Health-check the CMDB endpoint via benedict
         run: |
-          if ! curl -sf --max-time 5 "${CMDB_BASE}/healthz" >/dev/null; then
-            echo "ERROR: ${CMDB_BASE}/healthz unreachable — is the dev worker / cmdb pod up?"
+          if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${CMDB_HOP_HOST} \
+            "curl -sf --max-time 5 ${CMDB_BASE}/healthz" >/dev/null; then
+            echo "ERROR: ${CMDB_BASE}/healthz unreachable via benedict — is the dev worker / cmdb pod up?"
             exit 1
           fi
           echo "CMDB healthz OK"
@@ -211,14 +217,17 @@ jobs:
           echo "POST $URL"
           echo "$PAYLOAD" | python3 -m json.tool
 
-          HTTP_CODE=$(curl -s -o /tmp/cmdb_resp.json -w '%{http_code}' \
-            -X POST "$URL" \
-            -H "Content-Type: application/json" \
-            --data-binary "$PAYLOAD")
+          # Pipe the payload over SSH; benedict has direct vmbr20 access to
+          # the dev worker. -- captures the HTTP code via curl's -w.
+          PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64 -w0)
+          RESULT=$(ssh -o StrictHostKeyChecking=no root@${CMDB_HOP_HOST} \
+            "echo '$PAYLOAD_B64' | base64 -d | curl -s -o /tmp/cmdb_resp.json -w '%{http_code}' -X POST '$URL' -H 'Content-Type: application/json' --data-binary @-; echo --SEP--; cat /tmp/cmdb_resp.json")
+
+          HTTP_CODE=$(echo "$RESULT" | sed -n '1p')
+          BODY=$(echo "$RESULT" | sed -n '/--SEP--/,$p' | tail -n +2)
 
           echo "HTTP $HTTP_CODE"
-          cat /tmp/cmdb_resp.json
-          echo
+          echo "$BODY"
 
           case "$HTTP_CODE" in
             200|201|204) echo "Recorded."; exit 0 ;;
