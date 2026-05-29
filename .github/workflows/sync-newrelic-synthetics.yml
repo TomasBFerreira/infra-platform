@@ -30,16 +30,10 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: sync-newrelic-synthetics
   cancel-in-progress: false
-
-env:
-  VAULT_ADDR: http://192.168.50.200:8200
-  VAULT_AUTH_PATH: jwt-github
-  VAULT_ROLE: github-actions-infra-platform-prod
 
 jobs:
   sync:
@@ -50,19 +44,40 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Read New Relic credentials from Vault
-        id: vault
-        uses: hashicorp/vault-action@v3
-        with:
-          url: ${{ env.VAULT_ADDR }}
-          method: jwt
-          path: ${{ env.VAULT_AUTH_PATH }}
-          role: ${{ env.VAULT_ROLE }}
-          exportToken: false
-          secrets: |
-            secret/monitoring/shared/newrelic user_api_key | NEWRELIC_API_KEY ;
-            secret/monitoring/shared/newrelic account_id | NEWRELIC_ACCOUNT_ID ;
-            secret/monitoring/shared/newrelic region | NEWRELIC_REGION ;
+      - name: Read New Relic credentials from prod Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_PROD_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_PROD_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          addr = os.environ["VAULT_ADDR"].rstrip("/")
+          token = os.environ["VAULT_TOKEN"]
+          request = urllib.request.Request(
+              f"{addr}/v1/secret/data/monitoring/shared/newrelic",
+              headers={"X-Vault-Token": token},
+          )
+
+          with urllib.request.urlopen(request, timeout=30) as response:
+              payload = json.load(response)
+
+          data = payload["data"]["data"]
+          github_env = os.environ["GITHUB_ENV"]
+
+          for source_field, env_name in (
+              ("user_api_key", "NEWRELIC_API_KEY"),
+              ("account_id", "NEWRELIC_ACCOUNT_ID"),
+              ("region", "NEWRELIC_REGION"),
+          ):
+              value = str(data[source_field])
+              print(f"::add-mask::{value}")
+              with open(github_env, "a", encoding="utf-8") as handle:
+                  handle.write(f"{env_name}={value}\n")
+          PY
 
       - name: Validate desired-state file
         run: python3 scripts/sync_newrelic_synthetics.py --config monitoring/newrelic/monitors.json --validate

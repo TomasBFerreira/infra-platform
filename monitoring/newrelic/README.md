@@ -49,7 +49,7 @@ Suggested Vault layout:
 `.github/workflows/sync-newrelic-synthetics.yml`:
 
 - validates the monitor inventory
-- reads the New Relic credentials from Vault
+- reads the New Relic credentials from prod Vault using the existing `VAULT_PROD_ADDR` and `VAULT_PROD_TOKEN` repo secrets
 - creates or updates repo-managed monitors
 - creates the shared alert policy if it does not exist
 - creates or updates synthetic alert conditions for enabled simple monitors
