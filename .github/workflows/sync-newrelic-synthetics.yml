@@ -1,6 +1,11 @@
 name: Sync New Relic synthetics
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/sync-newrelic-synthetics.yml'
+      - 'monitoring/newrelic/**'
+      - 'scripts/sync_newrelic_synthetics.py'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -70,7 +75,9 @@ jobs:
           set -euo pipefail
           args=(--config monitoring/newrelic/monitors.json)
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${INPUT_DRY_RUN:-}" == "true" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            args+=(--dry-run)
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${INPUT_DRY_RUN:-}" == "true" ]]; then
             args+=(--dry-run)
           fi
 
