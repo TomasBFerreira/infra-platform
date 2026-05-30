@@ -48,28 +48,28 @@ jobs:
 
       - name: Show wikijs users (read-only)
         run: |
-          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no ubuntu@${WORKER_IP} bash -s <<'REMOTE'
+          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no root@${WORKER_IP} bash -s <<'REMOTE'
             set -euo pipefail
-            DBPASS=$(sudo kubectl -n wikijs get secret wikijs-secrets -o jsonpath='{.data.db-pass}' | base64 -d)
+            DBPASS=$(kubectl -n wikijs get secret wikijs-secrets -o jsonpath='{.data.db-pass}' | base64 -d)
             echo '=== users ==='
-            sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+            kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
               psql -U wikijs -d wikijs -c \
               'SELECT id, email, name, "providerKey", "isActive" FROM users ORDER BY id;'
             echo '=== current group membership ==='
-            sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+            kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
               psql -U wikijs -d wikijs -c \
               'SELECT u.id, u.email, g.name AS group_name FROM users u LEFT JOIN "userGroups" ug ON ug."userId"=u.id LEFT JOIN groups g ON g.id=ug."groupId" ORDER BY u.id, g.id;'
           REMOTE
 
       - name: Grant Administrators role
         run: |
-          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no ubuntu@${WORKER_IP} bash -s "${EMAIL}" <<'REMOTE'
+          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no root@${WORKER_IP} bash -s "${EMAIL}" <<'REMOTE'
             set -euo pipefail
             EMAIL="$1"
-            DBPASS=$(sudo kubectl -n wikijs get secret wikijs-secrets -o jsonpath='{.data.db-pass}' | base64 -d)
+            DBPASS=$(kubectl -n wikijs get secret wikijs-secrets -o jsonpath='{.data.db-pass}' | base64 -d)
 
             # Find the user. There should be exactly one row.
-            USER_ID=$(sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+            USER_ID=$(kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
               psql -U wikijs -d wikijs -tA -c \
               "SELECT id FROM users WHERE email = '${EMAIL}';")
             if [ -z "$USER_ID" ]; then
@@ -79,7 +79,7 @@ jobs:
             echo "Found wikijs user id=${USER_ID} for email=${EMAIL}"
 
             # Confirm Administrators group is id=1 (wikijs install seeds Administrators=1, Guests=2).
-            ADMIN_GID=$(sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+            ADMIN_GID=$(kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
               psql -U wikijs -d wikijs -tA -c \
               "SELECT id FROM groups WHERE name = 'Administrators';")
             if [ -z "$ADMIN_GID" ]; then
@@ -88,12 +88,12 @@ jobs:
             fi
 
             # Idempotent insert.
-            sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+            kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
               psql -U wikijs -d wikijs -c \
               "INSERT INTO \"userGroups\" (\"userId\", \"groupId\") SELECT ${USER_ID}, ${ADMIN_GID} WHERE NOT EXISTS (SELECT 1 FROM \"userGroups\" WHERE \"userId\"=${USER_ID} AND \"groupId\"=${ADMIN_GID});"
 
             echo '=== after-state ==='
-            sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+            kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
               psql -U wikijs -d wikijs -c \
               "SELECT u.id, u.email, g.name AS group_name FROM users u JOIN \"userGroups\" ug ON ug.\"userId\"=u.id JOIN groups g ON g.id=ug.\"groupId\" WHERE u.id = ${USER_ID};"
           REMOTE
