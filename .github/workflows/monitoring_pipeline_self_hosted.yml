@@ -315,13 +315,25 @@ jobs:
           ansible-galaxy collection install -r ansible/requirements.yml
 
       - name: Fetch SSH key from bootstrap Vault
+        # Uses VAULT_BOOTSTRAP_ROOT_TOKEN — VAULT_DEV_TOKEN's policy doesn't
+        # cover secret/ssh_keys/* reads (it can read secret/monitoring/* but
+        # not the cross-env ssh_keys path). Same workaround as PR #274.
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/monitoring_worker \
             | awk 'NF > 0' > /tmp/ansible_monitoring_id_ed25519
           chmod 600 /tmp/ansible_monitoring_id_ed25519
+          # Sanity-check the key actually loaded (catches an empty file —
+          # vault returns 403 silently to stderr and produces an empty
+          # stdout, which makes ansible fail later with the cryptic
+          # "Load key: error in libcrypto"). Fail fast here instead.
+          if ! head -c 50 /tmp/ansible_monitoring_id_ed25519 | grep -q "PRIVATE KEY"; then
+            echo "ERROR: /tmp/ansible_monitoring_id_ed25519 doesn't look like a private key — vault read likely failed"
+            wc -c /tmp/ansible_monitoring_id_ed25519
+            exit 1
+          fi
 
       - name: Fetch Grafana admin password from Vault (create if absent)
         env:
