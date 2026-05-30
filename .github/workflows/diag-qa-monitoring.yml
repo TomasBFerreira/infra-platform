@@ -1,0 +1,52 @@
+name: Diag QA monitoring (LXC 395)
+
+# Read-only probe of the qa monitoring CT identity + state. The qa diag-grafana-logs
+# run on 2026-05-29 failed with REMOTE HOST IDENTIFICATION HAS CHANGED + Permission
+# denied, suggesting CT 395 was rebuilt out-of-band. Need to find out:
+#   - Does heaton actually have CT 395, and what's its hostname?
+#   - Is the docker-compose monitoring stack present?
+#   - Or was VMID 395 reclaimed by traefik-lxc-qa-blue (deployed 2026-05-20)?
+#
+# Routes the probe through heaton's `pct exec` to bypass the broken SSH path.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: [self-hosted, qa]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+    steps:
+      - name: Inspect CT 395 on heaton via pct
+        run: |
+          set -uo pipefail
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          HEATON_SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${PVE_USER_SHORT}@192.168.50.8"
+
+          echo "=== pct list on heaton (all CTs) ==="
+          $HEATON_SSH "pct list" 2>&1 || true
+
+          echo ""
+          echo "=== pct status + config for VMID 395 ==="
+          $HEATON_SSH "pct status 395 2>&1; echo '---'; pct config 395 2>&1" || true
+
+          echo ""
+          echo "=== pct status + config for VMID 396 (if exists) ==="
+          $HEATON_SSH "pct status 396 2>&1; echo '---'; pct config 396 2>&1" || true
+
+          echo ""
+          echo "=== pct exec 395 -- identity (10s timeout) ==="
+          timeout 12 $HEATON_SSH "pct exec 395 -- bash -lc 'hostname; hostname -I; uptime'" 2>&1 || echo "(pct exec hung or CT not running)"
+
+          echo ""
+          echo "=== pct exec 395 -- docker ps -a (15s timeout) ==="
+          timeout 18 $HEATON_SSH "pct exec 395 -- bash -lc 'docker ps -a --format \"table {{.Names}}\t{{.Status}}\" 2>&1 | head -20'" 2>&1 || echo "(timed out or no docker)"
+
+          echo ""
+          echo "=== pct exec 395 -- /opt contents (10s timeout) ==="
+          timeout 12 $HEATON_SSH "pct exec 395 -- bash -lc 'ls -la /opt/ 2>&1 | head -20'" 2>&1 || echo "(timed out)"
+
+          echo ""
+          echo "=== pct exec 395 -- check both /opt/monitoring and /opt/traefik (10s timeout) ==="
+          timeout 12 $HEATON_SSH "pct exec 395 -- bash -lc 'ls /opt/monitoring/docker-compose.yml /opt/traefik/docker-compose.yml 2>&1'" 2>&1 || echo "(timed out)"
