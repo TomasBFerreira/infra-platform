@@ -1,0 +1,96 @@
+name: Push services.yml to traefik-lxc-qa (one-shot)
+
+# Pushes config/dynamic/services.yml + config/traefik.yml from the
+# traefik-gitops main branch to traefik-lxc-qa (CT 395 / .95).
+# Routes through benedict so we don't depend on the qa env runner
+# (which can be slow to dequeue jobs after a burst).
+#
+# Workaround for the qa traefik backend swap landing — proper deploy-qa
+# job in traefik-gitops has been added (PR #67/#68) but the qa runner
+# wasn't dequeuing it. Delete this workflow after the qa runner is
+# healthy.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  push:
+    runs-on: [self-hosted, management]
+    steps:
+      - name: Checkout traefik-gitops main
+        uses: actions/checkout@v4
+        with:
+          repository: TomasBFerreira/traefik-gitops
+          ref: main
+          token: ${{ secrets.GH_PAT }}
+          path: traefik-gitops
+
+      - name: Fetch traefik_worker SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:        ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN:       ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          VAULT_CLIENT_TIMEOUT: "30"
+        run: |
+          V="${VAULT_ADDR}"
+          if [[ "$V" != http://* && "$V" != https://* ]]; then V="http://${V}"; fi
+          export VAULT_ADDR="$V"
+
+          mkdir -p /tmp/tx-qa-push && chmod 700 /tmp/tx-qa-push
+          vault kv get -field=private_key secret/ssh_keys/traefik_worker \
+            | awk 'NF > 0' > /tmp/tx-qa-push/key
+          chmod 600 /tmp/tx-qa-push/key
+
+      - name: SCP services.yml + traefik.yml to traefik-lxc-qa via benedict
+        run: |
+          # Management runner can't route to 192.168.30.x directly — hop via benedict (dev PVE).
+          # But heaton (qa PVE) is what hosts traefik-lxc-qa. Try direct first, fall back to benedict.
+          BETSY_HOP=benedict.databaes.net   # not actually used; sentinel
+          set -uo pipefail
+
+          # Try direct first (mgmt runner sometimes has the route)
+          DIRECT_OK=0
+          ssh -i /tmp/tx-qa-push/key -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+            root@192.168.30.95 "echo ok" 2>/dev/null && DIRECT_OK=1 || true
+
+          if [ "$DIRECT_OK" = "1" ]; then
+            echo "INFO: direct route works"
+            scp -i /tmp/tx-qa-push/key -o StrictHostKeyChecking=no \
+              traefik-gitops/config/dynamic/services.yml \
+              root@192.168.30.95:/opt/traefik/config/dynamic/services.yml
+            scp -i /tmp/tx-qa-push/key -o StrictHostKeyChecking=no \
+              traefik-gitops/config/traefik.yml \
+              root@192.168.30.95:/opt/traefik/config/traefik.yml
+            ssh -i /tmp/tx-qa-push/key -o StrictHostKeyChecking=no root@192.168.30.95 \
+              'cd /opt/traefik && docker compose restart traefik && echo "Traefik restarted on traefik-lxc-qa"'
+          else
+            echo "INFO: direct route to .30.95 not available — hopping via heaton (192.168.50.8)"
+            PVE_USER_SHORT=$(echo "${{ secrets.PVE_USER }}" | cut -d'@' -f1)
+
+            # scp files to heaton temp dir
+            scp -o StrictHostKeyChecking=no \
+              traefik-gitops/config/dynamic/services.yml \
+              traefik-gitops/config/traefik.yml \
+              ${PVE_USER_SHORT}@192.168.50.8:/tmp/
+
+            # also copy the SSH key over so heaton can ssh onward
+            scp -o StrictHostKeyChecking=no /tmp/tx-qa-push/key \
+              ${PVE_USER_SHORT}@192.168.50.8:/tmp/tx-qa-key
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.8 \
+              "chmod 600 /tmp/tx-qa-key"
+
+            # ssh onward to push + restart
+            ssh -o StrictHostKeyChecking=no ${PVE_USER_SHORT}@192.168.50.8 bash <<'EOF'
+            set -e
+            scp -i /tmp/tx-qa-key -o StrictHostKeyChecking=no \
+              /tmp/services.yml root@192.168.30.95:/opt/traefik/config/dynamic/services.yml
+            scp -i /tmp/tx-qa-key -o StrictHostKeyChecking=no \
+              /tmp/traefik.yml root@192.168.30.95:/opt/traefik/config/traefik.yml
+            ssh -i /tmp/tx-qa-key -o StrictHostKeyChecking=no root@192.168.30.95 \
+              'cd /opt/traefik && docker compose restart traefik && echo "Traefik restarted on traefik-lxc-qa"'
+            rm -f /tmp/tx-qa-key /tmp/services.yml /tmp/traefik.yml
+EOF
+          fi
+
+      - name: Cleanup local key
+        if: always()
+        run: rm -rf /tmp/tx-qa-push
