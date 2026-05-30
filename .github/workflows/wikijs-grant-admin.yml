@@ -1,0 +1,103 @@
+name: WikiJS — Grant Administrators role to OIDC user
+
+# One-off / re-runnable fix for the wiki SSO admin-bootstrap trap:
+# when wikijs prod is deployed without anyone walking through the
+# install wizard, the first OIDC login auto-creates a user in the
+# default Strategy group (Guests), so /administration is forbidden.
+# This workflow elevates a specified email to the Administrators
+# group via INSERT INTO "userGroups" (idempotent — no-op if already
+# a member).
+#
+# Runs on [self-hosted, prod]; the prod runner LXC has direct
+# vmbr10 routing to the worker. SSH key for the worker is in the
+# bootstrap vault at secret/ssh_keys/worker_node_worker.
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'Email of the user to elevate to Administrators'
+        required: true
+        default: 'all@tomasbrazao.com'
+      worker_ip:
+        description: 'Prod worker IP (where the k3s cluster runs)'
+        required: false
+        default: '192.168.10.21'
+
+jobs:
+  grant:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      EMAIL:       ${{ github.event.inputs.email }}
+      WORKER_IP:   ${{ github.event.inputs.worker_ip }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          [[ "$V" != http* ]] && V="http://${V}"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Fetch worker SSH key from bootstrap vault
+        run: |
+          set -o pipefail
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_key
+          chmod 600 /tmp/worker_key
+
+      - name: Show wikijs users (read-only)
+        run: |
+          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no ubuntu@${WORKER_IP} bash -s <<'REMOTE'
+            set -euo pipefail
+            DBPASS=$(sudo kubectl -n wikijs get secret wikijs-secrets -o jsonpath='{.data.db-pass}' | base64 -d)
+            echo '=== users ==='
+            sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -c \
+              'SELECT id, email, name, "providerKey", "isActive" FROM users ORDER BY id;'
+            echo '=== current group membership ==='
+            sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -c \
+              'SELECT u.id, u.email, g.name AS group_name FROM users u LEFT JOIN "userGroups" ug ON ug."userId"=u.id LEFT JOIN groups g ON g.id=ug."groupId" ORDER BY u.id, g.id;'
+          REMOTE
+
+      - name: Grant Administrators role
+        run: |
+          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no ubuntu@${WORKER_IP} bash -s "${EMAIL}" <<'REMOTE'
+            set -euo pipefail
+            EMAIL="$1"
+            DBPASS=$(sudo kubectl -n wikijs get secret wikijs-secrets -o jsonpath='{.data.db-pass}' | base64 -d)
+
+            # Find the user. There should be exactly one row.
+            USER_ID=$(sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -tA -c \
+              "SELECT id FROM users WHERE email = '${EMAIL}';")
+            if [ -z "$USER_ID" ]; then
+              echo "ERROR: no wikijs user with email=${EMAIL}. Has the user logged in at least once via Authentik?"
+              exit 1
+            fi
+            echo "Found wikijs user id=${USER_ID} for email=${EMAIL}"
+
+            # Confirm Administrators group is id=1 (wikijs install seeds Administrators=1, Guests=2).
+            ADMIN_GID=$(sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -tA -c \
+              "SELECT id FROM groups WHERE name = 'Administrators';")
+            if [ -z "$ADMIN_GID" ]; then
+              echo "ERROR: no 'Administrators' group in wikijs."
+              exit 1
+            fi
+
+            # Idempotent insert.
+            sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -c \
+              "INSERT INTO \"userGroups\" (\"userId\", \"groupId\") SELECT ${USER_ID}, ${ADMIN_GID} WHERE NOT EXISTS (SELECT 1 FROM \"userGroups\" WHERE \"userId\"=${USER_ID} AND \"groupId\"=${ADMIN_GID});"
+
+            echo '=== after-state ==='
+            sudo kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -c \
+              "SELECT u.id, u.email, g.name AS group_name FROM users u JOIN \"userGroups\" ug ON ug.\"userId\"=u.id JOIN groups g ON g.id=ug.\"groupId\" WHERE u.id = ${USER_ID};"
+          REMOTE
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/worker_key
