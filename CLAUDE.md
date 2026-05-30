@@ -60,6 +60,7 @@ Existing assignments:
 - cloudflared: prod=193/194 (192.168.10.93/.94), dev=293/294 (192.168.20.93/.94), qa=393/394 (192.168.30.93/.94) — *reserved, not yet deployed; gated on Phase 3c (see /app/issues/network-vm-split-2026-05-19.md)*
 - traefik: prod=195/196 (192.168.10.95/.96), dev=295/296 (192.168.20.95/.96), qa=395/396 (192.168.30.95/.96) — *deployed blue in all 3 envs (2026-05-20). Dev fully cut over from network-vm (2026-05-26); qa+prod parallel-run.*
 - adguard: prod=197/198 (192.168.10.97/.98), dev=297/298 (192.168.20.97/.98), qa=397/398 (192.168.30.97/.98) — *deployed blue in all 3 envs (2026-05-19); parallel-run. Tailscale split-DNS handoff for dev (2026-05-26); qa+prod pending.*
+- monitoring: qa=391/392 (192.168.30.91/.92) — *relocated 2026-05-30 after the 2026-05-20 traefik-lxc deploy clobbered the prior qa monitoring CT at VMID 395. Prod and dev monitoring still at the legacy slot — prod=`monitoring-green` 196 (192.168.10.96), dev=`monitoring-green` 296 (192.168.20.96) — coexist with traefik-lxc-blue at 195/295 because monitoring was on the green slot in those envs. Prod and dev should be migrated to 191/192 and 291/292 next time the stack is touched. See `/app/reports/2026-05-30-grafana-recovery.md`.*
 
 **Worker nodes — numbered singletons:**
 - Prod (betsy):  VMID = 110+N, IP = 192.168.10.(10+N)  → 111→.11, 112→.12, 113→.13…

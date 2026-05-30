@@ -57,8 +57,13 @@ jobs:
               GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
               ;;
             qa)
-              BLUE_VMID=395;  BLUE_IP="192.168.30.95"
-              GREEN_VMID=396; GREEN_IP="192.168.30.96"
+              # Relocated 2026-05-30 from 395/396 (.95/.96): the 2026-05-20
+              # traefik-lxc rollout claimed those VMIDs (heaton CT 395 is now
+              # traefik-lxc-qa-blue, monitoring was clobbered). New numbering
+              # 391/392 (.91/.92) is free across all qa nodes. See
+              # /app/reports/2026-05-30-grafana-recovery.md.
+              BLUE_VMID=391;  BLUE_IP="192.168.30.91"
+              GREEN_VMID=392; GREEN_IP="192.168.30.92"
               PVE_API_URL="https://192.168.50.8:8006/api2/json"
               PVE_NODE="heaton"
               GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
