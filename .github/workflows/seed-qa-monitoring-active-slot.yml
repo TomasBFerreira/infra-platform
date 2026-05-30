@@ -1,0 +1,46 @@
+name: Seed qa monitoring active-slot (one-shot)
+
+# One-shot: write secret/monitoring/qa/active-slot with the new VMID/IP
+# after the 2026-05-30 first-run pipeline created CT 391 but failed at
+# flip-active (VAULT_DEV_TOKEN policy gap).
+#
+# Delete this file once flip-active is confirmed working via the normal
+# pipeline.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "SEED-QA-MONITORING-SLOT" to confirm'
+        required: true
+        type: string
+
+jobs:
+  seed:
+    runs-on: [self-hosted, management]
+    steps:
+      - name: Sanity check confirm phrase
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "SEED-QA-MONITORING-SLOT" ]; then
+            echo "Confirmation phrase mismatch; aborting."
+            exit 1
+          fi
+
+      - name: vault kv put secret/monitoring/qa/active-slot
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          V="${VAULT_ADDR}"
+          if [[ "$V" != http://* && "$V" != https://* ]]; then V="http://${V}"; fi
+          export VAULT_ADDR="$V"
+
+          vault kv put secret/monitoring/qa/active-slot \
+            slot="blue" \
+            vmid="391" \
+            ip="192.168.30.91" \
+            collector_endpoint="192.168.30.91:4317"
+
+          echo ""
+          echo "=== readback ==="
+          vault kv get secret/monitoring/qa/active-slot
