@@ -1,0 +1,100 @@
+name: WikiJS — Reset local admin password (recovery)
+
+# Recovers from the SSO admin-bootstrap trap when no OIDC user exists
+# in the wikijs DB yet — i.e. wikijs was deployed but its OIDC strategy
+# was never configured, so Authentik authenticates but wikijs never
+# creates a session. The only path back in is the local admin
+# (admin@databaes.net, providerKey=local), whose password was never
+# set.
+#
+# Generates a random one-time password, hashes it with bcryptjs inside
+# the wikijs container itself (guaranteed compatibility), UPDATEs the
+# users row. The plaintext is echoed once into the workflow log.
+# **Change the password immediately after first login** and configure
+# the OIDC strategy under Administration → Authentication.
+#
+# Runs on [self-hosted, prod] — same direct-route pattern as
+# wikijs-grant-admin.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'Email of the local admin to reset'
+        required: true
+        default: 'admin@databaes.net'
+      worker_ip:
+        description: 'Prod worker IP'
+        required: false
+        default: '192.168.10.21'
+
+jobs:
+  reset:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      EMAIL:       ${{ github.event.inputs.email }}
+      WORKER_IP:   ${{ github.event.inputs.worker_ip }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          [[ "$V" != http* ]] && V="http://${V}"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Fetch worker SSH key from bootstrap vault
+        run: |
+          set -o pipefail
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_key
+          chmod 600 /tmp/worker_key
+
+      - name: Reset local admin password
+        run: |
+          set -euo pipefail
+          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no root@${WORKER_IP} bash -s "${EMAIL}" <<'REMOTE'
+            set -euo pipefail
+            EMAIL="$1"
+
+            # Sanity: confirm the row exists and is providerKey=local
+            DBPASS=$(kubectl -n wikijs get secret wikijs-secrets -o jsonpath='{.data.db-pass}' | base64 -d)
+            ROW=$(kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -tA -c \
+              "SELECT id, \"providerKey\" FROM users WHERE email = '${EMAIL}';")
+            if [ -z "$ROW" ]; then
+              echo "ERROR: no user row with email=${EMAIL}"
+              exit 1
+            fi
+            PROVIDER=$(echo "$ROW" | cut -d'|' -f2)
+            if [ "$PROVIDER" != "local" ]; then
+              echo "ERROR: refusing to reset password for non-local user (providerKey=${PROVIDER}). Local admin only."
+              exit 1
+            fi
+
+            # Random 20-char alphanumeric password
+            PW=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)
+
+            # Hash inside the wikijs container — same bcryptjs lib that
+            # verifies passwords on login, so no compatibility risk.
+            HASH=$(kubectl -n wikijs exec deploy/wikijs -- node -e "console.log(require('bcryptjs').hashSync('${PW}', 12))")
+
+            # UPDATE the user row
+            kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -c \
+              "UPDATE users SET password = '${HASH}', \"isActive\" = true WHERE email = '${EMAIL}' AND \"providerKey\" = 'local';"
+
+            echo ""
+            echo "==================== TEMP LOGIN ===================="
+            echo "  URL:      https://wikijs.databaes.net/login"
+            echo "  Strategy: choose 'Local' (NOT Authentik) on the login page"
+            echo "  Email:    ${EMAIL}"
+            echo "  Password: ${PW}"
+            echo "  CHANGE THIS IMMEDIATELY after login (Profile → Change password)."
+            echo "  Then configure the OIDC strategy at Administration → Authentication."
+            echo "===================================================="
+          REMOTE
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/worker_key
