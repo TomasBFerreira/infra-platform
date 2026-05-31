@@ -1,0 +1,81 @@
+name: WikiJS — Debug (pod logs + DB peek)
+
+# Diagnostic helper. Tails the wikijs pod's logs and (optionally) a
+# few rows from the wikijs DB. Use during SSO troubleshooting.
+
+on:
+  workflow_dispatch:
+    inputs:
+      log_lines:
+        description: 'Number of lines from the wikijs pod log'
+        required: false
+        default: '120'
+      worker_ip:
+        description: 'Prod worker IP'
+        required: false
+        default: '192.168.10.21'
+
+jobs:
+  debug:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      WORKER_IP:   ${{ github.event.inputs.worker_ip }}
+      LOG_LINES:   ${{ github.event.inputs.log_lines }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          [[ "$V" != http* ]] && V="http://${V}"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Fetch worker SSH key
+        run: |
+          set -o pipefail
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_key
+          chmod 600 /tmp/worker_key
+
+      - name: Tail wikijs pod logs + Authentication strategy state
+        run: |
+          ssh -i /tmp/worker_key -o StrictHostKeyChecking=no root@${WORKER_IP} bash -s "${LOG_LINES}" <<'REMOTE'
+            set -uo pipefail
+            LINES="$1"
+            echo "================ wikijs pod ================"
+            kubectl -n wikijs get pods -o wide
+            echo
+            echo "================ last ${LINES} log lines ================"
+            kubectl -n wikijs logs deploy/wikijs --tail="${LINES}"
+            echo
+            echo "================ authentication strategies (DB) ================"
+            DBPASS=$(kubectl -n wikijs get secret wikijs-secrets -o jsonpath='{.data.db-pass}' | base64 -d)
+            kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -c \
+              "SELECT key, \"strategyKey\", \"displayName\", \"isEnabled\", \"selfRegistration\" FROM authentication;"
+            echo
+            echo "================ OIDC strategy config (sanitised) ================"
+            kubectl -n wikijs exec deploy/postgres -- env PGPASSWORD="$DBPASS" \
+              psql -U wikijs -d wikijs -At -c \
+              "SELECT config FROM authentication WHERE \"strategyKey\" = 'oidc';" \
+              | python3 -c '
+          import json, sys
+          raw = sys.stdin.read().strip()
+          if not raw:
+              print("(no row found)")
+              sys.exit()
+          try:
+              cfg = json.loads(raw)
+              for k, v in cfg.items():
+                  if any(s in k.lower() for s in ("secret","key","password")):
+                      v = "[REDACTED " + str(len(str(v))) + " chars]"
+                  print(f"  {k} = {v}")
+          except Exception as e:
+              print("parse error:", e)
+              print(raw[:500])
+          '
+          REMOTE
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/worker_key
