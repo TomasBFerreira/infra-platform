@@ -1,0 +1,159 @@
+name: Reseed bootstrap vault CI token
+
+# Long-term fix for the recurring VAULT_DEV_TOKEN expiry problem.
+#
+# The bootstrap vault CT was set up by hand and the original
+# VAULT_DEV_TOKEN was minted with default settings — a 32-day TTL.
+# It expires silently and breaks every infra pipeline at one of three
+# operations (terraform vault provider lookup-self, ssh_keys kv read,
+# kv put autodetect). Documented in
+# `ansible/github-runner/github-runner_setup.yml` (2026-04-26 incident)
+# and `/app/reports/2026-05-30-grafana-recovery.md` (2026-05-30 incident).
+#
+# This workflow installs a real least-privilege `bootstrap-ci` policy
+# in the bootstrap vault, mints a **periodic** token (renews on every
+# use; no absolute expiry as long as it's used at least once per period),
+# verifies the token can do everything the pipelines need, and only then
+# overwrites the VAULT_DEV_TOKEN GitHub secret.
+#
+# Re-dispatchable: idempotent on the policy, mints a fresh token, updates
+# the GH secret. Run after the secret expires again (which shouldn't
+# happen unless every pipeline goes silent for a month, but we keep the
+# tool around for safety).
+
+on:
+  workflow_dispatch:
+    inputs:
+      period_hours:
+        description: 'Token period in hours (renew window)'
+        required: false
+        default: '720'    # 30 days; pipelines run more often than this so it self-renews
+        type: string
+
+jobs:
+  reseed:
+    runs-on: [self-hosted, management]
+    env:
+      VAULT_ADDR_RAW: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      PERIOD: ${{ inputs.period_hours }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR_RAW}"
+          if [[ "$V" != http://* && "$V" != https://* ]]; then V="http://${V}"; fi
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Sanity-check root token
+        run: |
+          vault token lookup-self -format=json | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f'root token OK — policies={d[\"policies\"]}, ttl={d[\"ttl\"]}')"
+
+      - name: Write bootstrap-ci policy
+        run: |
+          cat > /tmp/bootstrap-ci.hcl <<'EOF'
+          # KV-v2 read+write under secret/* (matches what every infra pipeline does).
+          path "secret/data/*" {
+            capabilities = ["create", "read", "update", "delete"]
+          }
+          path "secret/metadata/*" {
+            capabilities = ["create", "read", "update", "delete", "list"]
+          }
+          path "secret/delete/*" {
+            capabilities = ["update"]
+          }
+          path "secret/destroy/*" {
+            capabilities = ["update"]
+          }
+          path "secret/undelete/*" {
+            capabilities = ["update"]
+          }
+          # Required for `vault kv put` to autodetect KV mount type.
+          # Without this, `kv put` 403s on the GET /sys/internal/ui/mounts/...
+          # call it makes before writing.
+          path "sys/internal/ui/mounts" {
+            capabilities = ["read"]
+          }
+          path "sys/internal/ui/mounts/*" {
+            capabilities = ["read"]
+          }
+          # Required for terraform vault provider on init — it calls
+          # auth/token/lookup-self before any data read. Also needed for
+          # token renewal, which periodic tokens do implicitly on use.
+          path "auth/token/lookup-self" {
+            capabilities = ["read"]
+          }
+          path "auth/token/renew-self" {
+            capabilities = ["update"]
+          }
+          EOF
+          vault policy write bootstrap-ci /tmp/bootstrap-ci.hcl
+          echo "--- written policy ---"
+          vault policy read bootstrap-ci
+          rm /tmp/bootstrap-ci.hcl
+
+      - name: Mint new periodic token
+        id: mint
+        run: |
+          NEW_TOKEN=$(vault token create \
+            -policy=bootstrap-ci \
+            -period="${PERIOD}h" \
+            -display-name="github-actions-bootstrap-ci" \
+            -no-default-policy \
+            -format=json \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['auth']['client_token'])")
+          if [ -z "$NEW_TOKEN" ] || [ ${#NEW_TOKEN} -lt 20 ]; then
+            echo "ERROR: token creation returned empty or implausibly short"
+            exit 1
+          fi
+          echo "::add-mask::$NEW_TOKEN"
+          echo "new_token=$NEW_TOKEN" >> $GITHUB_OUTPUT
+          # Don't print the token. Print only metadata.
+          VAULT_TOKEN="$NEW_TOKEN" vault token lookup-self -format=json \
+            | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f'new token — policies={d[\"policies\"]}, period={d[\"period\"]}s, ttl={d[\"ttl\"]}s, renewable={d[\"renewable\"]}')"
+
+      - name: Verify new token can read ssh_keys (regression of the original failure)
+        env:
+          NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
+        run: |
+          OUT=$(VAULT_TOKEN="$NEW_TOKEN" vault kv get -field=private_key secret/ssh_keys/monitoring_worker 2>&1 | head -1)
+          if echo "$OUT" | grep -q "PRIVATE KEY"; then
+            echo "OK — ssh_keys read works under new token"
+          else
+            echo "ERROR: ssh_keys read failed: $OUT"
+            exit 1
+          fi
+
+      - name: Verify new token can `kv put` (sys/internal/ui/mounts autodetect)
+        env:
+          NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
+        run: |
+          # Write to a throwaway path then delete.
+          TEST_PATH="secret/_reseed_test_$(date +%s)"
+          VAULT_TOKEN="$NEW_TOKEN" vault kv put "$TEST_PATH" sentinel=ok marker=reseed
+          echo "kv put OK"
+          VAULT_TOKEN="$NEW_TOKEN" vault kv metadata delete "$TEST_PATH"
+          echo "kv delete OK"
+
+      - name: Verify new token passes terraform vault provider's lookup-self
+        env:
+          NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
+        run: |
+          VAULT_TOKEN="$NEW_TOKEN" vault token lookup-self > /dev/null
+          echo "lookup-self OK"
+
+      - name: Update VAULT_DEV_TOKEN GitHub secret
+        env:
+          NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
+        run: |
+          # Write to a temp file to avoid the token leaking via process listing.
+          printf '%s' "$NEW_TOKEN" > /tmp/.new_dev_token
+          gh secret set VAULT_DEV_TOKEN \
+            --body-file /tmp/.new_dev_token \
+            --repo TomasBFerreira/infra-platform
+          rm -f /tmp/.new_dev_token
+          echo "VAULT_DEV_TOKEN updated."
+
+      - name: Summary
+        run: |
+          echo "::notice::Bootstrap vault CI token rotated. Policy 'bootstrap-ci' installed with KV+lookup-self+autodetect. New token is periodic (renews on use); no absolute expiry. PRs #274/#275/#276/#283 workarounds can now be reverted if least-privilege is desired (separate PR)."
