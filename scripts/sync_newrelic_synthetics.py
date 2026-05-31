@@ -117,41 +117,41 @@ class NewRelicClient:
             expected=(200, 201),
         )
 
-    def list_synthetics_conditions(self, policy_id: str) -> List[Dict[str, Any]]:
+    def list_location_failure_conditions(self, policy_id: str) -> List[Dict[str, Any]]:
         response = self._request(
             self.rest_base_url,
             "GET",
-            f"/alerts_synthetics_conditions/policies/{policy_id}.json",
+            f"/alerts_location_failure_conditions/policies/{policy_id}.json",
         )
-        return response.get("synthetics_conditions", [])
+        return response.get("location_failure_conditions", [])
 
-    def create_synthetics_condition(
+    def create_location_failure_condition(
         self, policy_id: str, payload: Dict[str, Any]
     ) -> Dict[str, Any]:
         return self._request(
             self.rest_base_url,
             "POST",
-            f"/alerts_synthetics_conditions/policies/{policy_id}.json",
-            {"condition": payload},
+            f"/alerts_location_failure_conditions/policies/{policy_id}.json",
+            {"location_failure_condition": payload},
             expected=(200, 201),
         )
 
-    def update_synthetics_condition(
+    def update_location_failure_condition(
         self, condition_id: str, payload: Dict[str, Any]
     ) -> Dict[str, Any]:
         return self._request(
             self.rest_base_url,
             "PUT",
-            f"/alerts_synthetics_conditions/{condition_id}.json",
-            {"condition": payload},
+            f"/alerts_location_failure_conditions/{condition_id}.json",
+            {"location_failure_condition": payload},
             expected=(200, 201),
         )
 
-    def delete_synthetics_condition(self, condition_id: str) -> None:
+    def delete_location_failure_condition(self, condition_id: str) -> None:
         self._request(
             self.rest_base_url,
             "DELETE",
-            f"/alerts_synthetics_conditions/{condition_id}.json",
+            f"/alerts_conditions/{condition_id}.json",
             expected=(200, 202, 204),
         )
 
@@ -193,6 +193,12 @@ def build_desired_conditions(
         return {}
 
     runbook_url = alerts_config.get("conditionDefaults", {}).get("runbookUrl")
+    critical_threshold = (
+        alerts_config.get("conditionDefaults", {}).get("criticalThresholdLocations", 1)
+    )
+    violation_time_limit_seconds = (
+        alerts_config.get("conditionDefaults", {}).get("violationTimeLimitSeconds", 3600)
+    )
     desired_conditions: Dict[str, Dict[str, Any]] = {}
     for monitor in build_desired_monitors(config):
         if not monitor.get("_alert_enabled", True):
@@ -203,8 +209,10 @@ def build_desired_conditions(
         condition_name = f"{monitor['name']} down"
         payload = {
             "name": condition_name,
-            "monitor_id": str(current_monitor["id"]),
+            "entities": [str(current_monitor["id"])],
             "enabled": True,
+            "terms": [{"priority": "critical", "threshold": int(critical_threshold)}],
+            "violation_time_limit_seconds": int(violation_time_limit_seconds),
         }
         if runbook_url:
             payload["runbook_url"] = runbook_url
@@ -226,11 +234,22 @@ def normalize_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def normalize_condition(condition: Dict[str, Any]) -> Dict[str, Any]:
+    terms = []
+    for term in condition.get("terms", []):
+        terms.append(
+            {
+                "priority": term.get("priority"),
+                "threshold": int(term.get("threshold", 0)),
+            }
+        )
+    terms.sort(key=lambda item: (item["priority"] or "", item["threshold"]))
     comparable = {
         "name": condition.get("name"),
-        "monitor_id": str(condition.get("monitor_id")),
+        "entities": sorted(str(entity) for entity in condition.get("entities", [])),
         "enabled": bool(condition.get("enabled", True)),
         "runbook_url": condition.get("runbook_url"),
+        "terms": terms,
+        "violation_time_limit_seconds": int(condition.get("violation_time_limit_seconds", 0)),
     }
     return comparable
 
@@ -409,7 +428,7 @@ def main() -> int:
         if args.dry_run and policy_id == "dry-run-policy":
             existing_conditions: List[Dict[str, Any]] = []
         else:
-            existing_conditions = client.list_synthetics_conditions(policy_id)
+            existing_conditions = client.list_location_failure_conditions(policy_id)
         existing_conditions_by_name = {
             condition.get("name"): condition for condition in existing_conditions
         }
@@ -419,13 +438,13 @@ def main() -> int:
             if current is None:
                 print(f"CREATE CONDITION {condition_name}")
                 if not args.dry_run:
-                    client.create_synthetics_condition(policy_id, payload)
+                    client.create_location_failure_condition(policy_id, payload)
                 continue
 
             if normalize_condition(current) != normalize_condition(payload):
                 print(f"UPDATE CONDITION {condition_name}")
                 if not args.dry_run:
-                    client.update_synthetics_condition(str(current["id"]), payload)
+                    client.update_location_failure_condition(str(current["id"]), payload)
             else:
                 print(f"OK     CONDITION {condition_name}")
 
@@ -439,7 +458,7 @@ def main() -> int:
                     continue
                 print(f"DELETE CONDITION {current_name}")
                 if not args.dry_run:
-                    client.delete_synthetics_condition(str(current["id"]))
+                    client.delete_location_failure_condition(str(current["id"]))
 
     return 0
 
