@@ -84,9 +84,19 @@ Runner state (singletons, no slot rotation):
 
 ## Vault Authentication
 
-**CI pipelines** use a limited-scope CI token (`VAULT_TOKEN` / `VAULT_PROD_TOKEN`) created by the vault-ct Ansible playbook. Policy: read/write `secret/*`, manage tokens.
+**Env vault CI pipelines** use a limited-scope CI token (`VAULT_TOKEN` / `VAULT_PROD_TOKEN`) created by the vault-ct Ansible playbook. Policy: read/write `secret/*`, manage tokens.
 
-**Admin operations** (enabling auth methods, writing policies) require the root token. The root token is stored at `/root/vault-init.json` on the vault CT itself (mode 0400). On each vault-ct deploy, the root token is also saved to `VAULT_DEV_ROOT_TOKEN` / `VAULT_ROOT_TOKEN` GitHub secrets via `gh secret set`.
+**Bootstrap vault CI pipelines** use `VAULT_DEV_TOKEN` — a **periodic** token under the `bootstrap-ci` policy. Periodic tokens renew implicitly on every use and have no absolute expiry as long as something hits them within the configured period (default 720h = 30d).
+
+The `bootstrap-ci` policy and token are managed by `.github/workflows/reseed-bootstrap-vault-ci-token.yml`. **Rotate** by re-dispatching it — idempotent on the policy, mints a fresh token, writes it to the `VAULT_DEV_TOKEN` GitHub secret. The original `VAULT_DEV_TOKEN` was minted by hand with a 32-day default TTL and silently expired every month — see the 2026-04-26 and 2026-05-30 incidents in `/app/reports/2026-05-30-grafana-recovery.md` and the `~32d TTL` comment in `ansible/github-runner/github-runner_setup.yml`.
+
+Policy paths granted by `bootstrap-ci`:
+- `secret/data/*` + `secret/metadata/*` (+ delete/destroy/undelete) — KV-v2 read+write+delete on every bootstrap secret.
+- `sys/internal/ui/mounts` + `sys/internal/ui/mounts/*` — required for `vault kv put` to autodetect the KV mount type. Missing this causes a confusing 403 in flip-active steps.
+- `auth/token/lookup-self` — required for the terraform vault provider's init. Missing this causes a confusing 403 in terraform-staging steps.
+- `auth/token/renew-self` — required for the periodic token to renew itself on use.
+
+**Admin operations** (enabling auth methods, writing policies) require the root token. The env vault root tokens are stored at `/root/vault-init.json` on the vault CT itself (mode 0400). On each vault-ct deploy, the env root tokens are also saved to `VAULT_DEV_ROOT_TOKEN` / `VAULT_ROOT_TOKEN` GitHub secrets via `gh secret set`. The bootstrap vault's root token lives in the `VAULT_BOOTSTRAP_ROOT_TOKEN` GitHub secret — used by the reseed workflow above to mint a new CI token, and by `ansible/github-runner/github-runner_setup.yml` for SSH key reads (pre-dating the policy fix; can be migrated to VAULT_DEV_TOKEN at convenience).
 
 **OIDC login** (interactive, human use): after OIDC is configured, users log in via `vault login -method=oidc -address=http://192.168.20.45:8200` or through the Vault UI → Sign in with OIDC provider. Grants `admin` policy (full access).
 
