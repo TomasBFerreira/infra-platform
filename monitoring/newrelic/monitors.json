@@ -58,10 +58,10 @@
       "slug": "wikijs",
       "name": "wikijs.databaes.net",
       "mode": "probe-endpoint",
-      "enabled": true,
+      "enabled": false,
       "alert": true,
       "url": "https://wikijs.databaes.net/-/health/ready/",
-      "notes": "SSO-protected wiki with a dedicated Traefik-exempt readiness endpoint."
+      "notes": "Deferred until Wiki.js exposes a stable public readiness endpoint; the Authentik bypass is in place but the backend path currently returns 404."
     },
     {
       "slug": "grafana",
