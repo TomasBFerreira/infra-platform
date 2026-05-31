@@ -166,7 +166,7 @@ def build_desired_monitors(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     for entry in config.get("monitors", []):
         if not entry.get("enabled", False):
             continue
-        if entry.get("mode") != "simple":
+        if entry.get("mode") not in {"simple", "probe-endpoint"}:
             continue
         desired.append(
             {
@@ -337,7 +337,9 @@ def main() -> int:
     errors = validate_config(config)
     desired = build_desired_monitors(config)
     deferred = [
-        entry for entry in config.get("monitors", []) if entry.get("mode") == "probe-endpoint"
+        entry
+        for entry in config.get("monitors", [])
+        if entry.get("mode") == "probe-endpoint" and not entry.get("enabled", False)
     ]
 
     if errors:

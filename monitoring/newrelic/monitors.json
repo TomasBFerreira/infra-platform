@@ -49,33 +49,37 @@
       "slug": "ops-portal",
       "name": "ops.databaes.net",
       "mode": "probe-endpoint",
-      "enabled": false,
-      "url": "https://ops.databaes.net/synthetic/ping",
-      "notes": "Behind SSO. Add a dedicated probe endpoint plus Vault-backed token before enabling."
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops.databaes.net/health",
+      "notes": "SSO-protected shell with a dedicated Traefik-exempt /health endpoint."
     },
     {
       "slug": "wikijs",
       "name": "wikijs.databaes.net",
       "mode": "probe-endpoint",
       "enabled": false,
-      "url": "https://wikijs.databaes.net/synthetic/ping",
-      "notes": "Behind SSO. Add a dedicated probe endpoint plus Vault-backed token before enabling."
+      "alert": true,
+      "url": "https://wikijs.databaes.net/-/health/ready/",
+      "notes": "Deferred until Wiki.js exposes a stable public readiness endpoint; the Authentik bypass is in place but the backend path currently returns 404."
     },
     {
       "slug": "grafana",
       "name": "grafana.databaes.net",
       "mode": "probe-endpoint",
-      "enabled": false,
-      "url": "https://grafana.databaes.net/synthetic/ping",
-      "notes": "Behind SSO. Add a dedicated probe endpoint plus Vault-backed token before enabling."
+      "enabled": true,
+      "alert": true,
+      "url": "https://grafana.databaes.net/api/health",
+      "notes": "Grafana exposes /api/health without Authentik in prod."
     },
     {
       "slug": "tomajflix",
       "name": "tomajflix.app",
       "mode": "probe-endpoint",
-      "enabled": false,
-      "url": "https://tomajflix.app/synthetic/ping",
-      "notes": "Behind SSO. Add a dedicated probe endpoint plus Vault-backed token before enabling."
+      "enabled": true,
+      "alert": true,
+      "url": "https://tomajflix.app/api/health",
+      "notes": "Streambox already serves /api/health; Traefik only needs to exempt that path from Authentik."
     }
   ]
 }
