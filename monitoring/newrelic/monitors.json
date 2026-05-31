@@ -149,6 +149,96 @@
       "alert": true,
       "url": "https://tomajflix.app/api/health",
       "notes": "Streambox already serves /api/health; Traefik only needs to exempt that path from Authentik."
+    },
+    {
+      "slug": "dev-ops-portal",
+      "namePrefix": "DEV | ",
+      "name": "ops-dev.databaes.net",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops-dev.databaes.net/health",
+      "notes": "Dev ops shell with a dedicated Traefik-exempt /health endpoint."
+    },
+    {
+      "slug": "dev-ops-identity",
+      "namePrefix": "DEV | ",
+      "name": "ops identity",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops-dev.databaes.net/synthetic/identity/healthz",
+      "notes": "Dev synthetic-only path rewritten by Traefik to the identity service's /healthz endpoint."
+    },
+    {
+      "slug": "dev-ops-cmdb",
+      "namePrefix": "DEV | ",
+      "name": "ops cmdb",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops-dev.databaes.net/synthetic/cmdb/healthz",
+      "notes": "Dev synthetic-only path rewritten by Traefik to the CMDB service's /healthz endpoint."
+    },
+    {
+      "slug": "dev-ops-audit",
+      "namePrefix": "DEV | ",
+      "name": "ops audit",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops-dev.databaes.net/synthetic/audit/healthz",
+      "notes": "Dev synthetic-only path rewritten by Traefik to the audit service's /healthz endpoint."
+    },
+    {
+      "slug": "dev-ops-domain",
+      "namePrefix": "DEV | ",
+      "name": "ops domain",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops-dev.databaes.net/synthetic/domain/healthz",
+      "notes": "Dev synthetic-only path rewritten by Traefik to the domain service's /healthz endpoint."
+    },
+    {
+      "slug": "dev-ops-incidents",
+      "namePrefix": "DEV | ",
+      "name": "ops incidents",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops-dev.databaes.net/synthetic/incidents/healthz",
+      "notes": "Dev synthetic-only path rewritten by Traefik to the incidents service's /healthz endpoint."
+    },
+    {
+      "slug": "dev-ops-infrastructure",
+      "namePrefix": "DEV | ",
+      "name": "ops infrastructure",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops-dev.databaes.net/synthetic/infrastructure/healthz",
+      "notes": "Dev synthetic-only path rewritten by Traefik to the infrastructure service's /healthz endpoint."
+    },
+    {
+      "slug": "dev-ops-deployments",
+      "namePrefix": "DEV | ",
+      "name": "ops deployments",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops-dev.databaes.net/synthetic/deployments/healthz",
+      "notes": "Dev synthetic-only path rewritten by Traefik to the deployments service's /healthz endpoint."
+    },
+    {
+      "slug": "dev-tomajflix",
+      "namePrefix": "DEV | ",
+      "name": "dev.tomajflix.app",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://dev.tomajflix.app/api/health",
+      "notes": "Dev Tomaj Flix health endpoint exposed via a narrow Traefik exemption."
     }
   ]
 }
