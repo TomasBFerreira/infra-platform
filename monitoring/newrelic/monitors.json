@@ -55,6 +55,69 @@
       "notes": "SSO-protected shell with a dedicated Traefik-exempt /health endpoint."
     },
     {
+      "slug": "ops-identity",
+      "name": "ops identity",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops.databaes.net/synthetic/identity/healthz",
+      "notes": "Exact public synthetic-only path rewritten by Traefik to the identity service's /healthz endpoint."
+    },
+    {
+      "slug": "ops-cmdb",
+      "name": "ops cmdb",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops.databaes.net/synthetic/cmdb/healthz",
+      "notes": "Exact public synthetic-only path rewritten by Traefik to the CMDB service's /healthz endpoint."
+    },
+    {
+      "slug": "ops-audit",
+      "name": "ops audit",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops.databaes.net/synthetic/audit/healthz",
+      "notes": "Exact public synthetic-only path rewritten by Traefik to the audit service's /healthz endpoint."
+    },
+    {
+      "slug": "ops-domain",
+      "name": "ops domain",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops.databaes.net/synthetic/domain/healthz",
+      "notes": "Exact public synthetic-only path rewritten by Traefik to the domain service's /healthz endpoint."
+    },
+    {
+      "slug": "ops-incidents",
+      "name": "ops incidents",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops.databaes.net/synthetic/incidents/healthz",
+      "notes": "Exact public synthetic-only path rewritten by Traefik to the incidents service's /healthz endpoint."
+    },
+    {
+      "slug": "ops-infrastructure",
+      "name": "ops infrastructure",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops.databaes.net/synthetic/infrastructure/healthz",
+      "notes": "Exact public synthetic-only path rewritten by Traefik to the infrastructure service's /healthz endpoint."
+    },
+    {
+      "slug": "ops-deployments",
+      "name": "ops deployments",
+      "mode": "probe-endpoint",
+      "enabled": true,
+      "alert": true,
+      "url": "https://ops.databaes.net/synthetic/deployments/healthz",
+      "notes": "Exact public synthetic-only path rewritten by Traefik to the deployments service's /healthz endpoint."
+    },
+    {
       "slug": "wikijs",
       "name": "wikijs.databaes.net",
       "mode": "probe-endpoint",
