@@ -1,0 +1,105 @@
+name: WikiJS — Swap append marker (one-off)
+
+# One-off helper to migrate older hardcoded append markers on wikijs prod
+# pages to the canonical `<!-- wiki-push: <id> -->` format that
+# push-wiki-pages.yml understands. After this swap, re-running the wiki
+# push for the affected batch is a clean idempotent no-op.
+#
+# Use when an earlier ad-hoc append used a different marker string that
+# the workflow doesn't recognise.
+
+on:
+  workflow_dispatch:
+    inputs:
+      old_marker:
+        description: 'The exact old marker HTML comment to find'
+        required: true
+      new_marker_id:
+        description: 'The new marker id (will become <!-- wiki-push: <id> -->)'
+        required: true
+      page_ids:
+        description: 'Comma-separated wikijs page ids to scan (e.g. 5,19,30,31)'
+        required: true
+
+env:
+  WIKIJS_GQL_URL: http://192.168.10.21:3000/graphql
+
+jobs:
+  swap:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:    ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      OLD_MARKER:    ${{ github.event.inputs.old_marker }}
+      NEW_MARKER_ID: ${{ github.event.inputs.new_marker_id }}
+      PAGE_IDS:      ${{ github.event.inputs.page_ids }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          [[ "$V" != http* ]] && V="http://${V}"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Fetch wikijs token from vault
+        run: |
+          set -o pipefail
+          vault kv get -field=token secret/wikijs/prod/api-token > /tmp/wk_token
+          chmod 600 /tmp/wk_token
+
+      - name: Swap markers
+        run: |
+          python3 <<'PYEOF'
+          import json, os, sys, urllib.request
+
+          token = open("/tmp/wk_token").read().strip()
+          gql_url = os.environ["WIKIJS_GQL_URL"]
+          old_marker = os.environ["OLD_MARKER"]
+          new_marker = f"<!-- wiki-push: {os.environ['NEW_MARKER_ID']} -->"
+          ids = [int(x) for x in os.environ["PAGE_IDS"].split(",") if x.strip()]
+
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+          def gql(q, v=None):
+              body = json.dumps({"query": q, "variables": v or {}}).encode()
+              req = urllib.request.Request(gql_url, data=body, headers=headers, method="POST")
+              return json.loads(urllib.request.urlopen(req, timeout=30).read())
+
+          SINGLE = "query S($id:Int!){pages{single(id:$id){id path title description content tags{tag} locale}}}"
+          UPDATE = '''
+          mutation U($id:Int!,$content:String!,$description:String!,$editor:String!,
+                     $isPrivate:Boolean!,$isPublished:Boolean!,$locale:String!,
+                     $path:String!,$tags:[String]!,$title:String!){
+            pages{update(id:$id,content:$content,description:$description,editor:$editor,
+                         isPrivate:$isPrivate,isPublished:$isPublished,locale:$locale,
+                         path:$path,tags:$tags,title:$title){
+              responseResult{succeeded errorCode message}}}}
+          '''
+
+          for pid in ids:
+              cur = gql(SINGLE, {"id": pid})["data"]["pages"]["single"]
+              content = cur.get("content") or ""
+              if old_marker not in content:
+                  print(f"  id={pid} ({cur['path']}): old marker not found — skipping")
+                  continue
+              if new_marker in content:
+                  print(f"  id={pid} ({cur['path']}): new marker already present — skipping")
+                  continue
+              new_content = content.replace(old_marker, new_marker)
+              v = {
+                  "id": pid, "content": new_content,
+                  "description": cur.get("description") or "",
+                  "editor": "markdown", "isPrivate": False, "isPublished": True,
+                  "locale": cur.get("locale") or "en", "path": cur["path"],
+                  "tags": [t["tag"] for t in (cur.get("tags") or [])],
+                  "title": cur.get("title") or cur["path"].split("/")[-1],
+              }
+              rr = gql(UPDATE, v)["data"]["pages"]["update"]["responseResult"]
+              if rr["succeeded"]:
+                  print(f"  id={pid} ({cur['path']}): swapped")
+              else:
+                  print(f"  id={pid} ({cur['path']}): FAILED — {rr['message']}")
+                  sys.exit(1)
+          PYEOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/wk_token

@@ -47,7 +47,7 @@ jobs:
 
       - name: Sanity-check root token
         run: |
-          vault token lookup-self -format=json | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f'root token OK — policies={d[\"policies\"]}, ttl={d[\"ttl\"]}')"
+          vault read auth/token/lookup-self -format=json | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f'root token OK — policies={d[\"policies\"]}, ttl={d[\"ttl\"]}')"
 
       - name: Write bootstrap-ci policy
         run: |
@@ -109,7 +109,7 @@ jobs:
           echo "::add-mask::$NEW_TOKEN"
           echo "new_token=$NEW_TOKEN" >> $GITHUB_OUTPUT
           # Don't print the token. Print only metadata.
-          VAULT_TOKEN="$NEW_TOKEN" vault token lookup-self -format=json \
+          VAULT_TOKEN="$NEW_TOKEN" vault read auth/token/lookup-self -format=json \
             | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f'new token — policies={d[\"policies\"]}, period={d[\"period\"]}s, ttl={d[\"ttl\"]}s, renewable={d[\"renewable\"]}')"
 
       - name: Verify new token can read ssh_keys (regression of the original failure)
@@ -139,7 +139,7 @@ jobs:
         env:
           NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
         run: |
-          VAULT_TOKEN="$NEW_TOKEN" vault token lookup-self > /dev/null
+          VAULT_TOKEN="$NEW_TOKEN" vault read auth/token/lookup-self > /dev/null
           echo "lookup-self OK"
 
       - name: Update VAULT_DEV_TOKEN GitHub secret
