@@ -1,0 +1,128 @@
+name: WikiJS — Lock Guests group (no public read)
+
+# One-off: clear all permissions on the wikijs `Guests` group so anonymous
+# visitors see nothing. Prerequisite for dropping the Traefik forwardAuth
+# from the wikijs router (otherwise published pages become world-readable).
+#
+# Idempotent: skips if permissions are already empty.
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_ip:
+        description: 'Prod worker IP'
+        required: false
+        default: '192.168.10.21'
+      dry_run:
+        description: 'Show current state without changing it'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  WIKIJS_GQL_URL: http://192.168.10.21:3000/graphql
+
+jobs:
+  lock:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      DRY_RUN:     ${{ github.event.inputs.dry_run }}
+    steps:
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          [[ "$V" != http* ]] && V="http://${V}"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Fetch wikijs token from vault
+        run: |
+          set -o pipefail
+          vault kv get -field=token secret/wikijs/prod/api-token > /tmp/wk_token
+          chmod 600 /tmp/wk_token
+
+      - name: Show current Guests group state
+        run: |
+          python3 <<'PYEOF'
+          import json, os, urllib.request
+          token = open("/tmp/wk_token").read().strip()
+          gql = os.environ["WIKIJS_GQL_URL"]
+          h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+          def q(query):
+              req = urllib.request.Request(gql, data=json.dumps({"query": query}).encode(),
+                                           headers=h, method="POST")
+              return json.loads(urllib.request.urlopen(req, timeout=30).read())
+          r = q('{ groups { single(id: 2) { id name isSystem permissions pageRules { id deny match roles path locales } } } }')
+          g = r["data"]["groups"]["single"]
+          print(json.dumps(g, indent=2))
+          PYEOF
+
+      - name: Lock Guests permissions
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          python3 <<'PYEOF'
+          import json, os, urllib.request
+          token = open("/tmp/wk_token").read().strip()
+          gql = os.environ["WIKIJS_GQL_URL"]
+          h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+          def gqlq(query, variables=None):
+              req = urllib.request.Request(gql, data=json.dumps({"query": query, "variables": variables or {}}).encode(),
+                                           headers=h, method="POST")
+              return json.loads(urllib.request.urlopen(req, timeout=30).read())
+
+          # Current state
+          cur = gqlq('{ groups { single(id: 2) { id name permissions pageRules { id deny match roles path locales } } } }')["data"]["groups"]["single"]
+
+          # Idempotency check
+          if not cur["permissions"] and not cur["pageRules"]:
+              print("Guests already locked (no permissions, no pageRules) — no-op")
+              raise SystemExit(0)
+
+          # Send update: name=Guests (required), redirectOnLogin='', permissions=[],
+          # pageRules=[] — denies everything
+          mut = """
+          mutation Update($id: Int!, $name: String!, $redirectOnLogin: String!,
+                          $permissions: [String]!, $pageRules: [PageRuleInput]!) {
+            groups {
+              update(id: $id, name: $name, redirectOnLogin: $redirectOnLogin,
+                     permissions: $permissions, pageRules: $pageRules) {
+                responseResult { succeeded errorCode message }
+              }
+            }
+          }
+          """
+          vars_ = {
+              "id": 2,
+              "name": cur["name"] or "Guests",
+              "redirectOnLogin": "/",
+              "permissions": [],
+              "pageRules": [],
+          }
+          r = gqlq(mut, vars_)
+          rr = r["data"]["groups"]["update"]["responseResult"]
+          if rr["succeeded"]:
+              print(f"Guests locked. Previous: permissions={cur['permissions']}, pageRules={len(cur['pageRules'])}")
+          else:
+              print(f"FAILED: {rr['message']} ({rr['errorCode']})")
+              raise SystemExit(1)
+          PYEOF
+
+      - name: Verify
+        run: |
+          python3 <<'PYEOF'
+          import json, os, urllib.request
+          token = open("/tmp/wk_token").read().strip()
+          gql = os.environ["WIKIJS_GQL_URL"]
+          h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+          req = urllib.request.Request(gql, data=json.dumps({"query": '{ groups { single(id: 2) { name permissions pageRules { id } } } }'}).encode(), headers=h, method="POST")
+          g = json.loads(urllib.request.urlopen(req, timeout=30).read())["data"]["groups"]["single"]
+          print(f"After:  Guests permissions={g['permissions']}  pageRules={len(g['pageRules'])}")
+          PYEOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/wk_token
