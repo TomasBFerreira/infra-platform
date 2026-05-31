@@ -104,7 +104,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
@@ -124,7 +124,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
@@ -149,7 +149,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
@@ -233,7 +233,7 @@ jobs:
       - name: Fetch SSH key from bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           set -o pipefail
           vault kv get -field=private_key secret/ssh_keys/rancher_worker \
@@ -252,7 +252,7 @@ jobs:
       - name: Resolve active network-vm IP from bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           SLOT=$(vault kv get -field=slot secret/network-vm/${ENV}/active-slot 2>/dev/null || echo "blue")
           case "$ENV-$SLOT" in
@@ -269,7 +269,7 @@ jobs:
       - name: Ensure Rancher bootstrap password and fetch OIDC config
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           # Generate bootstrap password if not already set
           if ! vault kv get -field=password secret/rancher/${ENV}/bootstrap > /dev/null 2>&1; then
@@ -341,7 +341,7 @@ jobs:
       - name: Fetch Rancher credentials from Vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           RANCHER_PASSWORD=$(vault kv get -field=password secret/rancher/${ENV}/bootstrap)
           echo "::add-mask::$RANCHER_PASSWORD"
@@ -420,7 +420,7 @@ jobs:
       - name: Write rancher state to bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           ENV="${{ needs.resolve-rancher.outputs.environment }}"
           vault kv put secret/rancher/${ENV}/state \
@@ -532,7 +532,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
@@ -550,7 +550,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
