@@ -296,6 +296,48 @@ See `docs/runbooks.md § Recording a CMDB change from outside the cluster`.
 
 ---
 
+## Wiki Push Workflow
+
+**File:** `.github/workflows/push-wiki-pages.yml`
+**Purpose:** Push a batch of wiki page mutations to wikijs prod from a structured markdown source under `wiki-content/`.
+**Runs on:** `[self-hosted, prod]` (CT 101 — direct prod-subnet route to the k3s worker)
+
+### Why a workflow instead of paste-and-go
+
+Once the wiki has a documented page structure (`/services/...`, `/operations/runbooks/...`), keeping it in sync with reality means pushing repeated batches of small updates. Doing that via the UI is tedious and loses git history. The workflow:
+
+- reads the **API token from bootstrap vault** (`secret/wikijs/prod/api-token` field `token`) — no tokens in workflow logs
+- **idempotent**: re-runs of the same source are no-ops on already-applied UPDATEs (marker comment); NEW pages that already exist auto-switch to UPDATE-replace
+- **dry-run mode** for previewing
+- bypasses Traefik forwardAuth by hitting the k3s NodePort directly at `http://192.168.10.21:3000/graphql`
+
+### Source format
+
+Sections separated by `---`. Each section names a wiki path + an operation (NEW or UPDATE). See `wiki-content/README.md` for the full schema and examples.
+
+### Inputs
+
+| Input | Description |
+|-------|-------------|
+| `source_path` | Path under this repo to the markdown file (must start with `wiki-content/`) |
+| `marker_id` | Idempotency tag for UPDATE-append blocks (default: source filename without extension) |
+| `replace_paths` | Comma-separated wiki paths to fully REPLACE on UPDATE (default: `home/home`) |
+| `dry_run` | `true` parses + plans only; no mutations |
+
+### When to run
+
+- After committing a wiki-content/*.md batch to `main`.
+- To recover after a wikijs DB restore (re-push the entire `wiki-content/` history idempotently).
+- Whenever the canonical docs in `/app/issues/*.md` or repo CLAUDE.md files change in a way that needs to surface on the wiki.
+
+### Token rotation
+
+1. wikijs Administration → API Access → Generate new key.
+2. Dispatch `seed-bootstrap-vault.yml` with `secret_path=wikijs-api-token` and the new token.
+3. Revoke the old key in wikijs.
+
+---
+
 ## Helper / Utility Workflows
 
 | Workflow | Purpose |

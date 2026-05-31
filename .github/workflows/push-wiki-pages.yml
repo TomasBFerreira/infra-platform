@@ -1,0 +1,109 @@
+name: Wiki — Push pages from a markdown report
+
+# Pushes a batch of wiki pages from a structured markdown file (under
+# `wiki-content/` in this repo) to the prod wikijs at wikijs.databaes.net.
+#
+# Idempotent: NEW pages flip to UPDATE-replace if they already exist;
+# UPDATE-append pages use an HTML-comment marker so the same content
+# can be re-pushed without duplicating.
+#
+# Routing: runs on [self-hosted, prod] — CT 101, prod subnet — which
+# can reach the wikijs k3s NodePort (192.168.10.21:3000) directly,
+# bypassing Traefik forwardAuth. API token is fetched at runtime from
+# bootstrap vault path `secret/wikijs/prod/api-token` (field: `token`).
+# No tokens in workflow inputs or logs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_path:
+        description: 'Markdown file under wiki-content/ (path within this repo)'
+        required: true
+      marker_id:
+        description: 'Idempotency tag for UPDATE-append blocks (default: source filename without extension)'
+        required: false
+        default: ''
+      replace_paths:
+        description: 'Wiki paths to fully REPLACE on UPDATE (comma-separated)'
+        required: false
+        default: 'home/home'
+      dry_run:
+        description: 'Parse + plan only; no mutations'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  WIKIJS_GQL_URL: http://192.168.10.21:3000/graphql
+
+jobs:
+  push:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:    ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      SOURCE_PATH:   ${{ github.event.inputs.source_path }}
+      MARKER_ID:     ${{ github.event.inputs.marker_id }}
+      REPLACE_PATHS: ${{ github.event.inputs.replace_paths }}
+      DRY_RUN:       ${{ github.event.inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate source path is under wiki-content/
+        run: |
+          set -euo pipefail
+          case "${SOURCE_PATH}" in
+            wiki-content/*) ;;
+            *) echo "ERROR: source_path must start with wiki-content/ (got: ${SOURCE_PATH})"; exit 1 ;;
+          esac
+          if [ ! -f "${SOURCE_PATH}" ]; then
+            echo "ERROR: ${SOURCE_PATH} not found in checkout"
+            exit 1
+          fi
+          echo "Source: ${SOURCE_PATH} ($(wc -l < "${SOURCE_PATH}") lines, $(wc -c < "${SOURCE_PATH}") bytes)"
+
+      - name: Normalise Vault address
+        run: |
+          V="${VAULT_ADDR}"
+          [[ "$V" != http* ]] && V="http://${V}"
+          echo "VAULT_ADDR=$V" >> $GITHUB_ENV
+
+      - name: Fetch wikijs API token from bootstrap vault
+        run: |
+          set -o pipefail
+          vault kv get -field=token secret/wikijs/prod/api-token > /tmp/wiki_token
+          chmod 600 /tmp/wiki_token
+          if [ ! -s /tmp/wiki_token ]; then
+            echo "ERROR: token at secret/wikijs/prod/api-token is empty"
+            exit 1
+          fi
+
+      - name: Probe wikijs reachable
+        run: |
+          set -euo pipefail
+          # GraphQL endpoint takes a POST with a query; GET responds 405 — that
+          # tells us the service is up. We can't healthz it cleanly without
+          # auth.
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' "${WIKIJS_GQL_URL}")
+          case "$CODE" in
+            200|400|404|405) echo "wikijs reachable (HTTP $CODE)" ;;
+            *) echo "ERROR: wikijs unreachable at ${WIKIJS_GQL_URL} (HTTP $CODE)"; exit 1 ;;
+          esac
+
+      - name: Push wiki pages
+        run: |
+          set -euo pipefail
+          ARGS=()
+          [ -n "${MARKER_ID}" ]    && ARGS+=("--marker-id"     "${MARKER_ID}")
+          [ -n "${REPLACE_PATHS}" ] && ARGS+=("--replace-paths" "${REPLACE_PATHS}")
+          [ "${DRY_RUN}" = "true" ] && ARGS+=("--dry-run")
+          python3 scripts/push_wiki_pages.py \
+            "${SOURCE_PATH}" "${WIKIJS_GQL_URL}" /tmp/wiki_token \
+            "${ARGS[@]}"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/wiki_token

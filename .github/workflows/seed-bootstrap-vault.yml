@@ -15,6 +15,7 @@ on:
           - cloudflare-dns
           - ssh-key
           - qbittorrent
+          - wikijs-api-token
       # ssh-key
       ssh_key_name:
         description: '[ssh-key] Key name (e.g. torrent_worker) — stored at secret/ssh_keys/<key_name>'
@@ -67,6 +68,14 @@ on:
       qb_password:
         description: '[qbittorrent] WebUI password'
         required: false
+      # wikijs-api-token
+      wikijs_env:
+        description: '[wikijs-api-token] env: dev | prod (default prod)'
+        required: false
+        default: 'prod'
+      wikijs_api_token:
+        description: '[wikijs-api-token] Bearer token from wikijs Administration → API Access'
+        required: false
 
 jobs:
   seed:
@@ -114,6 +123,11 @@ jobs:
               vault kv put secret/qbittorrent \
                 username="${{ github.event.inputs.qb_username }}" \
                 password="${{ github.event.inputs.qb_password }}"
+              ;;
+            wikijs-api-token)
+              WK_ENV="${{ github.event.inputs.wikijs_env }}"
+              vault kv put "secret/wikijs/${WK_ENV:-prod}/api-token" \
+                token="${{ github.event.inputs.wikijs_api_token }}"
               ;;
           esac
           echo "Written secret/$SECRET to bootstrap vault."
