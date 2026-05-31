@@ -40,7 +40,7 @@ jobs:
         id: slots
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           ENV="${{ github.event.inputs.environment || 'dev' }}"
 
@@ -149,7 +149,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
@@ -167,7 +167,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
@@ -194,7 +194,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
@@ -280,7 +280,7 @@ jobs:
       - name: Fetch SSH key from bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/torrent_worker \
             | awk 'NF > 0' > /tmp/torrent_worker_key
@@ -347,7 +347,7 @@ jobs:
       - name: Record new active slot in bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           ENV="${{ needs.resolve-slots.outputs.environment }}"
           vault kv put secret/torrent/$ENV/active-slot \
@@ -420,7 +420,7 @@ jobs:
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     env:
       VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
       ENV:         ${{ needs.resolve-slots.outputs.environment }}
       NEW_IP:      ${{ needs.resolve-slots.outputs.staging_ip }}
     steps:
@@ -513,7 +513,7 @@ print(json.dumps(c))
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
@@ -531,7 +531,7 @@ print(json.dumps(c))
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address:    ${{ env.ACTIVE_IP }}
@@ -597,7 +597,7 @@ print(json.dumps(c))
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}
@@ -615,7 +615,7 @@ print(json.dumps(c))
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:    ${{ env.STAGING_IP }}

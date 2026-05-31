@@ -98,7 +98,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
@@ -118,7 +118,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
@@ -143,7 +143,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
@@ -183,14 +183,14 @@ jobs:
       - name: Inject GH_PAT into bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           vault kv put secret/github-runner/gh_pat token="${{ secrets.GH_PAT }}"
 
       - name: Fetch SSH key from bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           set -o pipefail
           vault kv get -field=private_key secret/ssh_keys/github_runner_worker \
@@ -209,7 +209,7 @@ jobs:
       - name: Run Ansible playbook
         env:
           VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_DEV_TOKEN:      ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_DEV_TOKEN:      ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           PRIMARY_REPO: ${{ github.event.inputs.github_repo || 'TomasBFerreira/infra-platform' }}
         run: |
           ssh-keygen -R "${IP}" || true
@@ -232,7 +232,7 @@ jobs:
       - name: Re-register additional repos from registered-repos.yml
         env:
           VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_DEV_TOKEN:      ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_DEV_TOKEN:      ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           PRIMARY_REPO: ${{ github.event.inputs.github_repo || 'TomasBFerreira/infra-platform' }}
         run: |
           set -euo pipefail
@@ -273,7 +273,7 @@ jobs:
       - name: Write runner state to bootstrap vault
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           ENV="${{ needs.resolve-runner.outputs.environment }}"
           vault kv put secret/github-runner/${ENV}/state \
@@ -327,7 +327,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
@@ -345,7 +345,7 @@ jobs:
           TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:      ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:   ${{ secrets.VAULT_DEV_TOKEN }}
+          TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
           TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:          ${{ env.VMID }}
           TF_VAR_ip_address:    ${{ env.IP }}
