@@ -146,12 +146,11 @@ jobs:
         env:
           NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
         run: |
-          # Write to a temp file to avoid the token leaking via process listing.
-          printf '%s' "$NEW_TOKEN" > /tmp/.new_dev_token
-          gh secret set VAULT_DEV_TOKEN \
-            --body-file /tmp/.new_dev_token \
+          # Pipe via stdin — older gh CLI versions don't support --body-file,
+          # and --body would leak the token via process listing. With no flag
+          # gh reads stdin.
+          printf '%s' "$NEW_TOKEN" | gh secret set VAULT_DEV_TOKEN \
             --repo TomasBFerreira/infra-platform
-          rm -f /tmp/.new_dev_token
           echo "VAULT_DEV_TOKEN updated."
 
       - name: Summary
