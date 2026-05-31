@@ -179,9 +179,10 @@ def build_desired_monitors(config: Dict[str, Any]) -> List[Dict[str, Any]]:
             continue
         if entry.get("mode") not in {"simple", "probe-endpoint"}:
             continue
+        entry_prefix = entry.get("namePrefix", prefix)
         desired.append(
             {
-                "name": f"{prefix}{entry['name']}",
+                "name": f"{entry_prefix}{entry['name']}",
                 "uri": entry["url"],
                 "type": "SIMPLE",
                 "frequency": entry.get("frequencyMinutes", default_frequency),
@@ -323,6 +324,7 @@ def normalize_condition(condition: Dict[str, Any]) -> Dict[str, Any]:
 def validate_config(config: Dict[str, Any]) -> List[str]:
     errors: List[str] = []
     defaults = config.get("defaults", {})
+    default_prefix = defaults.get("namePrefix", "")
     if not defaults.get("namePrefix"):
         errors.append("defaults.namePrefix is required")
     if not defaults.get("locations"):
@@ -345,6 +347,7 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
     for entry in config.get("monitors", []):
         slug = entry.get("slug")
         name = entry.get("name")
+        effective_name = f"{entry.get('namePrefix', default_prefix)}{name}" if name else None
         url = entry.get("url")
         mode = entry.get("mode")
         if not slug:
@@ -356,10 +359,10 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
 
         if not name:
             errors.append(f"Monitor {slug or '<unknown>'} requires a name")
-        elif name in seen_names:
-            errors.append(f"Duplicate name: {name}")
+        elif effective_name in seen_names:
+            errors.append(f"Duplicate name: {effective_name}")
         else:
-            seen_names.add(name)
+            seen_names.add(effective_name)
 
         if not url:
             errors.append(f"Monitor {slug or name or '<unknown>'} requires a url")
