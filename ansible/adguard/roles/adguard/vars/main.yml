@@ -45,6 +45,7 @@ adguard_dev_rewrites:
   - domain: prowlarr-dev.databaes.net
   - domain: radarr-dev.databaes.net
   - domain: sonarr-dev.databaes.net
+  - domain: tomajflix-dev.databaes.net
   - domain: dev.databaes.net
 
 adguard_qa_rewrites:
