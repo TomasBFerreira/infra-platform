@@ -100,7 +100,7 @@ class NewRelicClient:
             "PATCH",
             f"/monitors/{monitor_id}",
             patch_payload,
-            expected=(200, 202),
+            expected=(200, 202, 204),
         )
 
     def delete_monitor(self, monitor_id: str) -> None:
