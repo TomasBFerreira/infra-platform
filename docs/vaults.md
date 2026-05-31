@@ -66,6 +66,7 @@ Runner state (singletons, no slot rotation):
 | `secret/cloudflared/<env>/active-slot` | `slot, vmid, ip` | cloudflared pipeline (network-vm split — reserved; auto-created on first deploy) |
 | `secret/network-vm/prod/active-slot` | `slot, vmid, ip` | network-vm pipeline |
 | `secret/pbs/cluster-storage` | `server, datastore, username, token_secret, fingerprint` | pbs pipeline — used by `pvesm add pbs` on all cluster nodes |
+| `secret/wikijs/prod/api-token` | `token` | Manual setup — issued from wikijs Administration → API Access; consumed by `push-wiki-pages.yml`. Re-issue if it leaks; rotation has no automated path yet. |
 | `secret/sso/dev/active-slot` | `slot, vmid, ip` | SSO pipeline |
 | `secret/sso/prod/active-slot` | `slot, vmid, ip` | SSO pipeline |
 
