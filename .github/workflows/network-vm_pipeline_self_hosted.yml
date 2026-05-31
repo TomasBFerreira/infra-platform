@@ -365,7 +365,12 @@ jobs:
               ;;
           esac
           export VAULT_ADDR VAULT_TOKEN
-          TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+          # Per-env path (mirrors PR #235 for adguard-lxc/traefik-lxc playbooks).
+          # The legacy non-suffixed secret/tailscale was last refreshed
+          # 2026-04-01 and is now stale — switching to the per-env paths that
+          # the periodic re-seeder keeps current. See dev-gateway-incident-
+          # 2026-05-27.md and the tailscale-vault-paths memory.
+          TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale/$ENV)
           # WireGuard only enabled for prod — dev routes everything normally
           if [ "$ENV" = "prod" ]; then
             WG_PRIVATE_KEY=$(vault kv get -field=private_key secret/wireguard 2>/dev/null || echo "")
