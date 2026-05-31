@@ -1,0 +1,103 @@
+name: Sync New Relic synthetics
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/sync-newrelic-synthetics.yml'
+      - 'monitoring/newrelic/**'
+      - 'scripts/sync_newrelic_synthetics.py'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview changes without applying them"
+        required: false
+        default: true
+        type: boolean
+      prune:
+        description: "Delete repo-managed monitors missing from the config"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/sync-newrelic-synthetics.yml"
+      - "monitoring/newrelic/**"
+      - "scripts/sync_newrelic_synthetics.py"
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-newrelic-synthetics
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on:
+      - self-hosted
+      - prod
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read New Relic credentials from prod Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_PROD_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_PROD_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          addr = os.environ["VAULT_ADDR"].rstrip("/")
+          token = os.environ["VAULT_TOKEN"]
+          request = urllib.request.Request(
+              f"{addr}/v1/secret/data/monitoring/shared/newrelic",
+              headers={"X-Vault-Token": token},
+          )
+
+          with urllib.request.urlopen(request, timeout=30) as response:
+              payload = json.load(response)
+
+          data = payload["data"]["data"]
+          github_env = os.environ["GITHUB_ENV"]
+
+          for source_field, env_name in (
+              ("user_api_key", "NEWRELIC_API_KEY"),
+              ("account_id", "NEWRELIC_ACCOUNT_ID"),
+              ("region", "NEWRELIC_REGION"),
+          ):
+              value = str(data[source_field])
+              print(f"::add-mask::{value}")
+              with open(github_env, "a", encoding="utf-8") as handle:
+                  handle.write(f"{env_name}={value}\n")
+          PY
+
+      - name: Validate desired-state file
+        run: python3 scripts/sync_newrelic_synthetics.py --config monitoring/newrelic/monitors.json --validate
+
+      - name: Sync monitors
+        env:
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          INPUT_PRUNE: ${{ github.event.inputs.prune }}
+        run: |
+          set -euo pipefail
+          args=(--config monitoring/newrelic/monitors.json)
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            args+=(--dry-run)
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${INPUT_DRY_RUN:-}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${INPUT_PRUNE:-}" == "true" ]]; then
+            args+=(--allow-delete)
+          fi
+
+          python3 scripts/sync_newrelic_synthetics.py "${args[@]}"
