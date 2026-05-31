@@ -93,11 +93,13 @@ class NewRelicClient:
         return self._request(self.base_url, "POST", "/monitors", payload, expected=(200, 201))
 
     def update_monitor(self, monitor_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        patch_payload = dict(payload)
+        patch_payload.pop("type", None)
         return self._request(
             self.base_url,
             "PATCH",
             f"/monitors/{monitor_id}",
-            payload,
+            patch_payload,
             expected=(200, 202),
         )
 
