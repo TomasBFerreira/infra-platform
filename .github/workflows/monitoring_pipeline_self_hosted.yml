@@ -224,7 +224,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:       ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:    ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:     ${{ env.STAGING_IP }}
@@ -244,7 +244,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:       ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:    ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:     ${{ env.STAGING_IP }}
@@ -273,7 +273,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:       ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:    ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:     ${{ env.STAGING_IP }}
@@ -315,25 +315,13 @@ jobs:
           ansible-galaxy collection install -r ansible/requirements.yml
 
       - name: Fetch SSH key from bootstrap Vault
-        # Uses VAULT_BOOTSTRAP_ROOT_TOKEN — VAULT_DEV_TOKEN's policy doesn't
-        # cover secret/ssh_keys/* reads (it can read secret/monitoring/* but
-        # not the cross-env ssh_keys path). Same workaround as PR #274.
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/monitoring_worker \
             | awk 'NF > 0' > /tmp/ansible_monitoring_id_ed25519
           chmod 600 /tmp/ansible_monitoring_id_ed25519
-          # Sanity-check the key actually loaded (catches an empty file —
-          # vault returns 403 silently to stderr and produces an empty
-          # stdout, which makes ansible fail later with the cryptic
-          # "Load key: error in libcrypto"). Fail fast here instead.
-          if ! head -c 50 /tmp/ansible_monitoring_id_ed25519 | grep -q "PRIVATE KEY"; then
-            echo "ERROR: /tmp/ansible_monitoring_id_ed25519 doesn't look like a private key — vault read likely failed"
-            wc -c /tmp/ansible_monitoring_id_ed25519
-            exit 1
-          fi
 
       - name: Fetch Grafana admin password from Vault (create if absent)
         env:
@@ -380,13 +368,9 @@ jobs:
     runs-on: [self-hosted, "${{ needs.resolve-slots.outputs.environment }}"]
     steps:
       - name: Record new active slot in bootstrap Vault
-        # VAULT_DEV_TOKEN's policy doesn't cover the kv2-mount autodetect
-        # (sys/internal/ui/mounts) that `vault kv put` does — fails 403 even
-        # though kv writes elsewhere in the same vault work. Same workaround
-        # as PRs #274, #275.
         env:
           VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           ENV="${{ needs.resolve-slots.outputs.environment }}"
           vault kv put secret/monitoring/$ENV/active-slot \
@@ -421,7 +405,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:       ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:    ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address:     ${{ env.ACTIVE_IP }}
@@ -441,7 +425,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:       ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:    ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.ACTIVE_VMID }}
           TF_VAR_ip_address:     ${{ env.ACTIVE_IP }}
@@ -509,7 +493,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:       ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:    ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:     ${{ env.STAGING_IP }}
@@ -529,7 +513,7 @@ jobs:
           TF_VAR_pve_user:       ${{ secrets.PVE_USER }}
           TF_VAR_pve_pass:       ${{ (inputs.environment || 'dev') == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
           TF_VAR_ssh_user:       ${{ secrets.SSH_USER }}
-          TF_VAR_vault_token:    ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          TF_VAR_vault_token:    ${{ secrets.VAULT_DEV_TOKEN }}
           TF_VAR_vault_address:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           TF_VAR_vmid:           ${{ env.STAGING_VMID }}
           TF_VAR_ip_address:     ${{ env.STAGING_IP }}
