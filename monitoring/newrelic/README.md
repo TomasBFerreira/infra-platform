@@ -16,7 +16,7 @@ The sync script also manages a shared alert policy:
 
 - `Homelab | Internet synthetic monitors`
 
-and one synthetic alert condition per enabled simple monitor.
+and one location-failure alert condition per enabled simple monitor.
 
 That means a failing check can generate a New Relic incident instead of only existing as a red monitor.
 
@@ -52,7 +52,7 @@ Suggested Vault layout:
 - reads the New Relic credentials from prod Vault using the existing `VAULT_PROD_ADDR` and `VAULT_PROD_TOKEN` repo secrets
 - creates or updates repo-managed monitors
 - creates the shared alert policy if it does not exist
-- creates or updates synthetic alert conditions for enabled simple monitors
+- creates or updates location-failure alert conditions for enabled simple monitors
 - only deletes repo-managed monitors when explicitly told to prune
 
 Only monitors whose names start with `Homelab | ` are considered repo-managed.
