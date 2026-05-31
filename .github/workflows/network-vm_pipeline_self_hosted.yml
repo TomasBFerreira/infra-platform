@@ -348,7 +348,21 @@ jobs:
             | awk 'NF > 0' > /tmp/network_vm_key
           chmod 600 /tmp/network_vm_key
 
-      - name: Fetch secrets from Vault
+      - name: Fetch Tailscale auth key from bootstrap vault
+        # secret/tailscale/<env> lives in the bootstrap vault (CT 200), not the
+        # per-env app vaults — same pattern as adguard_pipeline.yml after #235.
+        # The legacy non-suffixed secret/tailscale was last refreshed
+        # 2026-04-01 and is stale; per-env paths are kept current by the
+        # periodic re-seeder.
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          TS_AUTHKEY=$(vault kv get -field=authkey "secret/tailscale/${ENV}")
+          echo "::add-mask::$TS_AUTHKEY"
+          echo "TS_AUTHKEY=$TS_AUTHKEY" >> "$GITHUB_ENV"
+
+      - name: Fetch env-vault app secrets
         run: |
           case "$ENV" in
             dev)
@@ -365,12 +379,6 @@ jobs:
               ;;
           esac
           export VAULT_ADDR VAULT_TOKEN
-          # Per-env path (mirrors PR #235 for adguard-lxc/traefik-lxc playbooks).
-          # The legacy non-suffixed secret/tailscale was last refreshed
-          # 2026-04-01 and is now stale — switching to the per-env paths that
-          # the periodic re-seeder keeps current. See dev-gateway-incident-
-          # 2026-05-27.md and the tailscale-vault-paths memory.
-          TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale/$ENV)
           # WireGuard only enabled for prod — dev routes everything normally
           if [ "$ENV" = "prod" ]; then
             WG_PRIVATE_KEY=$(vault kv get -field=private_key secret/wireguard 2>/dev/null || echo "")
@@ -389,15 +397,14 @@ jobs:
           else
             CF_TUNNEL_TOKEN="${{ secrets.CLOUDFLARE_DEV_TUNNEL_TOKEN }}"
           fi
-          echo "::add-mask::$TS_AUTHKEY"
           echo "::add-mask::$WG_PRIVATE_KEY"
           echo "::add-mask::$WG_PEER_PUBLIC_KEY"
           echo "::add-mask::$ADGUARD_PASS"
           echo "::add-mask::$CF_TUNNEL_TOKEN"
           # Env tag: dev/qa/prod maps to tag:dev / tag:qa / tag:prod
+          # (TS_AUTHKEY already exported by the bootstrap-vault step above.)
           TS_TAGS="tag:container,tag:${ENV},tag:subnet-router"
           echo "TS_TAGS=$TS_TAGS" >> $GITHUB_ENV
-          echo "TS_AUTHKEY=$TS_AUTHKEY" >> $GITHUB_ENV
           echo "WG_PRIVATE_KEY=$WG_PRIVATE_KEY" >> $GITHUB_ENV
           echo "WG_PEER_PUBLIC_KEY=$WG_PEER_PUBLIC_KEY" >> $GITHUB_ENV
           echo "WG_ENDPOINT=$WG_ENDPOINT" >> $GITHUB_ENV
