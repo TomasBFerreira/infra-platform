@@ -7,7 +7,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 def load_config(path: str) -> Dict[str, Any]:
@@ -117,6 +117,15 @@ class NewRelicClient:
             expected=(200, 201),
         )
 
+    def update_policy(self, policy_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._request(
+            self.rest_base_url,
+            "PUT",
+            f"/alerts_policies/{policy_id}.json",
+            {"policy": payload},
+            expected=(200, 201),
+        )
+
     def list_location_failure_conditions(self, policy_id: str) -> List[Dict[str, Any]]:
         response = self._request(
             self.rest_base_url,
@@ -218,6 +227,61 @@ def build_desired_conditions(
             payload["runbook_url"] = runbook_url
         desired_conditions[condition_name] = payload
     return desired_conditions
+
+
+def managed_prefixes(config: Dict[str, Any]) -> List[str]:
+    defaults = config.get("defaults", {})
+    prefixes = [defaults.get("namePrefix", "")]
+    prefixes.extend(defaults.get("legacyNamePrefixes", []))
+    return [prefix for prefix in prefixes if prefix]
+
+
+def find_existing_monitor(
+    desired_monitor: Dict[str, Any],
+    existing_monitors: Sequence[Dict[str, Any]],
+    existing_by_name: Dict[str, Dict[str, Any]],
+    prefixes: Sequence[str],
+) -> Optional[Dict[str, Any]]:
+    exact = existing_by_name.get(desired_monitor["name"])
+    if exact is not None:
+        return exact
+
+    uri_matches = [
+        monitor
+        for monitor in existing_monitors
+        if monitor.get("uri") == desired_monitor["uri"]
+        and (not prefixes or any(str(monitor.get("name", "")).startswith(prefix) for prefix in prefixes))
+    ]
+    if len(uri_matches) == 1:
+        return uri_matches[0]
+    return None
+
+
+def condition_entity_key(condition: Dict[str, Any]) -> Tuple[str, ...]:
+    return tuple(sorted(str(entity) for entity in condition.get("entities", [])))
+
+
+def find_existing_condition(
+    condition_name: str,
+    payload: Dict[str, Any],
+    existing_conditions_by_name: Dict[str, Dict[str, Any]],
+    existing_conditions: Sequence[Dict[str, Any]],
+    prefixes: Sequence[str],
+) -> Optional[Dict[str, Any]]:
+    exact = existing_conditions_by_name.get(condition_name)
+    if exact is not None:
+        return exact
+
+    entity_key = condition_entity_key(payload)
+    entity_matches = [
+        condition
+        for condition in existing_conditions
+        if condition_entity_key(condition) == entity_key
+        and (not prefixes or any(str(condition.get("name", "")).startswith(prefix) for prefix in prefixes))
+    ]
+    if len(entity_matches) == 1:
+        return entity_matches[0]
+    return None
 
 
 def normalize_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
@@ -367,10 +431,10 @@ def main() -> int:
     existing_monitors = client.list_monitors()
     existing_by_name = {monitor.get("name"): monitor for monitor in existing_monitors}
     desired_names = {monitor["name"] for monitor in desired}
-    prefix = config.get("defaults", {}).get("namePrefix", "")
+    prefixes = managed_prefixes(config)
 
     for monitor in desired:
-        current = existing_by_name.get(monitor["name"])
+        current = find_existing_monitor(monitor, existing_monitors, existing_by_name, prefixes)
         payload = {
             key: value
             for key, value in monitor.items()
@@ -392,7 +456,7 @@ def main() -> int:
     if args.allow_delete:
         for current in existing_monitors:
             current_name = current.get("name", "")
-            if not current_name.startswith(prefix):
+            if not any(current_name.startswith(known_prefix) for known_prefix in prefixes):
                 continue
             if current_name in desired_names:
                 continue
@@ -408,6 +472,16 @@ def main() -> int:
             (policy for policy in policies if policy.get("name") == policy_config["name"]),
             None,
         )
+        legacy_policy_names = policy_config.get("legacyNames", [])
+        if existing_policy is None:
+            existing_policy = next(
+                (
+                    policy
+                    for policy in policies
+                    if policy.get("name") in legacy_policy_names
+                ),
+                None,
+            )
         if existing_policy is None:
             policy_payload = {
                 "name": policy_config["name"],
@@ -421,7 +495,20 @@ def main() -> int:
                 policy_id = str(created_policy["policy"]["id"])
         else:
             policy_id = str(existing_policy["id"])
-            print(f"OK     POLICY {policy_config['name']}")
+            current_policy_payload = {
+                "name": existing_policy.get("name"),
+                "incident_preference": existing_policy.get("incident_preference"),
+            }
+            desired_policy_payload = {
+                "name": policy_config["name"],
+                "incident_preference": policy_config["incidentPreference"],
+            }
+            if current_policy_payload != desired_policy_payload:
+                print(f"UPDATE POLICY {policy_config['name']}")
+                if not args.dry_run:
+                    client.update_policy(policy_id, desired_policy_payload)
+            else:
+                print(f"OK     POLICY {policy_config['name']}")
 
         refreshed_monitors = client.list_monitors()
         monitors_by_name = {monitor.get("name"): monitor for monitor in refreshed_monitors}
@@ -436,7 +523,13 @@ def main() -> int:
         }
 
         for condition_name, payload in desired_conditions.items():
-            current = existing_conditions_by_name.get(condition_name)
+            current = find_existing_condition(
+                condition_name,
+                payload,
+                existing_conditions_by_name,
+                existing_conditions,
+                prefixes,
+            )
             if current is None:
                 print(f"CREATE CONDITION {condition_name}")
                 if not args.dry_run:
@@ -456,7 +549,7 @@ def main() -> int:
                 current_name = current.get("name")
                 if current_name in desired_condition_names:
                     continue
-                if not str(current_name).startswith(prefix):
+                if not any(str(current_name).startswith(known_prefix) for known_prefix in prefixes):
                     continue
                 print(f"DELETE CONDITION {current_name}")
                 if not args.dry_run:

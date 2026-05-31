@@ -1,16 +1,22 @@
 {
   "defaults": {
-    "namePrefix": "Homelab | ",
+    "namePrefix": "PROD | ",
+    "legacyNamePrefixes": [
+      "Homelab | "
+    ],
     "frequencyMinutes": 5,
     "locations": [
-      "AWS_US_EAST_1"
+      "AWS_EU_WEST_2"
     ],
     "status": "ENABLED"
   },
   "alerts": {
     "policy": {
       "enabled": true,
-      "name": "Homelab | Internet synthetic monitors",
+      "name": "PROD | Internet synthetic monitors",
+      "legacyNames": [
+        "Homelab | Internet synthetic monitors"
+      ],
       "incidentPreference": "PER_POLICY"
     },
     "conditionDefaults": {
