@@ -58,6 +58,10 @@ adguard_qa_rewrites:
   - domain: ops-qa.databaes.net
   - domain: qa.databaes.net
   - domain: databaes-landing-page-qa.databaes.net
+  - domain: tomajflix-qa.databaes.net
+  - domain: prowlarr-qa.databaes.net
+  - domain: sonarr-qa.databaes.net
+  - domain: radarr-qa.databaes.net
 
 # Empty today — populate when a prod AdGuard rewrite is needed.
 adguard_prod_rewrites: []
