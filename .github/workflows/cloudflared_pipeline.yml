@@ -47,6 +47,9 @@ jobs:
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+          PVE_PASS_DEV_QA: ${{ secrets.PVE_PASS }}
+          PVE_PASS_PROD:   ${{ secrets.PVE_PROD_PASS }}
         run: |
           ENV="${{ github.event.inputs.environment || 'dev' }}"
 
@@ -57,6 +60,7 @@ jobs:
               PVE_NODE="benedict"
               PVE_API_URL="https://192.168.50.4:8006/api2/json"
               GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
+              PVE_PASS="$PVE_PASS_DEV_QA"
               ;;
             qa)
               BLUE_VMID=393;  BLUE_IP="192.168.30.93"
@@ -64,6 +68,7 @@ jobs:
               PVE_NODE="heaton"
               PVE_API_URL="https://192.168.50.8:8006/api2/json"
               GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
+              PVE_PASS="$PVE_PASS_DEV_QA"
               ;;
             prod)
               BLUE_VMID=193;  BLUE_IP="192.168.10.93"
@@ -71,13 +76,45 @@ jobs:
               PVE_NODE="betsy"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
               GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
+              PVE_PASS="$PVE_PASS_PROD"
               ;;
           esac
 
           BLUE_HOST="cloudflared-lxc-blue"
           GREEN_HOST="cloudflared-lxc-green"
 
-          ACTIVE_SLOT=$(vault kv get -field=slot secret/cloudflared/$ENV/active-slot 2>/dev/null || echo "none")
+          ACTIVE_SLOT=$(vault kv get -field=slot secret/cloudflared/$ENV/active-slot 2>/dev/null || echo "")
+
+          # ─── First-run trap guard (same pattern as PR #294 for network-vm) ────
+          # An empty Vault slot could be data corruption (write-empty from a prior
+          # run) rather than a genuine first deploy. Cross-check Proxmox: if
+          # either VMID already exists, refuse to treat as first-run.
+          if [ -z "$ACTIVE_SLOT" ]; then
+            echo "::warning::Vault returned empty active-slot for $ENV — probing PVE before treating as first-run"
+            TICKET_RESP=$(curl -sk --max-time 10 -X POST "${PVE_API_URL}/access/ticket" \
+              --data-urlencode "username=${PVE_USER}" \
+              --data-urlencode "password=${PVE_PASS}")
+            PVE_TICKET=$(echo "$TICKET_RESP" | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["ticket"])' 2>/dev/null)
+            if [ -z "$PVE_TICKET" ]; then
+              echo "::error::Could not authenticate to PVE at $PVE_API_URL — cannot safely decide first-run"
+              exit 1
+            fi
+            EXISTING=""
+            for VMID in "$BLUE_VMID" "$GREEN_VMID"; do
+              STATUS=$(curl -sk --max-time 10 -o /dev/null -w "%{http_code}" \
+                -H "Cookie: PVEAuthCookie=${PVE_TICKET}" \
+                "${PVE_API_URL}/nodes/${PVE_NODE}/lxc/${VMID}/status/current")
+              [ "$STATUS" = "200" ] && EXISTING="$EXISTING $VMID"
+            done
+            if [ -n "$EXISTING" ]; then
+              echo "::error::Vault slot empty but CTs already exist:$EXISTING on $PVE_NODE."
+              echo "::error::Refusing to treat as first-run — would destroy the existing CT."
+              echo "::error::Recovery: vault kv put secret/cloudflared/$ENV/active-slot slot=<blue|green> vmid=<vmid> ip=<ip>"
+              exit 1
+            fi
+            echo "No CT at $BLUE_VMID or $GREEN_VMID — genuine first run, deploying to blue"
+            ACTIVE_SLOT="none"
+          fi
 
           if [ "$ACTIVE_SLOT" = "none" ]; then
             STAGING_SLOT="blue"
@@ -231,19 +268,24 @@ jobs:
           chmod 600 /tmp/cloudflared_key
 
       - name: Fetch secrets from Vault
-        # secret/tailscale + secret/cloudflare-tunnel live in the BOOTSTRAP
-        # vault per docs/vaults.md. Dev/qa tunnel token is still sourced
-        # from the GH secret because there's no dev tunnel entry in vault
-        # (it's prod-only — matches the network-vm pattern).
+        # All three CF tunnel tokens live in the bootstrap vault under per-env
+        # paths (dev was migrated 2026-06-01; prod was corrected 2026-05-31;
+        # qa was created 2026-06-01). Tailscale auth keys are at the same
+        # per-env path pattern from PR #235.
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           TS_AUTHKEY=$(vault kv get -field=authkey "secret/tailscale/${ENV}")
-          if [ "$ENV" = "prod" ]; then
-            CF_TUNNEL_TOKEN=$(vault kv get -field=token secret/cloudflare-tunnel 2>/dev/null || echo "")
-          else
-            CF_TUNNEL_TOKEN="${{ secrets.CLOUDFLARE_DEV_TUNNEL_TOKEN }}"
+          case "$ENV" in
+            prod) CF_PATH=secret/cloudflare-tunnel ;;
+            qa)   CF_PATH=secret/cloudflare-tunnel-qa ;;
+            dev)  CF_PATH=secret/cloudflare-tunnel-dev ;;
+          esac
+          CF_TUNNEL_TOKEN=$(vault kv get -field=token "$CF_PATH" 2>/dev/null || echo "")
+          if [ -z "$CF_TUNNEL_TOKEN" ]; then
+            echo "::error::No CF tunnel token at $CF_PATH — refusing to deploy a cloudflared-lxc with no token (would just sit idle)."
+            exit 1
           fi
           echo "::add-mask::$TS_AUTHKEY"
           echo "::add-mask::$CF_TUNNEL_TOKEN"

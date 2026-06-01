@@ -51,7 +51,9 @@ Runner state (singletons, no slot rotation):
 | `secret/tailscale/<env>` | `authkey` | Manual setup (per-env, tag-restricted) — added 2026-05-19 for the network-vm split; read by `ansible/{traefik,adguard,cloudflared}` |
 | `secret/wireguard` | `private_key, peer_public_key, endpoint, address, dns` | Manual setup |
 | `secret/adguard` | `username, password` | Manual setup |
-| `secret/cloudflare-tunnel` | `token` | Manual setup (prod tunnel) |
+| `secret/cloudflare-tunnel` | `token, tunnel_id, tunnel_hostname, account_id` | Manual setup — **prod** tunnel (id `6eff4426`). Corrected to prod 2026-05-31; v1–v4 mistakenly held the dev tunnel. |
+| `secret/cloudflare-tunnel-dev` | `token, tunnel_id, tunnel_hostname, account_id` | Manual setup — **dev** tunnel (id `80b044ef`). Migrated from GH Actions secret `CLOUDFLARE_DEV_TUNNEL_TOKEN` on 2026-06-01. |
+| `secret/cloudflare-tunnel-qa` | `token, tunnel_id, tunnel_hostname, account_id` | Manual setup — **qa BCP** tunnel (id `d7e78380`). Created 2026-06-01 to enable BCP flip from prod to qa. Idle until CNAMEs are swung (see runbooks.md). |
 | `secret/authentik/dev/vault-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
 | `secret/authentik/prod/vault-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
 | `secret/authentik/dev/rancher-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
@@ -63,7 +65,8 @@ Runner state (singletons, no slot rotation):
 | `secret/network-vm/dev/active-slot` | `slot, vmid, ip` | network-vm pipeline |
 | `secret/traefik/<env>/active-slot` | `slot, vmid, ip` | traefik pipeline (network-vm split, 2026-05-19) |
 | `secret/adguard/<env>/active-slot` | `slot, vmid, ip` | adguard pipeline (network-vm split, 2026-05-19) |
-| `secret/cloudflared/<env>/active-slot` | `slot, vmid, ip` | cloudflared pipeline (network-vm split — reserved; auto-created on first deploy) |
+| `secret/cloudflared/<env>/active-slot` | `slot, vmid, ip` | cloudflared pipeline (network-vm split Phase 4 — auto-created on first deploy) |
+| `secret/ssh_keys/cloudflared_worker` | `private_key, public_key` | Manual setup (or seed-network-split-ssh-keys.yml) — SSH key for the cloudflared-lxc pipeline. |
 | `secret/network-vm/prod/active-slot` | `slot, vmid, ip` | network-vm pipeline |
 | `secret/pbs/cluster-storage` | `server, datastore, username, token_secret, fingerprint` | pbs pipeline — used by `pvesm add pbs` on all cluster nodes |
 | `secret/wikijs/prod/api-token` | `token` | Manual setup — issued from wikijs Administration → API Access; consumed by `push-wiki-pages.yml`. Re-issue if it leaks; rotation has no automated path yet. |
