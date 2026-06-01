@@ -61,3 +61,15 @@ variable "gateway" {
   description = "Default gateway for the CT (e.g. 192.168.10.1 for prod, 192.168.20.1 for dev, 192.168.30.1 for qa)"
   type        = string
 }
+
+variable "dns_server" {
+  description = <<-EOT
+    Cloud-init resolver for the worker. Defaults to the gateway (legacy
+    behaviour) when empty. The pipeline sets this to the env's dedicated
+    adguard-lxc so DNS survives a network-vm slot flip and the
+    network-vm -> adguard-lxc split — pinning DNS to the network-vm slot
+    is what broke QA external resolution (CMDB problem 2026-06-01).
+  EOT
+  type        = string
+  default     = ""
+}

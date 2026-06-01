@@ -43,7 +43,10 @@ resource "proxmox_virtual_environment_vm" "worker_node" {
       }
     }
     dns {
-      servers = [var.gateway]
+      # Resolver is the dedicated adguard-lxc (var.dns_server), not the
+      # gateway/network-vm slot — falls back to the gateway when unset for
+      # backward compatibility. See variables.tf for the why.
+      servers = [var.dns_server != "" ? var.dns_server : var.gateway]
     }
     user_account {
       username = "root"

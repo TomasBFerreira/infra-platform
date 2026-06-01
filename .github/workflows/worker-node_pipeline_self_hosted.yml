@@ -53,6 +53,7 @@ jobs:
       rancher_ip:       ${{ steps.resolve.outputs.rancher_ip }}
       rancher_hostname: ${{ steps.resolve.outputs.rancher_hostname }}
       gateway:        ${{ steps.resolve.outputs.gateway }}
+      dns_server:     ${{ steps.resolve.outputs.dns_server }}
       network_bridge: ${{ steps.resolve.outputs.network_bridge }}
     steps:
       - name: Resolve node parameters
@@ -107,6 +108,17 @@ jobs:
             echo "Could not resolve network-vm IP from Vault, using default: $GATEWAY"
           fi
 
+          # DNS lives on the dedicated adguard-lxc (post network-vm split).
+          # Resolve its active slot so the worker's resolver survives a
+          # network-vm flip; fall back to the gateway (legacy) if absent.
+          DNS_SERVER=$(vault kv get -field=ip secret/adguard/$ENV/active-slot 2>/dev/null || echo "")
+          if [ -n "$DNS_SERVER" ]; then
+            echo "Resolved active adguard-lxc IP from Vault for DNS: $DNS_SERVER"
+          else
+            DNS_SERVER="$GATEWAY"
+            echo "No adguard active-slot for $ENV; DNS falls back to gateway: $DNS_SERVER"
+          fi
+
           VMID=$((VMID_BASE + NODE_NUM))
           VMID_SUFFIX=$((VMID % 100))
           IP_ADDRESS="192.168.${ENV_SUBNET}.${VMID_SUFFIX}"
@@ -123,6 +135,7 @@ jobs:
           echo "rancher_ip=$RANCHER_IP"          >> "$GITHUB_OUTPUT"
           echo "rancher_hostname=$RANCHER_HOSTNAME" >> "$GITHUB_OUTPUT"
           echo "gateway=$GATEWAY"               >> "$GITHUB_OUTPUT"
+          echo "dns_server=$DNS_SERVER"         >> "$GITHUB_OUTPUT"
           echo "network_bridge=$NETWORK_BRIDGE" >> "$GITHUB_OUTPUT"
 
           echo "Resolved: $VM_HOSTNAME ($ENV) — VMID $VMID — $IP_ADDRESS — $TARGET_NODE (subnet 192.168.${ENV_SUBNET}.0/24)"
@@ -159,6 +172,7 @@ jobs:
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
           TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
           TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_dns_server:     ${{ needs.resolve-node.outputs.dns_server }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
@@ -177,6 +191,7 @@ jobs:
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
           TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
           TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_dns_server:     ${{ needs.resolve-node.outputs.dns_server }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
           PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
@@ -204,6 +219,7 @@ jobs:
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
           TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
           TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_dns_server:     ${{ needs.resolve-node.outputs.dns_server }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
@@ -359,6 +375,7 @@ jobs:
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
           TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
           TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_dns_server:     ${{ needs.resolve-node.outputs.dns_server }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
         run: |
           cd /app/infra-platform
@@ -377,6 +394,7 @@ jobs:
           TF_VAR_target_node:    ${{ needs.resolve-node.outputs.pve_node }}
           TF_VAR_network_bridge: ${{ needs.resolve-node.outputs.network_bridge }}
           TF_VAR_gateway:        ${{ needs.resolve-node.outputs.gateway }}
+          TF_VAR_dns_server:     ${{ needs.resolve-node.outputs.dns_server }}
           TF_VAR_template_vmid:  ${{ github.event.inputs.template_vmid }}
           PVE_API:  ${{ needs.resolve-node.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
