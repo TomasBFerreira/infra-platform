@@ -677,3 +677,84 @@ gh workflow run pbs_pipeline.yml --repo TomasBFerreira/infra-platform -f reset=t
 - Runs on `[self-hosted, management]` (CT 200) — not the env runner — because PBS is cluster-wide infrastructure.
 - No `resolve-slots` / `flip-active` / `teardown-old-active`. State file `terraform.tfstate` (no `${ENV}` suffix).
 - `cleanup-on-failure` only runs when `reset=true` was the trigger — accidental partial-pipeline failures should NOT auto-destroy the running PBS.
+## BCP: flip *.databaes.net from prod tunnel to qa tunnel
+
+When prod is down and you need to serve external traffic from the qa stack instead. This re-points public DNS at the qa CF tunnel; cloudflared on `qa-network-vm-blue` forwards to `qa-traefik-lxc-qa` which talks to the qa upstream services.
+
+### Reality check before flipping
+qa runs on separate data:
+- **Authentik-qa** users are not the same as Authentik-prod users — anyone who isn't already a qa user can't log in to SSO-gated services.
+- **Stateful services** (Nextcloud, Wikijs, etc.) — qa instances have separate databases / volumes. Files you created in prod are not in qa.
+- **Per-service** — verify which qa upstreams are actually populated (run `kubectl get pods -A` on the qa cluster) and which would just return errors.
+
+Three usable modes:
+| Mode | Use when | What you flip |
+|---|---|---|
+| **Static maintenance page** | Full prod outage, want users to see "we're down" instead of a CF 502 | Flip only the landing page hostname; serve a static page from qa-traefik-lxc-qa |
+| **Read-only/auth-bypass services** | Partial outage, want grafana/wikijs/etc still readable | Flip those specific hostnames; rely on qa data being acceptable for reads |
+| **Full BCP** | Catastrophic prod loss; qa was being kept in sync | Flip everything; users may need to re-authenticate against qa Authentik |
+
+### Inputs you need
+- CF API token with DNS edit scope (the same `secret/cloudflare` `dns_api_token` already used by traefik-gitops).
+- The qa tunnel hostname: `d7e78380-5a8b-42c5-abbd-afa12de2645c.cfargotunnel.com`.
+- A list of hostnames to flip — typically derived from `traefik-gitops/config/dynamic/services.yml`.
+
+### Steps
+
+1. **Verify the qa tunnel is healthy** before flipping anything to it.
+   ```
+   ssh root@heaton 'pct exec 355 -- systemctl is-active cloudflared'
+   # → active
+   ssh root@heaton 'pct exec 355 -- curl -s http://127.0.0.1:20241/ready'
+   # → {"status":200,"readyConnections":4,...}
+   ```
+   CF dashboard → tunnel `databaes-qa` should also show 4 healthy connectors.
+
+2. **Ensure qa Public Hostname rules cover what you want to serve.** In CF dashboard → tunnel `databaes-qa` → "Public Hostnames", make sure each hostname you're flipping has an entry pointing at `https://192.168.30.95:443` (qa-traefik-lxc-qa). For a catch-all approach, use hostname pattern `*.databaes.net` + service `https://192.168.30.95:443` + No TLS Verify ON.
+
+3. **Flip the CNAMEs.** For each hostname `<host>.databaes.net` to BCP-route, edit its CNAME in CF DNS:
+   - From: `6eff4426-87b1-4866-b2d7-05b63a7e4f6b.cfargotunnel.com` (prod tunnel)
+   - To: `d7e78380-5a8b-42c5-abbd-afa12de2645c.cfargotunnel.com` (qa tunnel)
+   - Keep `proxied=true`.
+
+   Scripted version (for batch flip), run from anywhere with vault + CF access:
+   ```bash
+   CFTOK=$(ssh root@benedict 'pct exec 200 -- bash -c "TOKEN=\$(jq -r .root_token /root/vault-init.json); VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=\$TOKEN vault kv get -field=dns_api_token secret/cloudflare"')
+   ZONE=3c8fe4ca5589e65b27df98e8fa26d570
+   QA_TUNNEL=d7e78380-5a8b-42c5-abbd-afa12de2645c.cfargotunnel.com
+
+   for HOST in ops.databaes.net auth.databaes.net wikijs.databaes.net; do
+     REC=$(curl -s -H "Authorization: Bearer $CFTOK" \
+       "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records?name=$HOST&type=CNAME" \
+       | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]; print(r[0]["id"] if r else "")')
+     [ -z "$REC" ] && { echo "no record for $HOST"; continue; }
+     curl -s -X PATCH \
+       -H "Authorization: Bearer $CFTOK" -H "Content-Type: application/json" \
+       "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records/$REC" \
+       -d "{\"content\":\"$QA_TUNNEL\",\"proxied\":true}" \
+       | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["result"]["name"], "→", d["result"]["content"])'
+   done
+   ```
+
+4. **Wait ~30s** for CF propagation. CF's CNAME-flattened A records may cache at edge for up to a minute, but for `proxied=true` CNAMEs the new tunnel target picks up traffic faster than that.
+
+5. **Verify**: from outside Tailscale, `curl -kv https://<host>.databaes.net/` should land on `qa-traefik-lxc-qa`. Inspect the qa Traefik logs:
+   ```
+   ssh root@heaton 'pct exec 395 -- docker logs --since=1m traefik 2>&1 | grep "GET "'
+   ```
+
+6. **Record a CMDB change** noting the BCP activation (`title=BCP flip activated`, `affected_cis=cloudflare-tunnel-prod, cloudflare-tunnel-qa, traefik-lxc-qa`, `status=in_progress` until reverted).
+
+### Reverting (prod is back)
+
+Same script with `QA_TUNNEL=6eff4426-87b1-4866-b2d7-05b63a7e4f6b.cfargotunnel.com`. Update the open CMDB change to `status=completed` with a `resolution_summary` noting when prod was restored.
+
+### What this does NOT cover
+- Database failover. If prod Postgres is the failure, qa Postgres isn't a mirror — you'd need a separate DR plan (PITR restore, replica promotion, etc.).
+- Cloudflare-side outages (CF Workers, edge issues). If CF itself is the problem, neither tunnel helps.
+- Stateful clients with long-lived sessions (JWTs signed by Authentik-prod that hit Authentik-qa during the flip — they won't validate).
+
+### Pre-emptive maintenance to keep BCP viable
+- Periodically `curl` a few qa hostnames from outside Tailscale (after a one-off CNAME flip + revert) to confirm the path works.
+- Keep qa Authentik users in sync with prod for at least the operators / on-call rotation.
+- If qa is intentionally a "static maintenance page" only, build that page now and make sure qa-traefik-lxc-qa can serve it without any upstream dep.
