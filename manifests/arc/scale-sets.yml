@@ -14,20 +14,21 @@
 # docs/arc-migration.md for the per-phase steps.
 
 scale_sets:
-  # Note: the original `arc-pilot-dev` scale set has been retired (2026-05-26).
-  # It was the smoketest target during initial ARC bring-up; once real repos
-  # were cut over it became dead weight. arc-deploy.yml's "Uninstall orphan
-  # scale-set releases" step cleans it up automatically on the next run.
-  # arc-pilot-qa and arc-pilot-prod below are still in use by the
-  # network-vm-split workstream.
-
-  # ── QA + prod pilots (added 2026-05-19 for network-vm split Phase 1) ────
-  # Mirrors arc-pilot-dev so the network-vm-split pipelines have a per-env
-  # ARC target. Labels stay {env}-arc to keep the "pilot is distinct from
-  # the legacy LXC label" convention. Run arc-deploy.yml with env=qa then
-  # env=prod to provision the controller + scale set on each env's k3s.
-  # Same-cluster terraform state lives in the `terraform-state` namespace
-  # created by the deploy workflow (see network-vm-split-2026-05-19.md).
+  # ── infra-platform per-env ARC scale sets (network-vm split Phase 1) ────
+  # Each env's traefik / adguard / cloudflared pipelines target
+  # `runs-on: arc-pilot-<env>`. The dev entry was retired on 2026-05-26 as
+  # a cleanup after the initial smoketest finished — but the cleanup was
+  # premature: cloudflared_pipeline.yml dispatch for env=dev (2026-06-01)
+  # sat queued indefinitely because no runner pool matched the runs-on
+  # label. Restored 2026-06-01 with the same shape as qa + prod. Run
+  # arc-deploy.yml with env={dev,qa,prod} to provision the controller +
+  # scale set on each env's k3s.
+  - repo: TomasBFerreira/infra-platform
+    env: dev
+    label: dev-arc
+    name: arc-pilot-dev
+    min_runners: 0
+    max_runners: 2
   - repo: TomasBFerreira/infra-platform
     env: qa
     label: qa-arc
