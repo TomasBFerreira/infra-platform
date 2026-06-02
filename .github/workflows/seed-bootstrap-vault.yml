@@ -16,6 +16,7 @@ on:
           - ssh-key
           - qbittorrent
           - wikijs-api-token
+          - newrelic-shared
       # ssh-key
       ssh_key_name:
         description: '[ssh-key] Key name (e.g. torrent_worker) — stored at secret/ssh_keys/<key_name>'
@@ -76,6 +77,11 @@ on:
       wikijs_api_token:
         description: '[wikijs-api-token] Bearer token from wikijs Administration → API Access'
         required: false
+      # newrelic-shared
+      newrelic_region:
+        description: '[newrelic-shared] Region override (default EU)'
+        required: false
+        default: 'EU'
 
 jobs:
   seed:
@@ -85,6 +91,7 @@ jobs:
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          NEWRELIC_OTLP_API_KEY: ${{ secrets.NEWRELIC_OTLP_API_KEY }}
         run: |
           SECRET="${{ github.event.inputs.secret_path }}"
           case "$SECRET" in
@@ -128,6 +135,52 @@ jobs:
               WK_ENV="${{ github.event.inputs.wikijs_env }}"
               vault kv put "secret/wikijs/${WK_ENV:-prod}/api-token" \
                 token="${{ github.event.inputs.wikijs_api_token }}"
+              ;;
+            newrelic-shared)
+              export NEWRELIC_REGION="${{ github.event.inputs.newrelic_region }}"
+              python3 - <<'PYEOF'
+              import json
+              import os
+              import urllib.error
+              import urllib.request
+
+              vault_addr = os.environ["VAULT_ADDR"].rstrip("/")
+              vault_token = os.environ["VAULT_TOKEN"]
+              path = "secret/data/monitoring/shared/newrelic"
+              env_path = os.environ["GITHUB_ENV"]
+
+              headers = {"X-Vault-Token": vault_token, "Content-Type": "application/json"}
+
+              def request(method: str, url: str, payload: dict | None = None) -> dict | None:
+                  body = None if payload is None else json.dumps(payload).encode()
+                  req = urllib.request.Request(url, data=body, headers=headers, method=method)
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as response:
+                          if response.length == 0:
+                              return None
+                          return json.load(response)
+                  except urllib.error.HTTPError as exc:
+                      if exc.code == 404:
+                          return None
+                      raise
+
+              current = request("GET", f"{vault_addr}/v1/{path}") or {}
+              merged = dict((((current.get("data") or {}).get("data")) or {}))
+
+              otlp_api_key = os.environ.get("NEWRELIC_OTLP_API_KEY", "").strip()
+              if not otlp_api_key:
+                  raise SystemExit("NEWRELIC_OTLP_API_KEY repo secret is required for newrelic-shared")
+
+              merged["otlp_api_key"] = otlp_api_key
+              merged["region"] = os.environ.get("NEWRELIC_REGION", "").strip() or merged.get("region") or "EU"
+
+              request("POST", f"{vault_addr}/v1/{path}", {"data": merged})
+
+              visible_fields = ", ".join(sorted(merged.keys()))
+              print(f"Wrote secret/monitoring/shared/newrelic with fields: {visible_fields}")
+              with open(env_path, "a", encoding="utf-8") as handle:
+                  handle.write(f"NEWRELIC_WRITTEN_FIELDS={visible_fields}\n")
+              PYEOF
               ;;
           esac
           echo "Written secret/$SECRET to bootstrap vault."
