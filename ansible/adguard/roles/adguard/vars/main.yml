@@ -31,6 +31,7 @@ adguard_env_tailscale_ips:
 adguard_dev_rewrites:
   - domain: auth-dev.databaes.net
   - domain: grafana-dev.databaes.net
+  - domain: signoz-dev.databaes.net
   - domain: nextcloud-dev.databaes.net
   - domain: wikijs-dev.databaes.net
   - domain: semaphore-dev.databaes.net
