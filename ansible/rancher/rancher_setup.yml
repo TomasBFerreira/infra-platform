@@ -378,66 +378,87 @@
             mode: '0755'
             content: |
               #!/usr/bin/env python3
-              import json, os, subprocess
+              # Apply Rancher RBAC bindings as CRDs via kubectl (durable, principal-based).
+              #
+              # The Rancher v3 (Norman) API only lets you bind a GlobalRole to a local
+              # userId or a groupPrincipalId — it CANNOT bind an individual external
+              # (OIDC) *user* principal, because no local user object exists until that
+              # user has logged in at least once. That makes a Vault-driven grant for an
+              # individual OIDC user impossible via the v3 API and silently non-durable
+              # across reprovisions.
+              #
+              # The management.cattle.io/v3 CRDs DO expose userPrincipalName /
+              # groupPrincipalName fields (verified on the GlobalRoleBinding +
+              # ClusterRoleTemplateBinding CRDs), which bind by *principal* and are
+              # honoured when that principal next logs in. So we render CRDs and
+              # `kubectl apply` them — deterministic names make it idempotent.
+              #
+              # Vault format (secret/rancher/<env>/rbac):
+              #   global_bindings  = [{"userPrincipalName":"genericoidc_user://8","globalRoleName":"admin"}]
+              #                      (or "groupPrincipalName", or local "userName"; "globalRoleName")
+              #   cluster_bindings = [{"groupPrincipalName":"genericoidc_group://5",
+              #                        "roleTemplateName":"cluster-owner","clusterName":"local"}]
+              import json, os, re, hashlib, subprocess
 
-              host     = os.environ['RANCHER_HOST']
-              endpoint = os.environ.get('RANCHER_ENDPOINT', 'localhost')
-              password = os.environ['RANCHER_PASS']
-              cluster  = os.environ.get('CLUSTER_ID', 'local')
+              def slug(s):
+                  return (re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')[:40]) or 'x'
 
-              def curl_json(*args):
-                  r = subprocess.run(['curl', '-sk'] + list(args),
-                                     capture_output=True, text=True)
-                  try:
-                      return json.loads(r.stdout)
-                  except Exception:
-                      return {'_raw': r.stdout, 'type': 'error'}
+              def short(s):
+                  return hashlib.sha1(s.encode()).hexdigest()[:8]
 
-              token_resp = curl_json(
-                  '-H', f'Host: {host}',
-                  '-X', 'POST',
-                  f'https://{endpoint}/v3-public/localProviders/local?action=login',
-                  '-H', 'Content-Type: application/json',
-                  '-d', json.dumps({'username': 'admin', 'password': password,
-                                    'ttl': 60000}))
-              token = token_resp.get('token', '')
-              if not token:
-                  print(f'ERROR: Rancher login failed: {token_resp}')
-                  exit(1)
+              def subject_lines(b):
+                  """Return (key, [yaml lines]) for whichever principal field is set."""
+                  for f in ('userPrincipalName', 'groupPrincipalName', 'userName'):
+                      if b.get(f):
+                          return b[f], [f'{f}: "{b[f]}"']
+                  return None, None
 
-              def post_binding(ep, body):
-                  resp = curl_json(
-                      '-H', f'Host: {host}',
-                      '-H', f'Authorization: Bearer {token}',
-                      '-X', 'POST', f'https://{endpoint}/{ep}',
-                      '-H', 'Content-Type: application/json',
-                      '-d', json.dumps(body))
-                  rtype = resp.get('type', '')
-                  msg   = resp.get('message', '')
-                  if 'already exist' in msg.lower():
-                      print(f'  {ep}: already exists, ok')
-                  elif rtype and not rtype.startswith('error'):
-                      print(f'  {ep}: created {resp.get("id", "?")}')
-                  else:
-                      print(f'  WARNING {ep}: {resp}')
+              def kapply(manifest):
+                  p = subprocess.run(['k3s', 'kubectl', 'apply', '-f', '-'],
+                                     input=manifest, capture_output=True, text=True)
+                  print('  ' + ((p.stdout or p.stderr).strip() or 'applied'))
 
-              for b in json.loads(os.environ.get('GLOBAL_BINDINGS', '[]')):
-                  post_binding('v3/globalrolebindings', b)
+              for b in json.loads(os.environ.get('GLOBAL_BINDINGS', '[]') or '[]'):
+                  role = b.get('globalRoleName') or b.get('globalRoleId')
+                  key, subj = subject_lines(b)
+                  if not role or not subj:
+                      print(f'  SKIP global binding (need globalRoleName + a subject): {b}')
+                      continue
+                  name = f'grb-seed-{slug(key)}-{slug(role)}-{short(key + role)}'
+                  manifest = '\n'.join([
+                      'apiVersion: management.cattle.io/v3',
+                      'kind: GlobalRoleBinding',
+                      'metadata:',
+                      f'  name: {name}',
+                      f'globalRoleName: {role}',
+                  ] + subj) + '\n'
+                  kapply(manifest)
 
-              for b in json.loads(os.environ.get('CLUSTER_BINDINGS', '[]')):
-                  post_binding('v3/clusterroletemplatebindings',
-                               {**b, 'clusterId': cluster})
+              for b in json.loads(os.environ.get('CLUSTER_BINDINGS', '[]') or '[]'):
+                  role    = b.get('roleTemplateName') or b.get('roleTemplateId')
+                  cluster = b.get('clusterName') or b.get('clusterId') or 'local'
+                  key, subj = subject_lines(b)
+                  if not role or not subj:
+                      print(f'  SKIP cluster binding (need roleTemplateName + a subject): {b}')
+                      continue
+                  name = f'crtb-seed-{slug(key)}-{slug(role)}-{short(key + role + cluster)}'
+                  manifest = '\n'.join([
+                      'apiVersion: management.cattle.io/v3',
+                      'kind: ClusterRoleTemplateBinding',
+                      'metadata:',
+                      f'  name: {name}',
+                      f'  namespace: {cluster}',
+                      f'clusterName: {cluster}',
+                      f'roleTemplateName: {role}',
+                  ] + subj) + '\n'
+                  kapply(manifest)
               print('Done.')
 
         - name: Run RBAC apply script (rancher LXC)
           shell: python3 /tmp/apply_rancher_rbac.py
           environment:
-            RANCHER_HOST:     "{{ rancher_hostname }}"
-            RANCHER_ENDPOINT: "localhost"
-            RANCHER_PASS:     "{{ rancher_bootstrap_password }}"
             GLOBAL_BINDINGS:  "{{ rancher_rbac_global_bindings | default([]) | to_json }}"
             CLUSTER_BINDINGS: "{{ rancher_rbac_cluster_bindings | default([]) | to_json }}"
-            CLUSTER_ID:       "local"
 
     # ── Dev DNS patching ─────────────────────────────────────────────────────
     # Dev services (auth-dev.databaes.net etc.) are NOT in public DNS — they're
