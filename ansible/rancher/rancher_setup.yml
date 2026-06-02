@@ -34,6 +34,25 @@
           - openssl            # for self-signed TLS cert generation
         state: present
 
+    # ── apt-storm guard ──────────────────────────────────────────────────────
+    # betsy (prod) runs memory-tight. On 2026-06-01, apt-daily + man-db
+    # maintenance inside this CT tipped the host into a swap death-spiral
+    # (load 138), starving the prod NFS export and taking Tomaj Flix prod down.
+    # Mask the periodic maintenance timers so a fresh reprovision can never
+    # re-introduce the trigger. See /app/issues/tomajflix-prod-outage-2026-06-01.md
+    # and /app/issues/rancher-prod-rebuild.md.
+    - name: Mask periodic apt/man-db maintenance timers (host thrash guard)
+      systemd:
+        name: "{{ item }}"
+        masked: yes
+        enabled: no
+        state: stopped
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+        - man-db.timer
+      failed_when: false
+
     # ── Standard users ───────────────────────────────────────────────────────
 
     - name: Ensure appadm user exists
