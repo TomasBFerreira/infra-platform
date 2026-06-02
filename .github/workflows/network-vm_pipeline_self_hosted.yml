@@ -362,23 +362,6 @@ jobs:
           echo "::add-mask::$TS_AUTHKEY"
           echo "TS_AUTHKEY=$TS_AUTHKEY" >> "$GITHUB_ENV"
 
-      - name: Fetch CF tunnel token from bootstrap vault (prod + qa)
-        # prod + qa CF tunnel tokens live in the bootstrap vault. dev still
-        # uses the GH Actions secret CLOUDFLARE_DEV_TUNNEL_TOKEN — handled in
-        # the env-vault step below.
-        env:
-          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
-        run: |
-          case "$ENV" in
-            prod) VAULT_PATH=secret/cloudflare-tunnel ;;
-            qa)   VAULT_PATH=secret/cloudflare-tunnel-qa ;;
-            *)    echo "skip — dev uses GH secret"; exit 0 ;;
-          esac
-          CF_TUNNEL_TOKEN=$(vault kv get -field=token "$VAULT_PATH" 2>/dev/null || echo "")
-          echo "::add-mask::$CF_TUNNEL_TOKEN"
-          echo "CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN" >> "$GITHUB_ENV"
-
       - name: Fetch env-vault app secrets
         run: |
           case "$ENV" in
@@ -408,17 +391,9 @@ jobs:
           fi
           ADGUARD_USER=$(vault kv get -field=username secret/adguard 2>/dev/null || echo "")
           ADGUARD_PASS=$(vault kv get -field=password secret/adguard 2>/dev/null || echo "")
-          # cloudflared per env — token is sourced separately above (see the
-          # "Fetch CF tunnel token from bootstrap vault" step) and read here
-          # from $GITHUB_ENV. Dev is the only env still using a GH secret.
-          if [ "$ENV" = "dev" ]; then
-            CF_TUNNEL_TOKEN="${{ secrets.CLOUDFLARE_DEV_TUNNEL_TOKEN }}"
-          fi
-          # For prod + qa, CF_TUNNEL_TOKEN is already set by the bootstrap-vault step.
           echo "::add-mask::$WG_PRIVATE_KEY"
           echo "::add-mask::$WG_PEER_PUBLIC_KEY"
           echo "::add-mask::$ADGUARD_PASS"
-          echo "::add-mask::$CF_TUNNEL_TOKEN"
           # Env tag: dev/qa/prod maps to tag:dev / tag:qa / tag:prod
           # (TS_AUTHKEY already exported by the bootstrap-vault step above.)
           TS_TAGS="tag:container,tag:${ENV},tag:subnet-router"
@@ -429,8 +404,6 @@ jobs:
           echo "WG_ADDRESS=$WG_ADDRESS" >> $GITHUB_ENV
           echo "WG_DNS=$WG_DNS" >> $GITHUB_ENV
           echo "ADGUARD_USER=$ADGUARD_USER" >> $GITHUB_ENV
-          echo "ADGUARD_PASS=$ADGUARD_PASS" >> $GITHUB_ENV
-          echo "CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN" >> $GITHUB_ENV
           # Resolve monitoring-lxc endpoint for OTel sidecar (optional — ok if not deployed yet).
           # Treat a literal "${...}" value as unset — prod held the unexpanded
           # placeholder "${OTEL_COLLECTOR_ENDPOINT}" on 2026-04-23 (see PR #176).
@@ -464,7 +437,6 @@ jobs:
             -e "wg_dns=$WG_DNS" \
             -e "adguard_username=$ADGUARD_USER" \
             -e "adguard_password=$ADGUARD_PASS" \
-            -e "cloudflare_tunnel_token=$CF_TUNNEL_TOKEN" \
             -e "otel_collector_endpoint=$OTEL_ENDPOINT" \
             -e "deploy_env=${ENV}" \
             ansible/network-vm/network-vm_setup.yml
