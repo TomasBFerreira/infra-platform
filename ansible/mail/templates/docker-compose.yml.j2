@@ -1,0 +1,18 @@
+# Managed by infra-platform ansible/mail. Do not edit on the host.
+services:
+  stalwart:
+    image: stalwartlabs/mail-server:{{ stalwart_image_tag }}
+    container_name: stalwart-mail
+    restart: unless-stopped
+    # Host networking: a mail server binds many ports (25/465/587 + 143/993 later)
+    # and SMTP behaves badly behind NAT. The CT has only the internal {{ deploy_env }}
+    # subnet NIC — there is no public interface here, so host-bound ports are
+    # internal-only. Public outbound goes through the Brevo relay; public inbound
+    # is not served from this CT (Cloudflare tunnels don't carry SMTP).
+    network_mode: host
+    volumes:
+      - {{ mail_dir }}/etc:/opt/stalwart-mail/etc
+      - {{ mail_dir }}/data:/opt/stalwart-mail/data
+      - {{ mail_dir }}/logs:/opt/stalwart-mail/logs
+    environment:
+      - TZ=Europe/Lisbon

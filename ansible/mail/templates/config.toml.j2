@@ -1,0 +1,94 @@
+# Stalwart mail server config — managed by infra-platform ansible/mail.
+# Secrets (relay creds, admin/noreply passwords, DKIM key) are injected from
+# Vault at render time; none are committed to the repo.
+#
+# ⚠ SCHEMA VALIDATION REQUIRED ON FIRST DEPLOY. Stalwart's TOML keys shift
+# between releases. After `docker compose up`, check `docker logs stalwart-mail`
+# for "unknown setting" warnings and reconcile against the running version's
+# docs, then pin stalwart_image_tag. The web admin (port 8080, internal-only)
+# is the fallback for anything this file gets wrong.
+
+[server]
+hostname = "{{ mail_hostname }}"
+
+# ── Listeners ────────────────────────────────────────────────────────────────
+[server.listener.smtp]
+bind = ["0.0.0.0:25"]
+protocol = "smtp"
+
+[server.listener.submission]
+bind = ["0.0.0.0:587"]
+protocol = "smtp"
+tls.implicit = false
+
+[server.listener.submissions]
+bind = ["0.0.0.0:465"]
+protocol = "smtp"
+tls.implicit = true
+
+# Web admin + JMAP/management. CT has no public NIC, so this is internal-only.
+[server.listener.management]
+bind = ["0.0.0.0:8080"]
+protocol = "http"
+
+# ── Storage (embedded RocksDB; A2 may move blobs to NFS) ──────────────────────
+[store.rocksdb]
+type = "rocksdb"
+path = "/opt/stalwart-mail/data"
+
+[storage]
+data = "rocksdb"
+fts = "rocksdb"
+blob = "rocksdb"
+lookup = "rocksdb"
+directory = "internal"
+
+[directory.internal]
+type = "internal"
+store = "rocksdb"
+
+# ── Admin bootstrap ───────────────────────────────────────────────────────────
+# Fallback admin so the management API/UI is reachable to create principals
+# (e.g. the noreply submission account) post-deploy.
+[authentication.fallback-admin]
+user = "admin"
+secret = "{{ _admin_pass }}"
+
+# ── Outbound: relay everything through the Brevo smarthost ─────────────────────
+# Residential IP + blocked port 25 + Cloudflare tunnels => we cannot deliver to
+# Gmail/Outlook directly. Brevo provides the reputable sending IP. Stalwart owns
+# the mailboxes and (optionally) signs DKIM; Brevo applies its own domain-auth
+# signing for authenticated domains.
+[queue.outbound]
+next-hop = "brevo"
+
+[remote.brevo]
+type = "smtp"
+address = "{{ _relay_host }}"
+port = {{ _relay_port }}
+tls.implicit = false
+tls.allow-invalid-certs = false
+
+[remote.brevo.auth]
+username = "{{ _relay_user }}"
+secret = "{{ _relay_pass }}"
+
+# ── DKIM signing (databaes.net) ───────────────────────────────────────────────
+# Brevo owns DKIM for this relay: databaes.net is an authenticated Brevo domain,
+# so Brevo signs relayed mail with an aligned d=databaes.net signature
+# (brevo1/brevo2._domainkey.databaes.net, added via Brevo's Cloudflare
+# integration). We therefore DO NOT sign with Stalwart's own key here — signing
+# with a key whose public record isn't published would emit an unverifiable
+# signature for no benefit. The signature block + generated key are kept for a
+# future A2 direct-send path; signing stays OFF while relaying through Brevo.
+[signature.databaes-rsa]
+domain = "{{ mail_domain }}"
+selector = "{{ _dkim_selector }}"
+private-key = "%{file:/opt/stalwart-mail/etc/dkim-private.key}%"
+algorithm = "rsa-sha256"
+canonicalization = "relaxed/relaxed"
+
+[auth.dkim]
+# Empty while relaying through Brevo (Brevo signs). Set to ["databaes-rsa"] and
+# publish {{ _dkim_selector }}._domainkey.{{ mail_domain }} for A2 direct send.
+sign = []
