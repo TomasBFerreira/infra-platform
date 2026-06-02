@@ -137,50 +137,23 @@ jobs:
                 token="${{ github.event.inputs.wikijs_api_token }}"
               ;;
             newrelic-shared)
-              export NEWRELIC_REGION="${{ github.event.inputs.newrelic_region }}"
-              python3 - <<'PYEOF'
-              import json
-              import os
-              import urllib.error
-              import urllib.request
-
-              vault_addr = os.environ["VAULT_ADDR"].rstrip("/")
-              vault_token = os.environ["VAULT_TOKEN"]
-              path = "secret/data/monitoring/shared/newrelic"
-              env_path = os.environ["GITHUB_ENV"]
-
-              headers = {"X-Vault-Token": vault_token, "Content-Type": "application/json"}
-
-              def request(method: str, url: str, payload: dict | None = None) -> dict | None:
-                  body = None if payload is None else json.dumps(payload).encode()
-                  req = urllib.request.Request(url, data=body, headers=headers, method=method)
-                  try:
-                      with urllib.request.urlopen(req, timeout=30) as response:
-                          if response.length == 0:
-                              return None
-                          return json.load(response)
-                  except urllib.error.HTTPError as exc:
-                      if exc.code == 404:
-                          return None
-                      raise
-
-              current = request("GET", f"{vault_addr}/v1/{path}") or {}
-              merged = dict((((current.get("data") or {}).get("data")) or {}))
-
-              otlp_api_key = os.environ.get("NEWRELIC_OTLP_API_KEY", "").strip()
-              if not otlp_api_key:
-                  raise SystemExit("NEWRELIC_OTLP_API_KEY repo secret is required for newrelic-shared")
-
-              merged["otlp_api_key"] = otlp_api_key
-              merged["region"] = os.environ.get("NEWRELIC_REGION", "").strip() or merged.get("region") or "EU"
-
-              request("POST", f"{vault_addr}/v1/{path}", {"data": merged})
-
-              visible_fields = ", ".join(sorted(merged.keys()))
-              print(f"Wrote secret/monitoring/shared/newrelic with fields: {visible_fields}")
-              with open(env_path, "a", encoding="utf-8") as handle:
-                  handle.write(f"NEWRELIC_WRITTEN_FIELDS={visible_fields}\n")
-              PYEOF
+              CURRENT_JSON=$(vault kv get -format=json secret/monitoring/shared/newrelic 2>/dev/null || true)
+              USER_API_KEY=$(python3 -c 'import json,sys; raw=sys.stdin.read().strip(); data=json.loads(raw)["data"]["data"] if raw else {}; print(data.get("user_api_key",""))' <<<"$CURRENT_JSON" 2>/dev/null || true)
+              ACCOUNT_ID=$(python3 -c 'import json,sys; raw=sys.stdin.read().strip(); data=json.loads(raw)["data"]["data"] if raw else {}; print(data.get("account_id",""))' <<<"$CURRENT_JSON" 2>/dev/null || true)
+              EXISTING_REGION=$(python3 -c 'import json,sys; raw=sys.stdin.read().strip(); data=json.loads(raw)["data"]["data"] if raw else {}; print(data.get("region",""))' <<<"$CURRENT_JSON" 2>/dev/null || true)
+              REGION="${{ github.event.inputs.newrelic_region }}"
+              [ -z "$REGION" ] && REGION="$EXISTING_REGION"
+              [ -z "$REGION" ] && REGION="EU"
+              [ -n "$NEWRELIC_OTLP_API_KEY" ] || { echo "NEWRELIC_OTLP_API_KEY repo secret is required for newrelic-shared"; exit 1; }
+              CMD=(vault kv put secret/monitoring/shared/newrelic otlp_api_key="$NEWRELIC_OTLP_API_KEY" region="$REGION")
+              [ -n "$USER_API_KEY" ] && CMD+=(user_api_key="$USER_API_KEY")
+              [ -n "$ACCOUNT_ID" ] && CMD+=(account_id="$ACCOUNT_ID")
+              "${CMD[@]}"
+              VISIBLE_FIELDS="otlp_api_key, region"
+              [ -n "$USER_API_KEY" ] && VISIBLE_FIELDS="${VISIBLE_FIELDS}, user_api_key"
+              [ -n "$ACCOUNT_ID" ] && VISIBLE_FIELDS="${VISIBLE_FIELDS}, account_id"
+              echo "Wrote secret/monitoring/shared/newrelic with fields: $VISIBLE_FIELDS"
+              echo "NEWRELIC_WRITTEN_FIELDS=$VISIBLE_FIELDS" >> "$GITHUB_ENV"
               ;;
           esac
           echo "Written secret/$SECRET to bootstrap vault."
