@@ -1,0 +1,92 @@
+name: Seed Rancher RBAC (Vault)
+
+# Writes durable Rancher RBAC bindings to the bootstrap Vault at
+# secret/rancher/<env>/rbac. The rancher pipeline's "Apply Rancher RBAC
+# bindings from Vault" step reads this on EVERY (re)provision and recreates
+# the bindings as management.cattle.io/v3 CRDs — so admin access survives a
+# from-scratch CT rebuild (which regenerates local user IDs and would
+# otherwise drop every grant).
+#
+# Bind by OIDC *principal* (stable across rebuilds), not local userId:
+#   user principal  e.g.  genericoidc_user://8     (Authentik user pk)
+#   group principal e.g.  genericoidc_group://5    (preferred if you have an
+#                                                   admin group — covers every
+#                                                   member, no per-user pinning)
+#
+# Usage:
+#   gh workflow run seed-rancher-rbac.yml -f environment=prod \
+#     -f user_principal='genericoidc_user://8' -f global_role=admin
+#
+# This only writes Vault. To make it effective on the *currently running*
+# Rancher without waiting for a reprovision, also run:
+#   gh workflow run configure-rancher-oidc.yml -f environment=<env>
+# (grants admin to already-logged-in OIDC users), or re-run the rancher
+# pipeline.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+      user_principal:
+        description: 'OIDC user principal (e.g. genericoidc_user://8). Leave blank to bind a group only.'
+        required: false
+        default: ''
+        type: string
+      group_principal:
+        description: 'OIDC group principal (e.g. genericoidc_group://5). Optional; preferred over a user principal.'
+        required: false
+        default: ''
+        type: string
+      global_role:
+        description: 'GlobalRole to grant (admin grants full cross-cluster access)'
+        required: false
+        default: 'admin'
+        type: string
+
+jobs:
+  seed:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    steps:
+      - name: Write rancher RBAC bindings to bootstrap Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          ENV:  ${{ inputs.environment }}
+          UP:   ${{ inputs.user_principal }}
+          GP:   ${{ inputs.group_principal }}
+          ROLE: ${{ inputs.global_role }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UP}" ] && [ -z "${GP}" ]; then
+            echo "ERROR: provide at least one of user_principal / group_principal"
+            exit 1
+          fi
+          GLOBAL_BINDINGS=$(python3 - "$UP" "$GP" "$ROLE" <<'PY'
+          import json, sys
+          up, gp, role = sys.argv[1], sys.argv[2], sys.argv[3]
+          out = []
+          if up: out.append({"userPrincipalName": up,  "globalRoleName": role})
+          if gp: out.append({"groupPrincipalName": gp, "globalRoleName": role})
+          print(json.dumps(out))
+          PY
+          )
+          echo "Writing secret/rancher/${ENV}/rbac:"
+          echo "  global_bindings=${GLOBAL_BINDINGS}"
+          vault kv put "secret/rancher/${ENV}/rbac" \
+            global_bindings="${GLOBAL_BINDINGS}" \
+            cluster_bindings='[]'
+
+      - name: Read back + verify
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          echo "Readback secret/rancher/${ENV}/rbac global_bindings:"
+          vault kv get -field=global_bindings "secret/rancher/${ENV}/rbac"
