@@ -52,6 +52,7 @@ qa:
   - TomasBFerreira/ops-portal-pipelines
   - TomasBFerreira/ops-portal-shell
   - TomasBFerreira/otel-monitoring
+  - TomasBFerreira/traefik-gitops
   # Every ops-portal-* service has a qa deploy target (workflow has env=qa option).
 
 prod:
