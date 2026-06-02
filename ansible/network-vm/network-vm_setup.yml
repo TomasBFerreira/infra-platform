@@ -28,6 +28,5 @@
   roles:
     - role: common
     - role: tailscale
-    - role: cloudflare-tunnel
     - role: wireguard
     - role: firewall
