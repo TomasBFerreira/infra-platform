@@ -12,6 +12,7 @@ pick redirect URIs. Prints the client_id + issuer for the frontend config.
 import os
 import sys
 import json
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -72,7 +73,7 @@ auth_flow = flows[0]["pk"]
 redirect_uris = [{"matching_mode": "regex", "url": "%s/.*" % o} for o in ORIGINS]
 
 # Create/update the OAuth2 provider (public client = PKCE, no secret).
-prov = api("GET", "/providers/oauth2/?name=Landing Page")[1].get("results", [])
+prov = api("GET", "/providers/oauth2/?name=" + urllib.parse.quote("Landing Page"))[1].get("results", [])
 provider_body = {
     "name": "Landing Page",
     "authorization_flow": auth_flow,
