@@ -87,7 +87,7 @@ Runner state (singletons, no slot rotation):
 
 ## Vault Authentication
 
-**Env vault CI pipelines** use a limited-scope CI token (`VAULT_TOKEN` / `VAULT_PROD_TOKEN`) created by the vault-ct Ansible playbook. Policy: read/write `secret/*`, manage tokens.
+**Env vault CI pipelines** use a limited-scope CI token (`VAULT_TOKEN` / `VAULT_QA_TOKEN` / `VAULT_PROD_TOKEN`) created by the vault-ct Ansible playbook. Policy: read/write `secret/*`, manage tokens. **Rotate / fix expiry** by dispatching `.github/workflows/reseed-env-vault-ci-token.yml` (env input) — it installs the least-privilege `env-ci` policy and mints a **periodic** token (renews on use, no absolute expiry) via that env's root token, then writes the `VAULT_*TOKEN` GitHub secret. Added 2026-06-03 after the **dev** env token silently expired (default ~32d TTL) and 403'd the SSO pipeline (`generate-secrets`) — the env-vault sibling of the bootstrap-token periodic fix.
 
 **Bootstrap vault CI pipelines** use `VAULT_DEV_TOKEN` — a **periodic** token under the `bootstrap-ci` policy. Periodic tokens renew implicitly on every use and have no absolute expiry as long as something hits them within the configured period (default 720h = 30d).
 
