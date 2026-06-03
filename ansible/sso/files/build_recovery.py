@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Construct + bind Authentik's password-recovery flow (idempotent).
+"""Construct + bind Authentik's password-recovery flow (idempotent, self-healing).
 
-Authentik ships no recovery flow or blueprint, so build it from stages
-(identification -> recovery email -> reuse the password-change prompt +
-user-write stages), bind it to the brand, and set recovery_flow on the login
-identification stage so the "Forgot password?" link renders. Reuses existing
-objects on re-run. Reads AK_BASE (default localhost) + AK_TOKEN from env.
+Authentik ships no recovery flow or blueprint, so build it from stages:
+  identification -> recovery email -> (password prompt) -> (user write)
+reusing the canonical password-change flow's prompt + user-write stages, bind it
+to the brand, and set recovery_flow on the login identification stage so the
+"Forgot password?" link renders.
+
+Self-correcting: removes stray/wrong stage bindings (e.g. an OOBE password prompt
+or source-enrollment write picked up by an earlier non-deterministic selection)
+and re-adds the correct ones. Reads AK_BASE (default localhost) + AK_TOKEN.
 
 Run via the ansible `script` module (not an inline shell heredoc — ansible
 tokenizes shell commands and chokes on embedded python quotes/braces).
@@ -33,31 +37,44 @@ def api(method, path, body=None):
 
 
 def must(st, obj, what):
-    if st not in (200, 201):
+    if st not in (200, 201, 204):
         print("FAIL %s: HTTP %s %s" % (what, st, json.dumps(obj)[:600]))
         sys.exit(1)
     return obj
 
 
 # 1) Recovery flow (reuse if present)
-st, d = api("GET", "/flows/instances/?designation=recovery")
-res = d.get("results", [])
+res = api("GET", "/flows/instances/?designation=recovery")[1].get("results", [])
 flow = res[0] if res else must(*api("POST", "/flows/instances/", {
     "name": "Recovery", "title": "Reset your databaes.net password",
     "slug": "default-recovery-flow", "designation": "recovery",
     "authentication": "require_unauthenticated"}), "create flow")
 flow_pk = flow["pk"]
 
-# 2) Reuse the password-change prompt + user-write stages
-st, allst = api("GET", "/stages/all/?page_size=200")
-stages = allst.get("results", [])
-bycomp = lambda sub: [s for s in stages if sub in (s.get("component") or "")]
-named = lambda n: next((s for s in stages if s.get("name") == n), None)
-prompt = next((s for s in bycomp("ak-stage-prompt")
-               if "password" in (s.get("name") or "").lower()), None)
-write = next(iter(bycomp("ak-stage-user-write")), None)
-if not prompt or not write:
-    print("no reusable prompt/write stages found")
+# 2) Reuse the password prompt + user-write stages from the canonical
+#    default-password-change flow (deterministic — NOT a fuzzy first-match, which
+#    picked the OOBE prompt / source-enrollment write and broke the flow).
+prompt_pk = write_pk = None
+pcf = api("GET", "/flows/instances/default-password-change/")
+if pcf[0] == 200:
+    for b in api("GET", "/flows/bindings/?target=%s" % pcf[1]["pk"])[1].get("results", []):
+        so = b.get("stage_obj", {})
+        comp = so.get("component") or ""
+        if "ak-stage-prompt" in comp and not prompt_pk:
+            prompt_pk = b["stage"]
+        if "ak-stage-user-write" in comp and not write_pk:
+            write_pk = b["stage"]
+# Fallback to well-known stage names if the password-change flow wasn't found.
+allstages = api("GET", "/stages/all/?page_size=200")[1].get("results", [])
+named = lambda n: next((s for s in allstages if s.get("name") == n), None)
+if not prompt_pk:
+    s = named("default-password-change-prompt")
+    prompt_pk = s and s["pk"]
+if not write_pk:
+    s = named("default-user-settings-write")
+    write_pk = s and s["pk"]
+if not prompt_pk or not write_pk:
+    print("FAIL: could not resolve password-change prompt/write stages")
     sys.exit(1)
 
 # 3) Identification + 4) recovery email stages (create if absent)
@@ -69,10 +86,17 @@ email = named("databaes-recovery-email") or must(*api("POST", "/stages/email/", 
     "activate_user_on_success": True, "subject": "Reset your databaes.net password",
     "template": "email/password_reset.html"}), "create email")
 
-# 5) Bind stages in order (idempotent)
-st, existing = api("GET", "/flows/bindings/?target=%s" % flow_pk)
-have = {b.get("stage") for b in existing.get("results", [])}
-for spk, order in [(ident["pk"], 10), (email["pk"], 20), (prompt["pk"], 30), (write["pk"], 40)]:
+# 5) Self-correcting bindings: remove any stage binding that isn't one of the four
+#    desired stages (repairs earlier wrong picks), then add the missing ones.
+desired = [(ident["pk"], 10), (email["pk"], 20), (prompt_pk, 30), (write_pk, 40)]
+desired_pks = {pk for pk, _ in desired}
+existing = api("GET", "/flows/bindings/?target=%s" % flow_pk)[1].get("results", [])
+for b in existing:
+    if b.get("stage") not in desired_pks:
+        must(*api("DELETE", "/flows/bindings/%s/" % b["pk"]), "delete stray binding")
+        print("removed stray binding:", (b.get("stage_obj") or {}).get("name"))
+have = {b.get("stage") for b in existing if b.get("stage") in desired_pks}
+for spk, order in desired:
     if spk in have:
         continue
     must(*api("POST", "/flows/bindings/", {
@@ -86,8 +110,7 @@ must(*api("PATCH", "/core/brands/%s/" % buuid, {"flow_recovery": flow_pk}), "bin
 # 7) The "Forgot password?" LINK is rendered by the login flow's identification
 #    stage (recovery_flow field). Re-send user_fields + sources because Authentik
 #    re-validates the whole object on PATCH (omitted lists -> "need a source").
-ids = api("GET", "/stages/identification/?page_size=200")[1].get("results", [])
-for s in ids:
+for s in api("GET", "/stages/identification/?page_size=200")[1].get("results", []):
     nm = s.get("name") or ""
     if (nm == "default-authentication-identification" or "authentication" in nm.lower()) \
             and nm != "databaes-recovery-identification":
@@ -96,4 +119,4 @@ for s in ids:
             "user_fields": s.get("user_fields") or [],
             "sources": s.get("sources") or []}), "set recovery_flow on %s" % nm)
 
-print("recovery flow constructed + bound + login link enabled:", flow["slug"])
+print("recovery flow OK: stages = identification -> email -> password-prompt -> user-write; bound + link enabled")
