@@ -516,22 +516,23 @@ jobs:
           import subprocess
 
           envs = ["dev", "qa", "prod"]
-          ips = []
+          hosts = []
           for env in envs:
-              ip = subprocess.check_output(
-                  ["vault", "kv", "get", f"-field=ip", f"secret/adguard/{env}/active-slot"],
+              slot = subprocess.check_output(
+                  ["vault", "kv", "get", f"-field=slot", f"secret/adguard/{env}/active-slot"],
                   text=True,
               ).strip()
-              if ip and ip not in ips:
-                  ips.append(ip)
+              host = f"{env}-adguard-lxc-{slot}"
+              if slot and slot != "none" and host not in hosts:
+                  hosts.append(host)
 
-          print(f"ACTIVE_ADGUARD_IPS_JSON={json.dumps(ips)}")
+          print(f"ACTIVE_ADGUARD_HOSTS_JSON={json.dumps(hosts)}")
           PY
       - name: Refresh Tailscale split-DNS for databaes.net
         env:
           TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
           TAILSCALE_TAILNET: ${{ secrets.TAILSCALE_TAILNET }}
-          ACTIVE_ADGUARD_IPS_JSON: ${{ env.ACTIVE_ADGUARD_IPS_JSON }}
+          ACTIVE_ADGUARD_HOSTS_JSON: ${{ env.ACTIVE_ADGUARD_HOSTS_JSON }}
         run: |
           chmod +x scripts/update-tailscale-split-dns.sh
           scripts/update-tailscale-split-dns.sh
