@@ -1,0 +1,86 @@
+name: Apply Authentik email env to live CT
+
+# One-off: applies the env_file fix to the LIVE Authentik CT without a full
+# blue/green redeploy. The committed compose listed env keys explicitly and
+# omitted AUTHENTIK_EMAIL__*, so SMTP never reached the containers and recovery
+# email silently didn't send. This patches the running compose to add
+# `env_file: - .env` on server + worker, recreates them, and verifies the worker
+# now has the SMTP env. Idempotent. (sso_setup.yml carries the same fix for
+# future deploys.) Also reports which users have an email (recovery target).
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  apply:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - name: Resolve env vault creds
+        run: |
+          case "$ENVIRONMENT" in
+            dev)  echo "ENVVAULT_ADDR=${{ secrets.VAULT_ADDR }}"   >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_TOKEN }}" >> "$GITHUB_ENV" ;;
+            qa)   echo "ENVVAULT_ADDR=${{ secrets.VAULT_QA_ADDR }}" >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_QA_TOKEN }}" >> "$GITHUB_ENV" ;;
+            prod) echo "ENVVAULT_ADDR=${{ secrets.VAULT_PROD_ADDR }}" >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_PROD_TOKEN }}" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Resolve SSO IP + bootstrap token + SSH key
+        run: |
+          IP=$(VAULT_ADDR="$VAULT_BOOTSTRAP_ADDR" VAULT_TOKEN="$VAULT_DEV_TOKEN" \
+               vault kv get -field=ip secret/sso/$ENVIRONMENT/active-slot)
+          TOK=$(VAULT_ADDR="$ENVVAULT_ADDR" VAULT_TOKEN="$ENVVAULT_TOKEN" \
+               vault kv get -field=bootstrap_token secret/sso)
+          echo "::add-mask::$TOK"
+          echo "SSO_IP=$IP" >> "$GITHUB_ENV"
+          echo "AK_TOKEN=$TOK" >> "$GITHUB_ENV"
+          VAULT_ADDR="$VAULT_BOOTSTRAP_ADDR" VAULT_TOKEN="$VAULT_DEV_TOKEN" \
+            vault kv get -field=private_key secret/ssh_keys/sso_worker | awk 'NF>0' > /tmp/sso_key
+          chmod 600 /tmp/sso_key
+
+      - name: Write compose patch script
+        run: |
+          cat > /tmp/patch_compose.py <<'PY'
+          f = "/opt/authentik/docker-compose.yml"
+          lines = open(f).read().split("\n")
+          out = []
+          for i, l in enumerate(lines):
+              out.append(l)
+              if l.strip() in ("command: server", "command: worker"):
+                  indent = l[:len(l) - len(l.lstrip())]
+                  if "env_file:" not in "\n".join(lines[i+1:i+4]):
+                      out.append(indent + "env_file:")
+                      out.append(indent + "  - .env")
+          open(f, "w").write("\n".join(out))
+          print("compose patched (env_file added where missing)")
+          PY
+
+      - name: Patch live compose + recreate Authentik
+        run: |
+          scp -i /tmp/sso_key -o StrictHostKeyChecking=no /tmp/patch_compose.py root@"$SSO_IP":/tmp/patch_compose.py
+          ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+            "cd /opt/authentik && python3 /tmp/patch_compose.py && docker compose --env-file .env up -d && rm -f /tmp/patch_compose.py"
+
+      - name: Verify worker now has SMTP env
+        run: |
+          HOST=$(ssh -i /tmp/sso_key -o StrictHostKeyChecking=no root@"$SSO_IP" \
+                 "docker exec authentik-worker env | grep '^AUTHENTIK_EMAIL__HOST=' || true")
+          rm -f /tmp/sso_key
+          echo "worker: $HOST"
+          echo "$HOST" | grep -q "smtp-relay.brevo.com" || { echo "::error::worker still missing SMTP env"; exit 1; }
+          echo "✅ worker has SMTP env — recovery email will now send via Brevo"
+
+      - name: Report which users have an email (recovery target)
+        run: |
+          curl -s "http://$SSO_IP:9000/api/v3/core/users/?page_size=200" -H "Authorization: Bearer $AK_TOKEN" \
+            | python3 -c "import sys,json;[print(' -', u['username'], '->', (u.get('email') or 'NO EMAIL SET')) for u in json.load(sys.stdin).get('results',[])]"
+          echo "(Recovery email only sends if the identified account has an email.)"

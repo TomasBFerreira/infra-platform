@@ -184,6 +184,11 @@
               network_mode: host
               restart: unless-stopped
               command: server
+              # env_file injects ALL of .env (incl. AUTHENTIK_EMAIL__*) into the
+              # container. Without it, only the explicit `environment:` keys reach
+              # Authentik and SMTP silently does nothing (.env is substitution-only).
+              env_file:
+                - .env
               environment:
                 AUTHENTIK_REDIS__HOST: 127.0.0.1
                 AUTHENTIK_POSTGRESQL__HOST: 127.0.0.1
@@ -210,6 +215,9 @@
               network_mode: host
               restart: unless-stopped
               command: worker
+              # The worker sends the email — it needs AUTHENTIK_EMAIL__* too.
+              env_file:
+                - .env
               environment:
                 AUTHENTIK_REDIS__HOST: 127.0.0.1
                 AUTHENTIK_POSTGRESQL__HOST: 127.0.0.1
