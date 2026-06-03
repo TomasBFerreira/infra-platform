@@ -10,48 +10,20 @@ jobs:
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
     steps:
-      - name: Resolve active QA Traefik slot
+      - name: Fetch browser-like QA auth pages from runner
         run: |
-          ACTIVE_IP=$(vault kv get -field=ip secret/traefik/qa/active-slot)
-          ACTIVE_SLOT=$(vault kv get -field=slot secret/traefik/qa/active-slot)
-          echo "ACTIVE_IP=$ACTIVE_IP" >> $GITHUB_ENV
-          echo "ACTIVE_SLOT=$ACTIVE_SLOT" >> $GITHUB_ENV
-          echo "Active QA Traefik slot: $ACTIVE_SLOT @ $ACTIVE_IP"
-
-      - name: Fetch Traefik SSH key
-        run: |
-          vault kv get -field=private_key secret/ssh_keys/traefik_worker \
-            | awk 'NF > 0' > /tmp/traefik_dbg_key
-          chmod 600 /tmp/traefik_dbg_key
-
-      - name: Runner-side TLS verification to QA Traefik Tailscale IP
-        run: |
-          set +e
-          echo "=== Runner curl verified TLS ==="
-          curl -sSI --connect-timeout 12 --resolve auth-qa.databaes.net:443:100.85.44.36 https://auth-qa.databaes.net/ || true
-          echo "---"
-          curl -sSI --connect-timeout 12 --resolve signoz-qa.databaes.net:443:100.85.44.36 https://signoz-qa.databaes.net/ || true
-          echo "=== Runner openssl auth-qa ==="
-          timeout 12 bash -lc "echo | openssl s_client -connect 100.85.44.36:443 -servername auth-qa.databaes.net -showcerts" 2>&1 | sed -n '1,80p' || true
-          echo "=== Runner openssl signoz-qa ==="
-          timeout 12 bash -lc "echo | openssl s_client -connect 100.85.44.36:443 -servername signoz-qa.databaes.net -showcerts" 2>&1 | sed -n '1,80p' || true
-
-      - name: On-box cert and TLS checks
-        run: |
-          ssh -i /tmp/traefik_dbg_key -o StrictHostKeyChecking=no root@${ACTIVE_IP} bash <<'ENDSSH'
-          set +e
-          echo "=== Tailscale IP ==="
-          tailscale ip -4 || true
-          echo "=== Local verified TLS via localhost ==="
-          curl -sSI --connect-timeout 12 --resolve auth-qa.databaes.net:443:127.0.0.1 https://auth-qa.databaes.net/ || true
-          echo "---"
-          curl -sSI --connect-timeout 12 --resolve signoz-qa.databaes.net:443:127.0.0.1 https://signoz-qa.databaes.net/ || true
-          echo "=== Local openssl auth-qa ==="
-          timeout 12 bash -lc "echo | openssl s_client -connect 127.0.0.1:443 -servername auth-qa.databaes.net -showcerts" 2>&1 | sed -n '1,80p' || true
-          echo "=== Local openssl signoz-qa ==="
-          timeout 12 bash -lc "echo | openssl s_client -connect 127.0.0.1:443 -servername signoz-qa.databaes.net -showcerts" 2>&1 | sed -n '1,80p' || true
-          ENDSSH
-
-      - name: Cleanup
-        if: always()
-        run: rm -f /tmp/traefik_dbg_key
+          AUTH_URL='https://auth-qa.databaes.net/application/o/authorize/?client_id=mJTyUSqYV2oJjet4gZB7BsZiO1NwE5eE2yWIg28t&redirect_uri=https%3A%2F%2Fauth-qa.databaes.net%2Foutpost.goauthentik.io%2Fcallback%3FX-authentik-auth-callback%3Dtrue&response_type=code&scope=openid+entitlements+ak_proxy+email+profile&state=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2F1dGhlbnRpay5pby9vdXRwb3N0L21KVHlVU3FZVjJvSmpldDRnWkI3QnNaaU8xTndFNWVFMnlXSWcyOHQiLCJzaWQiOiI1NkI2WlhSQVVQVVkzSDRQUUxPWDJYNE1CM1hSVU9TT0Y1VU1DWlI0WVVEVFU1TkxMUEhBIiwic3RhdGUiOiJjZkVWRUFWVmRrQjdEdHZRYXhUcnRkYTNIMGZFTHQ4X2I1ZXMyY05mcjl3IiwicmVkaXJlY3QiOiJodHRwczovL3NpZ25vei1xYS5kYXRhYmFlcy5uZXQvIn0._1dSzh_VVrjPDovPLy0n7P5df2p3tl0Hi4B6mffb-ow'
+          UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
+          ACC='text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
+          echo '=== auth authorize GET via Tailscale IP ==='
+          curl -sS --connect-timeout 12 --resolve auth-qa.databaes.net:443:100.85.44.36 -H "User-Agent: ${UA}" -H "Accept: ${ACC}" -D - "$AUTH_URL" -o /tmp/auth-authorize.html || true
+          echo '--- BODY ---'
+          sed -n '1,40p' /tmp/auth-authorize.html || true
+          echo '=== auth flow GET via Tailscale IP ==='
+          curl -sS --connect-timeout 12 --resolve auth-qa.databaes.net:443:100.85.44.36 -H "User-Agent: ${UA}" -H "Accept: ${ACC}" -D - 'https://auth-qa.databaes.net/flows/-/default/authentication/?next=/' -o /tmp/auth-flow.html || true
+          echo '--- BODY ---'
+          sed -n '1,40p' /tmp/auth-flow.html || true
+          echo '=== signoz root GET via Tailscale IP ==='
+          curl -sS --connect-timeout 12 --resolve signoz-qa.databaes.net:443:100.85.44.36 -H "User-Agent: ${UA}" -H "Accept: ${ACC}" -D - 'https://signoz-qa.databaes.net/' -o /tmp/signoz-root.html || true
+          echo '--- BODY ---'
+          sed -n '1,40p' /tmp/signoz-root.html || true
