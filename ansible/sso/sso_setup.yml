@@ -952,76 +952,64 @@
           Authorization: "Bearer {{ sso_bootstrap_token }}"
       register: authentik_brands
 
-    # Enable + bind the password-recovery flow so the login page shows
-    # "Forgot password?" and self-service reset works end-to-end (requires SMTP,
-    # configured above). Authentik ships NO recovery flow by default — it's an
-    # example blueprint — so we enable that blueprint, wait for the flow to
-    # materialise (detect by designation, robust to slug), then bind it.
-    # All steps are non-fatal: recovery setup must never break the SSO deploy.
-    - name: List Authentik blueprints
+    # Construct + bind the password-recovery flow so the login page shows
+    # "Forgot password?" and self-service reset works end-to-end (SMTP above).
+    # Authentik ships NO recovery flow OR blueprint, so build it from stages
+    # (identification -> recovery email -> reuse password-change prompt +
+    # user-write) and bind to the brand. Idempotent (reuses existing objects)
+    # and non-fatal — recovery setup must never break the SSO deploy. Detects
+    # the recovery flow by designation, robust to slug.
+    - name: Construct + bind the recovery flow (idempotent, non-fatal)
       tags: [branding, recovery]
-      uri:
-        url: "http://localhost:9000/api/v3/managed/blueprints/?page_size=200"
-        headers:
-          Authorization: "Bearer {{ sso_bootstrap_token }}"
-      register: authentik_blueprints
       failed_when: false
-
-    - name: Identify the recovery blueprint
-      tags: [branding, recovery]
-      set_fact:
-        _recovery_bp: "{{ (authentik_blueprints.json.results | default([]) | selectattr('path', 'defined') | rejectattr('path', 'none') | selectattr('path', 'search', 'recovery') | list) | first | default({}) }}"
-
-    - name: Enable the recovery blueprint
-      tags: [branding, recovery]
-      when: _recovery_bp.pk is defined
-      failed_when: false
-      uri:
-        url: "http://localhost:9000/api/v3/managed/blueprints/{{ _recovery_bp.pk }}/"
-        method: PATCH
-        headers:
-          Authorization: "Bearer {{ sso_bootstrap_token }}"
-        body_format: json
-        body:
-          enabled: true
-        status_code: [200]
-
-    - name: Apply the recovery blueprint
-      tags: [branding, recovery]
-      when: _recovery_bp.pk is defined
-      failed_when: false
-      uri:
-        url: "http://localhost:9000/api/v3/managed/blueprints/{{ _recovery_bp.pk }}/apply/"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ sso_bootstrap_token }}"
-        status_code: [200, 202, 204]
-
-    - name: Wait for the recovery flow to materialise (by designation)
-      tags: [branding, recovery]
-      uri:
-        url: "http://localhost:9000/api/v3/flows/instances/?designation=recovery"
-        headers:
-          Authorization: "Bearer {{ sso_bootstrap_token }}"
-      register: authentik_recovery_flow
-      retries: 12
-      delay: 5
-      until: (authentik_recovery_flow.json.results | default([]) | length) > 0
-      failed_when: false
-
-    - name: Bind the recovery flow to the brand
-      tags: [branding, recovery]
-      when: (authentik_recovery_flow.json.results | default([]) | length) > 0
-      failed_when: false
-      uri:
-        url: "http://localhost:9000/api/v3/core/brands/{{ authentik_brands.json.results[0].brand_uuid }}/"
-        method: PATCH
-        headers:
-          Authorization: "Bearer {{ sso_bootstrap_token }}"
-        body_format: json
-        body:
-          flow_recovery: "{{ authentik_recovery_flow.json.results[0].pk }}"
-        status_code: [200]
+      environment:
+        AK_TOKEN: "{{ sso_bootstrap_token }}"
+      shell: |
+        python3 - <<'PY'
+        import os, json, sys, urllib.request, urllib.error
+        BASE = "http://localhost:9000/api/v3"; TOK = os.environ["AK_TOKEN"]
+        def api(method, path, body=None):
+            data = json.dumps(body).encode() if body is not None else None
+            req = urllib.request.Request(BASE + path, data=data, method=method, headers={
+                "Authorization": "Bearer " + TOK, "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    t = r.read().decode(); return r.status, (json.loads(t) if t else {})
+            except urllib.error.HTTPError as e:
+                return e.code, {"_error": e.read().decode()}
+        def must(st, obj, what):
+            if st not in (200, 201): print("FAIL %s: %s %s" % (what, st, json.dumps(obj)[:600])); sys.exit(1)
+            return obj
+        st, d = api("GET", "/flows/instances/?designation=recovery")
+        res = d.get("results", [])
+        flow = res[0] if res else must(*api("POST", "/flows/instances/", {
+            "name": "Recovery", "title": "Reset your databaes.net password",
+            "slug": "default-recovery-flow", "designation": "recovery",
+            "authentication": "require_unauthenticated"}), "flow")
+        flow_pk = flow["pk"]
+        st, allst = api("GET", "/stages/all/?page_size=200"); stages = allst.get("results", [])
+        bycomp = lambda sub: [s for s in stages if sub in (s.get("component") or "")]
+        named  = lambda n: next((s for s in stages if s.get("name") == n), None)
+        prompt = next((s for s in bycomp("ak-stage-prompt") if "password" in (s.get("name") or "").lower()), None)
+        write  = next(iter(bycomp("ak-stage-user-write")), None)
+        if not prompt or not write: print("no reusable prompt/write stages"); sys.exit(1)
+        ident = named("databaes-recovery-identification") or must(*api("POST", "/stages/identification/", {
+            "name": "databaes-recovery-identification", "user_fields": ["username", "email"],
+            "case_insensitive_matching": True}), "ident")
+        email = named("databaes-recovery-email") or must(*api("POST", "/stages/email/", {
+            "name": "databaes-recovery-email", "use_global_settings": True,
+            "activate_user_on_success": True, "subject": "Reset your databaes.net password",
+            "template": "email/password_reset.html"}), "email")
+        st, existing = api("GET", "/flows/bindings/?target=%s" % flow_pk)
+        have = {b.get("stage") for b in existing.get("results", [])}
+        for spk, order in [(ident["pk"], 10), (email["pk"], 20), (prompt["pk"], 30), (write["pk"], 40)]:
+            if spk in have: continue
+            must(*api("POST", "/flows/bindings/", {"target": flow_pk, "stage": spk,
+                "order": order, "evaluate_on_plan": True, "re_evaluate_policies": False}), "bind %s" % spk)
+        buuid = api("GET", "/core/brands/")[1]["results"][0]["brand_uuid"]
+        must(*api("PATCH", "/core/brands/%s/" % buuid, {"flow_recovery": flow_pk}), "brand")
+        print("recovery flow constructed + bound:", flow["slug"])
+        PY
 
     - name: Apply databaes.net branding to Authentik
       tags: [branding]
