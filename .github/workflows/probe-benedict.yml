@@ -24,45 +24,32 @@ jobs:
             | awk 'NF > 0' > /tmp/traefik_dbg_key
           chmod 600 /tmp/traefik_dbg_key
 
-      - name: Runner-side reachability to QA Traefik Tailscale IP
+      - name: Runner-side TLS verification to QA Traefik Tailscale IP
         run: |
           set +e
-          echo "=== Runner curl to QA Tailscale IP ==="
-          curl -skI --connect-timeout 8 --resolve auth-qa.databaes.net:443:100.85.44.36 https://auth-qa.databaes.net/ || true
-          curl -skI --connect-timeout 8 --resolve signoz-qa.databaes.net:443:100.85.44.36 https://signoz-qa.databaes.net/ || true
+          echo "=== Runner curl verified TLS ==="
+          curl -sSI --connect-timeout 12 --resolve auth-qa.databaes.net:443:100.85.44.36 https://auth-qa.databaes.net/ || true
+          echo "---"
+          curl -sSI --connect-timeout 12 --resolve signoz-qa.databaes.net:443:100.85.44.36 https://signoz-qa.databaes.net/ || true
+          echo "=== Runner openssl auth-qa ==="
+          timeout 12 bash -lc "echo | openssl s_client -connect 100.85.44.36:443 -servername auth-qa.databaes.net -showcerts" 2>&1 | sed -n '1,80p' || true
+          echo "=== Runner openssl signoz-qa ==="
+          timeout 12 bash -lc "echo | openssl s_client -connect 100.85.44.36:443 -servername signoz-qa.databaes.net -showcerts" 2>&1 | sed -n '1,80p' || true
 
-      - name: Diagnose active QA Traefik host
+      - name: On-box cert and TLS checks
         run: |
           ssh -i /tmp/traefik_dbg_key -o StrictHostKeyChecking=no root@${ACTIVE_IP} bash <<'ENDSSH'
           set +e
-          echo "=== Host identity ==="
-          hostname
-          hostname -I
-          echo
-          echo "=== Tailscale ==="
-          tailscale ip -4 2>/dev/null || true
-          tailscale status 2>&1 | head -20 || true
-          echo
-          echo "=== Listeners ==="
-          ss -tulpen | grep -E ':(80|443|8080) ' || true
-          echo
-          echo "=== Curl self via localhost ==="
-          curl -skI --resolve auth-qa.databaes.net:443:127.0.0.1 https://auth-qa.databaes.net/ || true
-          curl -skI --resolve signoz-qa.databaes.net:443:127.0.0.1 https://signoz-qa.databaes.net/ || true
-          echo
-          echo "=== Curl self via tailscale IP ==="
-          TS_IP=$(tailscale ip -4 2>/dev/null | head -1)
-          echo "TS_IP=$TS_IP"
-          curl -skI --connect-timeout 8 --resolve auth-qa.databaes.net:443:${TS_IP} https://auth-qa.databaes.net/ || true
-          curl -skI --connect-timeout 8 --resolve signoz-qa.databaes.net:443:${TS_IP} https://signoz-qa.databaes.net/ || true
-          echo
-          echo "=== Backend reachability ==="
-          curl -sS -o /dev/null -w 'auth-root %{http_code}\n' --connect-timeout 8 http://192.168.30.75:9000/ || true
-          curl -sS -o /dev/null -w 'auth-outpost %{http_code}\n' --connect-timeout 8 http://192.168.30.75:9000/outpost.goauthentik.io/auth/traefik || true
-          curl -sS -o /dev/null -w 'signoz-root %{http_code}\n' --connect-timeout 8 http://192.168.30.91:8081/ || true
-          echo
-          echo "=== Traefik access log tail for qa ==="
-          docker logs traefik --tail 80 2>&1 | grep -E 'auth-qa|signoz-qa' | tail -20 || true
+          echo "=== Tailscale IP ==="
+          tailscale ip -4 || true
+          echo "=== Local verified TLS via localhost ==="
+          curl -sSI --connect-timeout 12 --resolve auth-qa.databaes.net:443:127.0.0.1 https://auth-qa.databaes.net/ || true
+          echo "---"
+          curl -sSI --connect-timeout 12 --resolve signoz-qa.databaes.net:443:127.0.0.1 https://signoz-qa.databaes.net/ || true
+          echo "=== Local openssl auth-qa ==="
+          timeout 12 bash -lc "echo | openssl s_client -connect 127.0.0.1:443 -servername auth-qa.databaes.net -showcerts" 2>&1 | sed -n '1,80p' || true
+          echo "=== Local openssl signoz-qa ==="
+          timeout 12 bash -lc "echo | openssl s_client -connect 127.0.0.1:443 -servername signoz-qa.databaes.net -showcerts" 2>&1 | sed -n '1,80p' || true
           ENDSSH
 
       - name: Cleanup
