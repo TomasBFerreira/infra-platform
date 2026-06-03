@@ -4,80 +4,70 @@ on:
   workflow_dispatch:
 
 jobs:
-  probe:
-    runs-on: self-hosted
+  diagnose-qa-traefik:
+    runs-on: [self-hosted, qa]
     env:
-      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      SSH_USER: ${{ secrets.SSH_USER }}
     steps:
-      - name: Fetch SSH keys
+      - name: Resolve active QA Traefik slot
         run: |
-          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
-            | awk 'NF > 0' > /tmp/worker_key
-          chmod 600 /tmp/worker_key
-          # vault-ct key for jumping via dev vault LXC
-          vault kv get -field=private_key secret/ssh_keys/vault_ct_worker 2>/dev/null \
-            | awk 'NF > 0' > /tmp/vault_key || echo "vault_ct key not found"
-          chmod 600 /tmp/vault_key 2>/dev/null || true
+          ACTIVE_IP=$(vault kv get -field=ip secret/traefik/qa/active-slot)
+          ACTIVE_SLOT=$(vault kv get -field=slot secret/traefik/qa/active-slot)
+          echo "ACTIVE_IP=$ACTIVE_IP" >> $GITHUB_ENV
+          echo "ACTIVE_SLOT=$ACTIVE_SLOT" >> $GITHUB_ENV
+          echo "Active QA Traefik slot: $ACTIVE_SLOT @ $ACTIVE_IP"
 
-      - name: Direct reachability checks from management runner
+      - name: Fetch Traefik SSH key
         run: |
-          echo "=== Ping benedict (192.168.50.4) ==="
-          ping -c3 -W2 192.168.50.4 && echo "REACHABLE" || echo "UNREACHABLE"
+          vault kv get -field=private_key secret/ssh_keys/traefik_worker \
+            | awk 'NF > 0' > /tmp/traefik_dbg_key
+          chmod 600 /tmp/traefik_dbg_key
 
-          echo ""
-          echo "=== Ping dev github-runner (192.168.20.101) ==="
-          ping -c3 -W2 192.168.20.101 && echo "REACHABLE" || echo "UNREACHABLE"
-
-          echo ""
-          echo "=== Ping dev worker node (192.168.20.11) ==="
-          ping -c3 -W2 192.168.20.11 && echo "REACHABLE" || echo "UNREACHABLE"
-
-          echo ""
-          echo "=== Ping dev network-vm (192.168.20.55) ==="
-          ping -c3 -W2 192.168.20.55 && echo "REACHABLE" || echo "UNREACHABLE"
-
-          echo ""
-          echo "=== Ping dev vault (192.168.20.45) ==="
-          ping -c3 -W2 192.168.20.45 && echo "REACHABLE" || echo "UNREACHABLE"
-
-      - name: Try SSH into benedict directly
+      - name: Diagnose active QA Traefik host
         run: |
-          echo "=== SSH direct to benedict (192.168.50.4) ==="
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i /tmp/worker_key \
-            root@192.168.50.4 "echo 'SSH OK'; uptime; pvecm status" \
-            && echo "SSH DIRECT: SUCCESS" || echo "SSH DIRECT: FAILED"
-
-      - name: Try hopping via dev vault LXC (192.168.20.45)
-        run: |
-          echo "=== Hop via dev vault (192.168.20.45) → benedict (192.168.50.4) ==="
-          # Check if vault LXC is reachable first
-          if ! ping -c1 -W2 192.168.20.45 &>/dev/null; then
-            echo "Dev vault LXC unreachable — skipping hop"
-            exit 0
-          fi
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=no -i /tmp/vault_key root@192.168.20.45" \
-            -i /tmp/worker_key root@192.168.50.4 \
-            "echo 'SSH via vault hop OK'; uptime; pvecm status" \
-            && echo "SSH HOP: SUCCESS" || echo "SSH HOP: FAILED"
-
-      - name: Try hopping via dev network-vm (192.168.20.55)
-        run: |
-          echo "=== Hop via dev network-vm (192.168.20.55) → benedict (192.168.50.4) ==="
-          if ! ping -c1 -W2 192.168.20.55 &>/dev/null; then
-            echo "Dev network-vm unreachable — skipping hop"
-            exit 0
-          fi
-          vault kv get -field=private_key secret/ssh_keys/network_vm_worker 2>/dev/null \
-            | awk 'NF > 0' > /tmp/netvm_key || echo "network_vm key not found"
-          chmod 600 /tmp/netvm_key 2>/dev/null || true
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=no -i /tmp/netvm_key root@192.168.20.55" \
-            -i /tmp/worker_key root@192.168.50.4 \
-            "echo 'SSH via netvm hop OK'; uptime; pvecm status" \
-            && echo "SSH HOP: SUCCESS" || echo "SSH HOP: FAILED"
+          ssh -i /tmp/traefik_dbg_key -o StrictHostKeyChecking=no ${SSH_USER}@${ACTIVE_IP} bash <<'ENDSSH'
+          set +e
+          echo "=== Host identity ==="
+          hostname
+          hostname -I
+          tailscale ip -4 2>/dev/null || true
+          echo
+          echo "=== Listeners ==="
+          ss -tulpen | grep -E ':(80|443|8080) ' || true
+          echo
+          echo "=== Docker containers ==="
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' || true
+          echo
+          echo "=== Local HTTP/HTTPS auth-qa ==="
+          curl -sv --max-time 8 -H 'Host: auth-qa.databaes.net' http://127.0.0.1:80/ -o /dev/null 2>&1 | grep -E '> Host:|< HTTP|< location:|timed out|Failed|Connected' || true
+          curl -skv --max-time 8 --resolve auth-qa.databaes.net:443:127.0.0.1 https://auth-qa.databaes.net/ -o /dev/null 2>&1 | grep -E '> Host:|< HTTP|< location:|timed out|Failed|Connected|subject:|issuer:' || true
+          echo
+          echo "=== Local HTTP/HTTPS signoz-qa ==="
+          curl -sv --max-time 8 -H 'Host: signoz-qa.databaes.net' http://127.0.0.1:80/ -o /dev/null 2>&1 | grep -E '> Host:|< HTTP|< location:|timed out|Failed|Connected' || true
+          curl -skv --max-time 8 --resolve signoz-qa.databaes.net:443:127.0.0.1 https://signoz-qa.databaes.net/ -o /dev/null 2>&1 | grep -E '> Host:|< HTTP|< location:|timed out|Failed|Connected|subject:|issuer:' || true
+          echo
+          echo "=== Authentik backend reachability from Traefik LXC ==="
+          curl -sv --max-time 8 http://192.168.30.75:9000/ -o /dev/null 2>&1 | grep -E '< HTTP|timed out|Failed|Connected|location:' || true
+          curl -sv --max-time 8 http://192.168.30.75:9000/outpost.goauthentik.io/auth/traefik -o /dev/null 2>&1 | grep -E '< HTTP|timed out|Failed|Connected|location:' || true
+          echo
+          echo "=== SigNoz backend reachability from Traefik LXC ==="
+          curl -sv --max-time 8 http://192.168.30.91:8081/ -o /dev/null 2>&1 | grep -E '< HTTP|timed out|Failed|Connected|location:' || true
+          echo
+          echo "=== Traefik runtime routers ==="
+          curl -s http://127.0.0.1:8080/api/http/routers 2>/dev/null | python3 -c "import json,sys; data=json.load(sys.stdin); [print(r['name'], '|', r.get('status','?'), '|', r.get('rule','')) for r in data if 'auth-qa' in r.get('name','') or 'signoz-qa' in r.get('name','')]" || true
+          echo
+          echo "=== Traefik runtime services ==="
+          curl -s http://127.0.0.1:8080/api/http/services 2>/dev/null | python3 -c "import json,sys; data=json.load(sys.stdin); [print(s['name'], '|', s.get('status','?'), '|', s.get('serverStatus',{})) for s in data if 'auth-qa' in s.get('name','') or 'signoz-qa' in s.get('name','')]" || true
+          echo
+          echo "=== Deployed QA config snippets ==="
+          grep -n -A6 -B2 'auth-qa-router\|signoz-qa-router\|authentik-qa\|auth-qa-service\|signoz-qa-service' /opt/traefik/config/dynamic/services.yml || true
+          echo
+          echo "=== Traefik logs (last 80 filtered lines) ==="
+          docker logs traefik --tail 200 2>&1 | grep -Ei 'auth-qa|signoz-qa|192\.168\.30\.75|192\.168\.30\.91|timeout|dial|refused|error' | tail -80 || true
+          ENDSSH
 
       - name: Cleanup
         if: always()
-        run: rm -f /tmp/worker_key /tmp/vault_key /tmp/netvm_key
+        run: rm -f /tmp/traefik_dbg_key
