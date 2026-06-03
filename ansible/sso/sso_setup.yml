@@ -1014,7 +1014,7 @@
         for s in ids:
             nm = s.get("name") or ""
             if (nm == "default-authentication-identification" or "authentication" in nm.lower()) and nm != "databaes-recovery-identification":
-                must(*api("PATCH", "/stages/identification/%s/" % s["pk"], {"recovery_flow": flow_pk}), "ident recovery_flow %s" % nm)
+                must(*api("PATCH", "/stages/identification/%s/" % s["pk"], {"recovery_flow": flow_pk, "user_fields": s.get("user_fields") or [], "sources": s.get("sources") or []}), "ident recovery_flow %s" % nm)
         print("recovery flow constructed + bound + login link enabled:", flow["slug"])
         PY
 
