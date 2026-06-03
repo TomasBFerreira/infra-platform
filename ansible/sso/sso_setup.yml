@@ -967,64 +967,16 @@
     # user-write) and bind to the brand. Idempotent (reuses existing objects)
     # and non-fatal — recovery setup must never break the SSO deploy. Detects
     # the recovery flow by designation, robust to slug.
+    # Runs files/build_recovery.py via the script module (NOT an inline shell
+    # heredoc — ansible tokenizes shell commands and chokes on embedded python
+    # quotes/braces). The script is idempotent + self-contained.
     - name: Construct + bind the recovery flow (idempotent, non-fatal)
       tags: [branding, recovery]
       failed_when: false
       environment:
+        AK_BASE: "http://localhost:9000/api/v3"
         AK_TOKEN: "{{ sso_bootstrap_token }}"
-      shell: |
-        python3 - <<'PY'
-        import os, json, sys, urllib.request, urllib.error
-        BASE = "http://localhost:9000/api/v3"; TOK = os.environ["AK_TOKEN"]
-        def api(method, path, body=None):
-            data = json.dumps(body).encode() if body is not None else None
-            req = urllib.request.Request(BASE + path, data=data, method=method, headers={
-                "Authorization": "Bearer " + TOK, "Content-Type": "application/json"})
-            try:
-                with urllib.request.urlopen(req) as r:
-                    t = r.read().decode(); return r.status, (json.loads(t) if t else {})
-            except urllib.error.HTTPError as e:
-                return e.code, {"_error": e.read().decode()}
-        def must(st, obj, what):
-            if st not in (200, 201): print("FAIL %s: %s %s" % (what, st, json.dumps(obj)[:600])); sys.exit(1)
-            return obj
-        st, d = api("GET", "/flows/instances/?designation=recovery")
-        res = d.get("results", [])
-        flow = res[0] if res else must(*api("POST", "/flows/instances/", {
-            "name": "Recovery", "title": "Reset your databaes.net password",
-            "slug": "default-recovery-flow", "designation": "recovery",
-            "authentication": "require_unauthenticated"}), "flow")
-        flow_pk = flow["pk"]
-        st, allst = api("GET", "/stages/all/?page_size=200"); stages = allst.get("results", [])
-        bycomp = lambda sub: [s for s in stages if sub in (s.get("component") or "")]
-        named  = lambda n: next((s for s in stages if s.get("name") == n), None)
-        prompt = next((s for s in bycomp("ak-stage-prompt") if "password" in (s.get("name") or "").lower()), None)
-        write  = next(iter(bycomp("ak-stage-user-write")), None)
-        if not prompt or not write: print("no reusable prompt/write stages"); sys.exit(1)
-        ident = named("databaes-recovery-identification") or must(*api("POST", "/stages/identification/", {
-            "name": "databaes-recovery-identification", "user_fields": ["username", "email"],
-            "case_insensitive_matching": True}), "ident")
-        email = named("databaes-recovery-email") or must(*api("POST", "/stages/email/", {
-            "name": "databaes-recovery-email", "use_global_settings": True,
-            "activate_user_on_success": True, "subject": "Reset your databaes.net password",
-            "template": "email/password_reset.html"}), "email")
-        st, existing = api("GET", "/flows/bindings/?target=%s" % flow_pk)
-        have = {b.get("stage") for b in existing.get("results", [])}
-        for spk, order in [(ident["pk"], 10), (email["pk"], 20), (prompt["pk"], 30), (write["pk"], 40)]:
-            if spk in have: continue
-            must(*api("POST", "/flows/bindings/", {"target": flow_pk, "stage": spk,
-                "order": order, "evaluate_on_plan": True, "re_evaluate_policies": False}), "bind %s" % spk)
-        buuid = api("GET", "/core/brands/")[1]["results"][0]["brand_uuid"]
-        must(*api("PATCH", "/core/brands/%s/" % buuid, {"flow_recovery": flow_pk}), "brand")
-        # The "Forgot password?" LINK is rendered by the login flow's identification
-        # stage (recovery_flow field), not the brand binding — set it so it appears.
-        ids = api("GET", "/stages/identification/?page_size=200")[1].get("results", [])
-        for s in ids:
-            nm = s.get("name") or ""
-            if (nm == "default-authentication-identification" or "authentication" in nm.lower()) and nm != "databaes-recovery-identification":
-                must(*api("PATCH", "/stages/identification/%s/" % s["pk"], {"recovery_flow": flow_pk, "user_fields": s.get("user_fields") or [], "sources": s.get("sources") or []}), "ident recovery_flow %s" % nm)
-        print("recovery flow constructed + bound + login link enabled:", flow["slug"])
-        PY
+      ansible.builtin.script: files/build_recovery.py
 
     - name: Apply databaes.net branding to Authentik
       tags: [branding]
