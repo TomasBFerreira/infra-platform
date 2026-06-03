@@ -50,7 +50,9 @@ jobs:
             qa)
               RAW='${{ secrets.VAULT_QA_ADDR }}';   ROOT='${{ secrets.VAULT_QA_ROOT_TOKEN }}';   SECRET_NAME='VAULT_QA_TOKEN' ;;
             prod)
-              RAW='${{ secrets.VAULT_PROD_ADDR }}'; ROOT='${{ secrets.VAULT_PROD_ROOT_TOKEN }}'; SECRET_NAME='VAULT_PROD_TOKEN' ;;
+              # Prod env-vault root token is stored UNPREFIXED as VAULT_ROOT_TOKEN
+              # (not VAULT_PROD_ROOT_TOKEN, which doesn't exist — docs inconsistency).
+              RAW='${{ secrets.VAULT_PROD_ADDR }}'; ROOT='${{ secrets.VAULT_ROOT_TOKEN }}'; SECRET_NAME='VAULT_PROD_TOKEN' ;;
           esac
           if [[ "$RAW" != http://* && "$RAW" != https://* ]]; then RAW="http://${RAW}"; fi
           if [ -z "$ROOT" ]; then echo "ERROR: no root token secret for $ENVIRONMENT"; exit 1; fi
