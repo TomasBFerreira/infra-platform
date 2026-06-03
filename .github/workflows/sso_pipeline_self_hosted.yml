@@ -488,6 +488,7 @@ jobs:
     env:
       ENV:        ${{ needs.resolve-slots.outputs.environment }}
       NEW_IP:     ${{ needs.resolve-slots.outputs.staging_ip }}
+      ACTIVE_IP:  ${{ needs.resolve-slots.outputs.active_ip }}
       GH_TOKEN:   ${{ secrets.GH_PAT }}
     steps:
       - name: Checkout traefik-gitops
@@ -593,6 +594,19 @@ jobs:
               yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
           EOF
 
+      - name: Catch-all — repoint any stray old-slot Authentik refs
+        working-directory: traefik-gitops
+        run: |
+          # The structured update above only touches known keys (auth-{env}-service,
+          # auth-{env}-outpost-service, the middleware). On 2026-06-03 prod had an
+          # extra Authentik backend under a different key that was left on the old
+          # slot -> auth.databaes.net 503 after teardown. Catch EVERY remaining
+          # old-active-IP:9000 ref so no stale backend can survive a flip.
+          if [ -n "${ACTIVE_IP}" ]; then
+            sed -i "s#http://${ACTIVE_IP}:9000#http://${NEW_IP}:9000#g" config/dynamic/services.yml
+            echo "Repointed any stray ${ACTIVE_IP}:9000 -> ${NEW_IP}:9000"
+          fi
+
       - name: Push update to traefik-gitops
         working-directory: traefik-gitops
         run: |
@@ -606,11 +620,10 @@ jobs:
             git push
           fi
 
-      - name: Apply Traefik config via Update Network-VM Services
-        run: |
-          gh workflow run "Update Network-VM Services (no reprovision)" \
-            --repo TomasBFerreira/infra-platform \
-            --field environment=${{ needs.resolve-slots.outputs.environment }}
+      # The push above triggers traefik-gitops' own "Deploy Traefik Config",
+      # which applies to the live Traefik. (Removed the old "Update Network-VM
+      # Services (no reprovision)" call — that workflow was renamed/removed, so it
+      # always failed; the push-triggered deploy already applies the config.)
 
   teardown-old-active:
     needs: [resolve-slots, flip-active, backup-db, reconcile-devops-portal-authentik, configure-vault-oidc, configure-bootstrap-vault-oidc, update-traefik]
