@@ -120,3 +120,19 @@ for s in api("GET", "/stages/identification/?page_size=200")[1].get("results", [
             "sources": s.get("sources") or []}), "set recovery_flow on %s" % nm)
 
 print("recovery flow OK: stages = identification -> email -> password-prompt -> user-write; bound + link enabled")
+
+# 8) Keep USERNAME admin-only: Authentik's default user-settings prompt lets users
+#    self-edit their username (the login identifier). Drop the username field so
+#    only name + email (+ password via the change flow) are self-service. Idempotent.
+usf = api("GET", "/flows/instances/?slug=default-user-settings-flow")[1].get("results", [])
+if usf:
+    for b in api("GET", "/flows/bindings/?target=%s" % usf[0]["pk"])[1].get("results", []):
+        if "prompt" not in ((b.get("stage_obj") or {}).get("component") or ""):
+            continue
+        st = api("GET", "/stages/prompt/stages/%s/" % b["stage"])[1]
+        fields = st.get("fields", [])
+        keep = [fpk for fpk in fields
+                if (api("GET", "/stages/prompt/prompts/%s/" % fpk)[1].get("field_key") or "").lower() != "username"]
+        if len(keep) != len(fields):
+            must(*api("PATCH", "/stages/prompt/stages/%s/" % b["stage"], {"fields": keep}), "drop username from user-settings")
+            print("user-settings: removed self-service username field (now admin-only)")
