@@ -952,20 +952,67 @@
           Authorization: "Bearer {{ sso_bootstrap_token }}"
       register: authentik_brands
 
-    # Bind the built-in recovery flow to the brand so the login page shows a
-    # "Forgot password?" link and self-service password reset works end-to-end
-    # (requires SMTP, configured above). Idempotent PATCH.
-    - name: Get the default recovery flow
+    # Enable + bind the password-recovery flow so the login page shows
+    # "Forgot password?" and self-service reset works end-to-end (requires SMTP,
+    # configured above). Authentik ships NO recovery flow by default — it's an
+    # example blueprint — so we enable that blueprint, wait for the flow to
+    # materialise (detect by designation, robust to slug), then bind it.
+    # All steps are non-fatal: recovery setup must never break the SSO deploy.
+    - name: List Authentik blueprints
       tags: [branding, recovery]
       uri:
-        url: "http://localhost:9000/api/v3/flows/instances/?slug=default-recovery-flow"
+        url: "http://localhost:9000/api/v3/managed/blueprints/?page_size=200"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: authentik_blueprints
+      failed_when: false
+
+    - name: Identify the recovery blueprint
+      tags: [branding, recovery]
+      set_fact:
+        _recovery_bp: "{{ (authentik_blueprints.json.results | default([]) | selectattr('path', 'defined') | rejectattr('path', 'none') | selectattr('path', 'search', 'recovery') | list) | first | default({}) }}"
+
+    - name: Enable the recovery blueprint
+      tags: [branding, recovery]
+      when: _recovery_bp.pk is defined
+      failed_when: false
+      uri:
+        url: "http://localhost:9000/api/v3/managed/blueprints/{{ _recovery_bp.pk }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          enabled: true
+        status_code: [200]
+
+    - name: Apply the recovery blueprint
+      tags: [branding, recovery]
+      when: _recovery_bp.pk is defined
+      failed_when: false
+      uri:
+        url: "http://localhost:9000/api/v3/managed/blueprints/{{ _recovery_bp.pk }}/apply/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        status_code: [200, 202, 204]
+
+    - name: Wait for the recovery flow to materialise (by designation)
+      tags: [branding, recovery]
+      uri:
+        url: "http://localhost:9000/api/v3/flows/instances/?designation=recovery"
         headers:
           Authorization: "Bearer {{ sso_bootstrap_token }}"
       register: authentik_recovery_flow
+      retries: 12
+      delay: 5
+      until: (authentik_recovery_flow.json.results | default([]) | length) > 0
+      failed_when: false
 
     - name: Bind the recovery flow to the brand
       tags: [branding, recovery]
-      when: authentik_recovery_flow.json.results | length > 0
+      when: (authentik_recovery_flow.json.results | default([]) | length) > 0
+      failed_when: false
       uri:
         url: "http://localhost:9000/api/v3/core/brands/{{ authentik_brands.json.results[0].brand_uuid }}/"
         method: PATCH

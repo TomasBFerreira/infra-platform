@@ -1,0 +1,98 @@
+name: Enable Authentik recovery flow (blueprint)
+
+# Creates + binds the password-recovery flow on the LIVE Authentik. Authentik
+# does NOT ship a recovery flow by default (it's in the example blueprints), so
+# self-service "Forgot password?" needs the recovery blueprint enabled. This
+# enables it, waits for the flow to materialise, and binds it to the brand.
+# Idempotent. Runs on the env runner (Authentik CT is dev-network only).
+#
+# The same logic is folded into ansible/sso/sso_setup.yml so env rebuilds
+# recreate it; this workflow is for applying it now without a full redeploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  enable:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - name: Resolve env vault creds
+        run: |
+          case "$ENVIRONMENT" in
+            dev)  echo "ENVVAULT_ADDR=${{ secrets.VAULT_ADDR }}"   >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_TOKEN }}" >> "$GITHUB_ENV" ;;
+            qa)   echo "ENVVAULT_ADDR=${{ secrets.VAULT_QA_ADDR }}" >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_QA_TOKEN }}" >> "$GITHUB_ENV" ;;
+            prod) echo "ENVVAULT_ADDR=${{ secrets.VAULT_PROD_ADDR }}" >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_PROD_TOKEN }}" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Resolve active SSO IP + bootstrap token
+        run: |
+          IP=$(VAULT_ADDR="$VAULT_BOOTSTRAP_ADDR" VAULT_TOKEN="$VAULT_DEV_TOKEN" \
+               vault kv get -field=ip secret/sso/$ENVIRONMENT/active-slot)
+          TOK=$(VAULT_ADDR="$ENVVAULT_ADDR" VAULT_TOKEN="$ENVVAULT_TOKEN" \
+               vault kv get -field=bootstrap_token secret/sso)
+          echo "::add-mask::$TOK"
+          echo "SSO_IP=$IP" >> "$GITHUB_ENV"
+          echo "AK_TOKEN=$TOK" >> "$GITHUB_ENV"
+          echo "Active SSO slot IP: $IP"
+
+      - name: Enable the recovery blueprint
+        run: |
+          API="http://$SSO_IP:9000/api/v3"
+          AUTH="Authorization: Bearer $AK_TOKEN"
+          BP=$(curl -s "$API/managed/blueprints/?page_size=200" -H "$AUTH")
+          PK=$(echo "$BP" | python3 -c "
+          import sys,json
+          rows=json.load(sys.stdin).get('results',[])
+          c=[b for b in rows if 'recovery' in ((b.get('path') or '')+(b.get('name') or '')).lower()]
+          print(c[0]['pk'] if c else '')
+          ")
+          if [ -z "$PK" ]; then
+            echo '::error::No recovery blueprint found. Available blueprints:'
+            echo "$BP" | python3 -c "import sys,json;[print(' -',b.get('path'),'|',b.get('name')) for b in json.load(sys.stdin).get('results',[])]"
+            exit 1
+          fi
+          echo "Recovery blueprint pk=$PK"
+          curl -s -X PATCH "$API/managed/blueprints/$PK/" -H "$AUTH" -H "Content-Type: application/json" \
+            -d '{"enabled": true}' -o /dev/null -w "enable HTTP %{http_code}\n"
+          # Trigger apply explicitly (some versions apply async on enable).
+          curl -s -X POST "$API/managed/blueprints/$PK/apply/" -H "$AUTH" -o /dev/null -w "apply HTTP %{http_code}\n" || true
+
+      - name: Wait for the recovery flow to materialise
+        run: |
+          API="http://$SSO_IP:9000/api/v3"
+          AUTH="Authorization: Bearer $AK_TOKEN"
+          FPK=""
+          for i in $(seq 1 24); do
+            FPK=$(curl -s "$API/flows/instances/?designation=recovery" -H "$AUTH" \
+                  | python3 -c "import sys,json;r=json.load(sys.stdin).get('results',[]);print(r[0]['pk'] if r else '')" 2>/dev/null || echo "")
+            [ -n "$FPK" ] && break
+            sleep 5
+          done
+          [ -n "$FPK" ] || { echo "::error::recovery flow did not appear after enabling blueprint"; exit 1; }
+          echo "RECOVERY_FLOW_PK=$FPK" >> "$GITHUB_ENV"
+          echo "recovery flow pk=$FPK"
+
+      - name: Bind recovery flow to the brand
+        run: |
+          API="http://$SSO_IP:9000/api/v3"
+          AUTH="Authorization: Bearer $AK_TOKEN"
+          BUUID=$(curl -s "$API/core/brands/" -H "$AUTH" \
+                  | python3 -c "import sys,json;print(json.load(sys.stdin)['results'][0]['brand_uuid'])")
+          curl -s -X PATCH "$API/core/brands/$BUUID/" -H "$AUTH" -H "Content-Type: application/json" \
+            -d "{\"flow_recovery\": \"$RECOVERY_FLOW_PK\"}" -o /dev/null -w "bind HTTP %{http_code}\n"
+          FR=$(curl -s "$API/core/brands/" -H "$AUTH" \
+               | python3 -c "import sys,json;print(json.load(sys.stdin)['results'][0].get('flow_recovery') or 'NULL')")
+          echo "brand.flow_recovery = $FR"
+          [ "$FR" != "NULL" ] || { echo "::error::binding did not stick"; exit 1; }
+          echo "::notice::Recovery flow enabled + bound on $ENVIRONMENT. Forgot-password is now live (sends via Brevo)."
