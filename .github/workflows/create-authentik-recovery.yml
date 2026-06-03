@@ -128,14 +128,32 @@ jobs:
                   "evaluate_on_plan": True, "re_evaluate_policies": False}), "bind stage %s" % stage_pk)
               print("bound stage", stage_pk, "at order", order)
 
-          # 6) Bind flow to the brand
+          # 6) Bind flow to the brand (default recovery target)
           st, brands = api("GET", "/core/brands/")
           buuid = brands["results"][0]["brand_uuid"]
           must(*api("PATCH", "/core/brands/%s/" % buuid, {"flow_recovery": flow_pk}), "bind brand")
-          st, b2 = api("GET", "/core/brands/")
-          fr = b2["results"][0].get("flow_recovery")
+          fr = api("GET", "/core/brands/")[1]["results"][0].get("flow_recovery")
           print("brand.flow_recovery =", fr)
           if not fr:
               print("FAILED: brand binding did not stick"); sys.exit(1)
-          print("OK: recovery flow constructed + bound. 'Forgot password?' is now live.")
+
+          # 7) The "Forgot password?" LINK on the login page is rendered by the
+          #    login flow's identification stage (recovery_flow field), NOT by the
+          #    brand binding. Set it on the login identification stage(s) so the
+          #    link actually appears. (Exclude the recovery flow's own ident stage.)
+          st, ids = api("GET", "/stages/identification/?page_size=200")
+          login_idents = [s for s in ids.get("results", [])
+                          if (s.get("name") == "default-authentication-identification"
+                              or "authentication" in (s.get("name") or "").lower())
+                          and s.get("name") != "databaes-recovery-identification"]
+          if not login_idents:
+              print("WARN: no login identification stage found; available:",
+                    [s.get("name") for s in ids.get("results", [])])
+          for s in login_idents:
+              print("identification '%s' recovery_flow was: %s" % (s["name"], s.get("recovery_flow")))
+              must(*api("PATCH", "/stages/identification/%s/" % s["pk"],
+                        {"recovery_flow": flow_pk}), "set recovery_flow on %s" % s["name"])
+              print("identification '%s' recovery_flow now: %s" % (s["name"], flow_pk))
+
+          print("OK: recovery flow built, bound, and 'Forgot password?' link enabled on login.")
           PY

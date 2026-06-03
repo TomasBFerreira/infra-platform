@@ -1008,7 +1008,14 @@
                 "order": order, "evaluate_on_plan": True, "re_evaluate_policies": False}), "bind %s" % spk)
         buuid = api("GET", "/core/brands/")[1]["results"][0]["brand_uuid"]
         must(*api("PATCH", "/core/brands/%s/" % buuid, {"flow_recovery": flow_pk}), "brand")
-        print("recovery flow constructed + bound:", flow["slug"])
+        # The "Forgot password?" LINK is rendered by the login flow's identification
+        # stage (recovery_flow field), not the brand binding — set it so it appears.
+        ids = api("GET", "/stages/identification/?page_size=200")[1].get("results", [])
+        for s in ids:
+            nm = s.get("name") or ""
+            if (nm == "default-authentication-identification" or "authentication" in nm.lower()) and nm != "databaes-recovery-identification":
+                must(*api("PATCH", "/stages/identification/%s/" % s["pk"], {"recovery_flow": flow_pk}), "ident recovery_flow %s" % nm)
+        print("recovery flow constructed + bound + login link enabled:", flow["slug"])
         PY
 
     - name: Apply databaes.net branding to Authentik
