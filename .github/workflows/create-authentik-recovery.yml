@@ -151,8 +151,13 @@ jobs:
                     [s.get("name") for s in ids.get("results", [])])
           for s in login_idents:
               print("identification '%s' recovery_flow was: %s" % (s["name"], s.get("recovery_flow")))
-              must(*api("PATCH", "/stages/identification/%s/" % s["pk"],
-                        {"recovery_flow": flow_pk}), "set recovery_flow on %s" % s["name"])
+              # Re-send user_fields + sources: Authentik re-validates the whole
+              # object on PATCH and treats omitted lists as empty, which trips
+              # "no user fields -> need a source". Preserve the stage's existing config.
+              must(*api("PATCH", "/stages/identification/%s/" % s["pk"], {
+                  "recovery_flow": flow_pk,
+                  "user_fields": s.get("user_fields") or [],
+                  "sources": s.get("sources") or []}), "set recovery_flow on %s" % s["name"])
               print("identification '%s' recovery_flow now: %s" % (s["name"], flow_pk))
 
           print("OK: recovery flow built, bound, and 'Forgot password?' link enabled on login.")
