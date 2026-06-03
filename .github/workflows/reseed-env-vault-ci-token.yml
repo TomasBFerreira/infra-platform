@@ -1,0 +1,145 @@
+name: Reseed env vault CI token
+
+# Long-term fix for the recurring env-vault CI token (VAULT_TOKEN /
+# VAULT_QA_TOKEN / VAULT_PROD_TOKEN) expiry problem — the env-vault sibling of
+# reseed-bootstrap-vault-ci-token.yml.
+#
+# The env-vault CI tokens are minted by the vault-ct Ansible playbook with a
+# default (~32-day) TTL and expire silently, 403-ing every dev/qa/prod pipeline
+# that reads or writes the env vault (e.g. the SSO pipeline's generate-secrets
+# step: `GET /sys/internal/ui/mounts/secret/sso → 403 invalid token`). The
+# bootstrap token was made periodic on 2026-05-31; the env tokens were not, and
+# the dev one lapsed on 2026-06-03 (blocked self-service-accounts #317).
+#
+# This installs a least-privilege `env-ci` policy in the chosen env vault using
+# that env's ROOT token (root tokens don't expire), mints a **periodic** token
+# (renews on every use; no absolute expiry while used at least once per period),
+# verifies it can do what the pipelines need, and only then overwrites the
+# env's VAULT_*TOKEN GitHub secret.
+#
+# Re-dispatchable and idempotent. Run if an env token ever lapses again.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target env vault'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+      period_hours:
+        description: 'Token period in hours (renew window)'
+        required: false
+        default: '720'    # 30 days; pipelines run far more often, so it self-renews
+        type: string
+
+jobs:
+  reseed:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      PERIOD: ${{ inputs.period_hours }}
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Resolve env vault address + root token + target GH secret
+        run: |
+          case "$ENVIRONMENT" in
+            dev)
+              RAW='${{ secrets.VAULT_ADDR }}';      ROOT='${{ secrets.VAULT_DEV_ROOT_TOKEN }}';  SECRET_NAME='VAULT_TOKEN' ;;
+            qa)
+              RAW='${{ secrets.VAULT_QA_ADDR }}';   ROOT='${{ secrets.VAULT_QA_ROOT_TOKEN }}';   SECRET_NAME='VAULT_QA_TOKEN' ;;
+            prod)
+              RAW='${{ secrets.VAULT_PROD_ADDR }}'; ROOT='${{ secrets.VAULT_PROD_ROOT_TOKEN }}'; SECRET_NAME='VAULT_PROD_TOKEN' ;;
+          esac
+          if [[ "$RAW" != http://* && "$RAW" != https://* ]]; then RAW="http://${RAW}"; fi
+          if [ -z "$ROOT" ]; then echo "ERROR: no root token secret for $ENVIRONMENT"; exit 1; fi
+          echo "::add-mask::$ROOT"
+          echo "VAULT_ADDR=$RAW"        >> "$GITHUB_ENV"
+          echo "VAULT_TOKEN=$ROOT"      >> "$GITHUB_ENV"
+          echo "SECRET_NAME=$SECRET_NAME" >> "$GITHUB_ENV"
+
+      - name: Sanity-check root token
+        run: |
+          vault read auth/token/lookup-self -format=json | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f'root token OK — policies={d[\"policies\"]}, ttl={d[\"ttl\"]}')"
+
+      - name: Write env-ci policy
+        run: |
+          cat > /tmp/env-ci.hcl <<'EOF'
+          # KV-v2 read+write under secret/* (matches what every env pipeline does).
+          path "secret/data/*" {
+            capabilities = ["create", "read", "update", "delete"]
+          }
+          path "secret/metadata/*" {
+            capabilities = ["create", "read", "update", "delete", "list"]
+          }
+          path "secret/delete/*"   { capabilities = ["update"] }
+          path "secret/destroy/*"  { capabilities = ["update"] }
+          path "secret/undelete/*" { capabilities = ["update"] }
+          # Required for `vault kv put` to autodetect the KV mount type
+          # (the GET /sys/internal/ui/mounts call that 403'd on the dead token).
+          path "sys/internal/ui/mounts"   { capabilities = ["read"] }
+          path "sys/internal/ui/mounts/*" { capabilities = ["read"] }
+          # lookup-self + renew-self: terraform vault provider init + periodic renew.
+          path "auth/token/lookup-self" { capabilities = ["read"] }
+          path "auth/token/renew-self"  { capabilities = ["update"] }
+          # "manage tokens" — env CI token historically could mint/lookup child
+          # tokens (vault-ct ansible granted this). Preserve to avoid regressions.
+          path "auth/token/create"  { capabilities = ["create", "update"] }
+          path "auth/token/lookup"  { capabilities = ["update"] }
+          EOF
+          vault policy write env-ci /tmp/env-ci.hcl
+          echo "--- written policy ---"
+          vault policy read env-ci
+          rm /tmp/env-ci.hcl
+
+      - name: Mint new periodic token
+        id: mint
+        run: |
+          NEW_TOKEN=$(vault token create \
+            -policy=env-ci \
+            -period="${PERIOD}h" \
+            -display-name="github-actions-env-ci-${ENVIRONMENT}" \
+            -no-default-policy \
+            -format=json \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['auth']['client_token'])")
+          if [ -z "$NEW_TOKEN" ] || [ ${#NEW_TOKEN} -lt 20 ]; then
+            echo "ERROR: token creation returned empty or implausibly short"; exit 1
+          fi
+          echo "::add-mask::$NEW_TOKEN"
+          echo "new_token=$NEW_TOKEN" >> "$GITHUB_OUTPUT"
+          VAULT_TOKEN="$NEW_TOKEN" vault read auth/token/lookup-self -format=json \
+            | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(f'new token — policies={d[\"policies\"]}, period={d[\"period\"]}s, ttl={d[\"ttl\"]}s, renewable={d[\"renewable\"]}')"
+
+      - name: Verify new token can read an env secret (the exact failure mode)
+        env:
+          NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
+        run: |
+          # secret/sso exists in every env vault (db_password etc). Don't print it.
+          if VAULT_TOKEN="$NEW_TOKEN" vault kv get -field=db_password secret/sso >/dev/null 2>&1; then
+            echo "OK — env secret read works under new token"
+          else
+            echo "ERROR: env secret read failed under new token"; exit 1
+          fi
+
+      - name: Verify new token can `kv put` (sys/internal/ui/mounts autodetect)
+        env:
+          NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
+        run: |
+          TEST_PATH="secret/_reseed_test_$(date +%s)"
+          VAULT_TOKEN="$NEW_TOKEN" vault kv put "$TEST_PATH" sentinel=ok marker=reseed
+          echo "kv put OK"
+          VAULT_TOKEN="$NEW_TOKEN" vault kv metadata delete "$TEST_PATH"
+          echo "kv delete OK"
+
+      - name: Update the env VAULT_*TOKEN GitHub secret
+        env:
+          NEW_TOKEN: ${{ steps.mint.outputs.new_token }}
+        run: |
+          printf '%s' "$NEW_TOKEN" | gh secret set "$SECRET_NAME" \
+            --repo TomasBFerreira/infra-platform
+          echo "$SECRET_NAME updated."
+
+      - name: Summary
+        run: |
+          echo "::notice::Env vault CI token rotated for ${ENVIRONMENT}. Policy 'env-ci' installed (KV + autodetect + lookup/renew-self + token mgmt). New token is periodic (renews on use; no absolute expiry). Re-dispatch per env if one ever lapses."
