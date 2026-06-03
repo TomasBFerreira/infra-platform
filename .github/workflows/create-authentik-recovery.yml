@@ -1,11 +1,10 @@
 name: Create Authentik recovery flow (from stages)
 
-# This Authentik build ships no recovery blueprint, so the password-recovery
-# flow must be constructed: a flow (designation=recovery) bound to
-#   identification -> email -> password prompt -> user write
-# reusing the existing default-password-change prompt + user-write stages, and
-# creating an identification + recovery-email stage. Then bound to the brand so
-# "Forgot password?" appears. Idempotent. Runs on the env runner.
+# Runs ansible/sso/files/build_recovery.py against the live Authentik to build +
+# bind the recovery flow (no recovery blueprint ships with this build). Single
+# source of truth — the SSO deploy runs the same script via the ansible `script`
+# module. Idempotent + self-healing (repairs wrong stage bindings). Runs on the
+# env runner (Authentik CT is dev-network only).
 
 on:
   workflow_dispatch:
@@ -25,6 +24,8 @@ jobs:
       VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Resolve env vault creds
         run: |
           case "$ENVIRONMENT" in
@@ -43,122 +44,8 @@ jobs:
           echo "SSO_IP=$IP" >> "$GITHUB_ENV"
           echo "AK_TOKEN=$TOK" >> "$GITHUB_ENV"
 
-      - name: Construct + bind recovery flow
-        run: |
-          python3 - <<'PY'
-          import os, json, sys, urllib.parse, urllib.request, urllib.error
-          BASE = "http://%s:9000/api/v3" % os.environ["SSO_IP"]
-          TOK  = os.environ["AK_TOKEN"]
-
-          def api(method, path, body=None, ok=(200,201)):
-              url = BASE + path
-              data = json.dumps(body).encode() if body is not None else None
-              req = urllib.request.Request(url, data=data, method=method, headers={
-                  "Authorization": "Bearer " + TOK, "Content-Type": "application/json"})
-              try:
-                  with urllib.request.urlopen(req) as r:
-                      t = r.read().decode()
-                      return r.status, (json.loads(t) if t else {})
-              except urllib.error.HTTPError as e:
-                  return e.code, {"_error": e.read().decode()}
-
-          def must(st, obj, what):
-              if st not in (200, 201):
-                  print("FAILED %s -> HTTP %s: %s" % (what, st, json.dumps(obj)[:800])); sys.exit(1)
-              return obj
-
-          # 1) Recovery flow (reuse if present)
-          st, d = api("GET", "/flows/instances/?designation=recovery")
-          res = d.get("results", [])
-          if res:
-              flow = res[0]; print("recovery flow exists:", flow["slug"])
-          else:
-              flow = must(*api("POST", "/flows/instances/", {
-                  "name": "Recovery", "title": "Reset your databaes.net password",
-                  "slug": "default-recovery-flow", "designation": "recovery",
-                  "authentication": "require_unauthenticated"}), "create flow")
-              print("created flow:", flow["slug"])
-          flow_pk = flow["pk"]
-
-          # 2) Reuse password prompt + user-write stages from the password-change flow
-          st, allst = api("GET", "/stages/all/?page_size=200")
-          stages = allst.get("results", [])
-          def by_component(sub):
-              return [s for s in stages if sub in (s.get("component") or "")]
-          def find_named(name):
-              for s in stages:
-                  if s.get("name") == name: return s
-              return None
-          prompt = next((s for s in by_component("ak-stage-prompt") if "password" in (s.get("name") or "").lower()), None)
-          write  = next(iter(by_component("ak-stage-user-write")), None)
-          if not prompt or not write:
-              print("Could not find reusable prompt/user-write stages. prompt=%s write=%s" % (bool(prompt), bool(write)))
-              print("available stage names:", [s.get("name") for s in stages][:50]); sys.exit(1)
-          print("reusing prompt:", prompt["name"], "| user-write:", write["name"])
-
-          # 3) Identification stage (create if absent)
-          ident = find_named("databaes-recovery-identification")
-          if not ident:
-              ident = must(*api("POST", "/stages/identification/", {
-                  "name": "databaes-recovery-identification",
-                  "user_fields": ["username", "email"],
-                  "case_insensitive_matching": True}), "create identification")
-          print("identification stage:", ident["name"])
-
-          # 4) Recovery email stage (create if absent) — uses global SMTP (Brevo)
-          email = find_named("databaes-recovery-email")
-          if not email:
-              email = must(*api("POST", "/stages/email/", {
-                  "name": "databaes-recovery-email",
-                  "use_global_settings": True,
-                  "activate_user_on_success": True,
-                  "subject": "Reset your databaes.net password",
-                  "template": "email/password_reset.html"}), "create email stage")
-          print("email stage:", email["name"])
-
-          # 5) Bindings in order (idempotent: skip if a binding for that stage exists)
-          st, existing = api("GET", "/flows/bindings/?target=%s" % flow_pk)
-          have = {b.get("stage") for b in existing.get("results", [])}
-          plan = [(ident["pk"], 10), (email["pk"], 20), (prompt["pk"], 30), (write["pk"], 40)]
-          for stage_pk, order in plan:
-              if stage_pk in have:
-                  print("binding exists for stage", stage_pk); continue
-              must(*api("POST", "/flows/bindings/", {
-                  "target": flow_pk, "stage": stage_pk, "order": order,
-                  "evaluate_on_plan": True, "re_evaluate_policies": False}), "bind stage %s" % stage_pk)
-              print("bound stage", stage_pk, "at order", order)
-
-          # 6) Bind flow to the brand (default recovery target)
-          st, brands = api("GET", "/core/brands/")
-          buuid = brands["results"][0]["brand_uuid"]
-          must(*api("PATCH", "/core/brands/%s/" % buuid, {"flow_recovery": flow_pk}), "bind brand")
-          fr = api("GET", "/core/brands/")[1]["results"][0].get("flow_recovery")
-          print("brand.flow_recovery =", fr)
-          if not fr:
-              print("FAILED: brand binding did not stick"); sys.exit(1)
-
-          # 7) The "Forgot password?" LINK on the login page is rendered by the
-          #    login flow's identification stage (recovery_flow field), NOT by the
-          #    brand binding. Set it on the login identification stage(s) so the
-          #    link actually appears. (Exclude the recovery flow's own ident stage.)
-          st, ids = api("GET", "/stages/identification/?page_size=200")
-          login_idents = [s for s in ids.get("results", [])
-                          if (s.get("name") == "default-authentication-identification"
-                              or "authentication" in (s.get("name") or "").lower())
-                          and s.get("name") != "databaes-recovery-identification"]
-          if not login_idents:
-              print("WARN: no login identification stage found; available:",
-                    [s.get("name") for s in ids.get("results", [])])
-          for s in login_idents:
-              print("identification '%s' recovery_flow was: %s" % (s["name"], s.get("recovery_flow")))
-              # Re-send user_fields + sources: Authentik re-validates the whole
-              # object on PATCH and treats omitted lists as empty, which trips
-              # "no user fields -> need a source". Preserve the stage's existing config.
-              must(*api("PATCH", "/stages/identification/%s/" % s["pk"], {
-                  "recovery_flow": flow_pk,
-                  "user_fields": s.get("user_fields") or [],
-                  "sources": s.get("sources") or []}), "set recovery_flow on %s" % s["name"])
-              print("identification '%s' recovery_flow now: %s" % (s["name"], flow_pk))
-
-          print("OK: recovery flow built, bound, and 'Forgot password?' link enabled on login.")
-          PY
+      - name: Build + bind recovery flow (runs the shared script)
+        env:
+          AK_BASE: "http://${{ env.SSO_IP }}:9000/api/v3"
+          AK_TOKEN: ${{ env.AK_TOKEN }}
+        run: python3 ansible/sso/files/build_recovery.py
