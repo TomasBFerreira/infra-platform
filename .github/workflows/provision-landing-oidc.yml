@@ -1,0 +1,28 @@
+name: Provision landing-page OIDC app (Authentik)
+on:
+  workflow_dispatch:
+    inputs:
+      environment: { description: env, required: true, default: 'dev', type: choice, options: [dev, qa, prod] }
+jobs:
+  provision:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: resolve
+        run: |
+          case "$ENVIRONMENT" in
+            prod) EV="${{ secrets.VAULT_PROD_ADDR }}"; ET="${{ secrets.VAULT_PROD_TOKEN }}" ;;
+            qa) EV="${{ secrets.VAULT_QA_ADDR }}"; ET="${{ secrets.VAULT_QA_TOKEN }}" ;;
+            dev) EV="${{ secrets.VAULT_ADDR }}"; ET="${{ secrets.VAULT_TOKEN }}" ;;
+          esac
+          AK_IP=$(vault kv get -field=ip secret/sso/$ENVIRONMENT/active-slot)
+          AK_TOKEN=$(VAULT_ADDR="$EV" VAULT_TOKEN="$ET" vault kv get -field=bootstrap_token secret/sso)
+          echo "::add-mask::$AK_TOKEN"; echo "AK_BASE=http://$AK_IP:9000/api/v3" >> "$GITHUB_ENV"; echo "AK_TOKEN=$AK_TOKEN" >> "$GITHUB_ENV"
+        env: { VAULT_ADDR: "${{ secrets.VAULT_BOOTSTRAP_ADDR }}", VAULT_TOKEN: "${{ secrets.VAULT_DEV_TOKEN }}" }
+      - name: provision
+        env: { AK_BASE: "${{ env.AK_BASE }}", AK_TOKEN: "${{ env.AK_TOKEN }}" }
+        run: python3 ansible/sso/files/provision_landing_oidc.py
