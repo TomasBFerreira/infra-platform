@@ -1,0 +1,76 @@
+name: Fix Grafana OIDC sub-drift (prod)
+
+# After a prod SSO blue/green flip, Authentik can re-sequence user PKs; Authentik
+# emits the PK as the OIDC `sub`, so Grafana's stored user_auth.auth_id no longer
+# matches and login fails with "user sync failed" (Rancher self-heals, Grafana
+# doesn't). This re-syncs Grafana's auth_id to the user's CURRENT Authentik PK,
+# joining on EMAIL (stable across flips). Backup first, conditional update,
+# verify, idempotent. Incident: /app/issues/grafana-oidc-user-sync-2026-04-23.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [prod, qa, dev]
+
+jobs:
+  resync:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+      GRAFANA_DB: /mnt/monitoring-data/grafana/grafana.db
+    steps:
+      - name: Resolve creds, Authentik IP, monitoring IP
+        run: |
+          case "$ENVIRONMENT" in
+            dev)  EV="${{ secrets.VAULT_ADDR }}"; ET="${{ secrets.VAULT_TOKEN }}"; echo "MON_IP=192.168.20.96" >> "$GITHUB_ENV" ;;
+            qa)   EV="${{ secrets.VAULT_QA_ADDR }}"; ET="${{ secrets.VAULT_QA_TOKEN }}"; echo "MON_IP=192.168.30.92" >> "$GITHUB_ENV" ;;
+            prod) EV="${{ secrets.VAULT_PROD_ADDR }}"; ET="${{ secrets.VAULT_PROD_TOKEN }}"; echo "MON_IP=192.168.10.96" >> "$GITHUB_ENV" ;;
+          esac
+          AK_IP=$(vault kv get -field=ip secret/sso/$ENVIRONMENT/active-slot)
+          AK_TOKEN=$(VAULT_ADDR="$EV" VAULT_TOKEN="$ET" vault kv get -field=bootstrap_token secret/sso)
+          echo "::add-mask::$AK_TOKEN"
+          echo "AK_IP=$AK_IP" >> "$GITHUB_ENV"
+          echo "AK_TOKEN=$AK_TOKEN" >> "$GITHUB_ENV"
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+
+      - name: Fetch monitoring SSH key
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/monitoring_worker | awk 'NF>0' > /tmp/mon_key
+          chmod 600 /tmp/mon_key
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+
+      - name: Diagnose + resync Grafana auth_id (email-joined)
+        run: |
+          SSH="ssh -i /tmp/mon_key -o StrictHostKeyChecking=no root@${MON_IP}"
+          DB="${GRAFANA_DB}"
+          echo "=== Grafana OAuth users (id|email|auth_id) ==="
+          $SSH "sqlite3 -separator '|' $DB \"SELECT u.id,u.email,ua.auth_id FROM user u JOIN user_auth ua ON ua.user_id=u.id WHERE ua.auth_module='oauth_generic_oauth';\"" | tee /tmp/gusers
+          echo "=== Authentik users (pk username email) ==="
+          curl -s "http://${AK_IP}:9000/api/v3/core/users/?page_size=200" -H "Authorization: Bearer ${AK_TOKEN}" \
+            | python3 -c "import sys,json;[print(u['pk'],u.get('username'),u.get('email')) for u in json.load(sys.stdin).get('results',[])]" | tee /tmp/akusers
+          echo "=== reconcile each Grafana OAuth user by email ==="
+          BACKED_UP=0
+          while IFS='|' read -r GID GEMAIL GAUTHID; do
+            [ -n "$GEMAIL" ] || continue
+            NEWPK=$(python3 -c "import sys; e='${GEMAIL}'.lower(); [print(l.split()[0]) for l in open('/tmp/akusers') if len(l.split())>=3 and l.split()[2].lower()==e]" | head -1)
+            if [ -z "$NEWPK" ]; then echo "WARN: no Authentik user with email ${GEMAIL} — skipping"; continue; fi
+            if [ "$NEWPK" = "$GAUTHID" ]; then echo "in sync: ${GEMAIL} auth_id=${GAUTHID}"; continue; fi
+            if [ "$BACKED_UP" = "0" ]; then $SSH "cp $DB ${DB}.bak-\$(date +%Y%m%dT%H%M%SZ) && ls -la ${DB}.bak-* | tail -1"; BACKED_UP=1; fi
+            echo "resync: ${GEMAIL} (user_id=${GID}) auth_id ${GAUTHID} -> ${NEWPK}"
+            $SSH "sqlite3 $DB \"UPDATE user_auth SET auth_id='${NEWPK}' WHERE auth_module='oauth_generic_oauth' AND user_id=${GID}; SELECT 'rows_updated='||changes();\""
+          done < /tmp/gusers
+          echo "=== after ==="
+          $SSH "sqlite3 -separator '|' $DB \"SELECT user_id,auth_id FROM user_auth WHERE auth_module='oauth_generic_oauth';\""
+          rm -f /tmp/mon_key
+          echo "::notice::Grafana OIDC auth_id reconciled to current Authentik PKs (by email). Grafana re-reads user_auth per login — no restart needed."
