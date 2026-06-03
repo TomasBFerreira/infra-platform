@@ -1,0 +1,141 @@
+name: Create Authentik recovery flow (from stages)
+
+# This Authentik build ships no recovery blueprint, so the password-recovery
+# flow must be constructed: a flow (designation=recovery) bound to
+#   identification -> email -> password prompt -> user write
+# reusing the existing default-password-change prompt + user-write stages, and
+# creating an identification + recovery-email stage. Then bound to the brand so
+# "Forgot password?" appears. Idempotent. Runs on the env runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  create:
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - name: Resolve env vault creds
+        run: |
+          case "$ENVIRONMENT" in
+            dev)  echo "ENVVAULT_ADDR=${{ secrets.VAULT_ADDR }}"   >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_TOKEN }}" >> "$GITHUB_ENV" ;;
+            qa)   echo "ENVVAULT_ADDR=${{ secrets.VAULT_QA_ADDR }}" >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_QA_TOKEN }}" >> "$GITHUB_ENV" ;;
+            prod) echo "ENVVAULT_ADDR=${{ secrets.VAULT_PROD_ADDR }}" >> "$GITHUB_ENV"; echo "ENVVAULT_TOKEN=${{ secrets.VAULT_PROD_TOKEN }}" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Resolve active SSO IP + bootstrap token
+        run: |
+          IP=$(VAULT_ADDR="$VAULT_BOOTSTRAP_ADDR" VAULT_TOKEN="$VAULT_DEV_TOKEN" \
+               vault kv get -field=ip secret/sso/$ENVIRONMENT/active-slot)
+          TOK=$(VAULT_ADDR="$ENVVAULT_ADDR" VAULT_TOKEN="$ENVVAULT_TOKEN" \
+               vault kv get -field=bootstrap_token secret/sso)
+          echo "::add-mask::$TOK"
+          echo "SSO_IP=$IP" >> "$GITHUB_ENV"
+          echo "AK_TOKEN=$TOK" >> "$GITHUB_ENV"
+
+      - name: Construct + bind recovery flow
+        run: |
+          python3 - <<'PY'
+          import os, json, sys, urllib.parse, urllib.request, urllib.error
+          BASE = "http://%s:9000/api/v3" % os.environ["SSO_IP"]
+          TOK  = os.environ["AK_TOKEN"]
+
+          def api(method, path, body=None, ok=(200,201)):
+              url = BASE + path
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(url, data=data, method=method, headers={
+                  "Authorization": "Bearer " + TOK, "Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      t = r.read().decode()
+                      return r.status, (json.loads(t) if t else {})
+              except urllib.error.HTTPError as e:
+                  return e.code, {"_error": e.read().decode()}
+
+          def must(st, obj, what):
+              if st not in (200, 201):
+                  print("FAILED %s -> HTTP %s: %s" % (what, st, json.dumps(obj)[:800])); sys.exit(1)
+              return obj
+
+          # 1) Recovery flow (reuse if present)
+          st, d = api("GET", "/flows/instances/?designation=recovery")
+          res = d.get("results", [])
+          if res:
+              flow = res[0]; print("recovery flow exists:", flow["slug"])
+          else:
+              flow = must(*api("POST", "/flows/instances/", {
+                  "name": "Recovery", "title": "Reset your databaes.net password",
+                  "slug": "default-recovery-flow", "designation": "recovery",
+                  "authentication": "require_unauthenticated"}), "create flow")
+              print("created flow:", flow["slug"])
+          flow_pk = flow["pk"]
+
+          # 2) Reuse password prompt + user-write stages from the password-change flow
+          st, allst = api("GET", "/stages/all/?page_size=200")
+          stages = allst.get("results", [])
+          def by_component(sub):
+              return [s for s in stages if sub in (s.get("component") or "")]
+          def find_named(name):
+              for s in stages:
+                  if s.get("name") == name: return s
+              return None
+          prompt = next((s for s in by_component("ak-stage-prompt") if "password" in (s.get("name") or "").lower()), None)
+          write  = next(iter(by_component("ak-stage-user-write")), None)
+          if not prompt or not write:
+              print("Could not find reusable prompt/user-write stages. prompt=%s write=%s" % (bool(prompt), bool(write)))
+              print("available stage names:", [s.get("name") for s in stages][:50]); sys.exit(1)
+          print("reusing prompt:", prompt["name"], "| user-write:", write["name"])
+
+          # 3) Identification stage (create if absent)
+          ident = find_named("databaes-recovery-identification")
+          if not ident:
+              ident = must(*api("POST", "/stages/identification/", {
+                  "name": "databaes-recovery-identification",
+                  "user_fields": ["username", "email"],
+                  "case_insensitive_matching": True}), "create identification")
+          print("identification stage:", ident["name"])
+
+          # 4) Recovery email stage (create if absent) — uses global SMTP (Brevo)
+          email = find_named("databaes-recovery-email")
+          if not email:
+              email = must(*api("POST", "/stages/email/", {
+                  "name": "databaes-recovery-email",
+                  "use_global_settings": True,
+                  "activate_user_on_success": True,
+                  "subject": "Reset your databaes.net password",
+                  "template": "email/password_reset.html"}), "create email stage")
+          print("email stage:", email["name"])
+
+          # 5) Bindings in order (idempotent: skip if a binding for that stage exists)
+          st, existing = api("GET", "/flows/bindings/?target=%s" % flow_pk)
+          have = {b.get("stage") for b in existing.get("results", [])}
+          plan = [(ident["pk"], 10), (email["pk"], 20), (prompt["pk"], 30), (write["pk"], 40)]
+          for stage_pk, order in plan:
+              if stage_pk in have:
+                  print("binding exists for stage", stage_pk); continue
+              must(*api("POST", "/flows/bindings/", {
+                  "target": flow_pk, "stage": stage_pk, "order": order,
+                  "evaluate_on_plan": True, "re_evaluate_policies": False}), "bind stage %s" % stage_pk)
+              print("bound stage", stage_pk, "at order", order)
+
+          # 6) Bind flow to the brand
+          st, brands = api("GET", "/core/brands/")
+          buuid = brands["results"][0]["brand_uuid"]
+          must(*api("PATCH", "/core/brands/%s/" % buuid, {"flow_recovery": flow_pk}), "bind brand")
+          st, b2 = api("GET", "/core/brands/")
+          fr = b2["results"][0].get("flow_recovery")
+          print("brand.flow_recovery =", fr)
+          if not fr:
+              print("FAILED: brand binding did not stick"); sys.exit(1)
+          print("OK: recovery flow constructed + bound. 'Forgot password?' is now live.")
+          PY
