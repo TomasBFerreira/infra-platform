@@ -24,6 +24,13 @@ jobs:
             | awk 'NF > 0' > /tmp/traefik_dbg_key
           chmod 600 /tmp/traefik_dbg_key
 
+      - name: Runner-side reachability to QA Traefik Tailscale IP
+        run: |
+          set +e
+          echo "=== Runner curl to QA Tailscale IP ==="
+          curl -skI --connect-timeout 8 --resolve auth-qa.databaes.net:443:100.85.44.36 https://auth-qa.databaes.net/ || true
+          curl -skI --connect-timeout 8 --resolve signoz-qa.databaes.net:443:100.85.44.36 https://signoz-qa.databaes.net/ || true
+
       - name: Diagnose active QA Traefik host
         run: |
           ssh -i /tmp/traefik_dbg_key -o StrictHostKeyChecking=no root@${ACTIVE_IP} bash <<'ENDSSH'
@@ -31,40 +38,31 @@ jobs:
           echo "=== Host identity ==="
           hostname
           hostname -I
+          echo
+          echo "=== Tailscale ==="
           tailscale ip -4 2>/dev/null || true
+          tailscale status 2>&1 | head -20 || true
           echo
           echo "=== Listeners ==="
           ss -tulpen | grep -E ':(80|443|8080) ' || true
           echo
-          echo "=== Docker containers ==="
-          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' || true
+          echo "=== Curl self via localhost ==="
+          curl -skI --resolve auth-qa.databaes.net:443:127.0.0.1 https://auth-qa.databaes.net/ || true
+          curl -skI --resolve signoz-qa.databaes.net:443:127.0.0.1 https://signoz-qa.databaes.net/ || true
           echo
-          echo "=== Local HTTP/HTTPS auth-qa ==="
-          curl -sv --max-time 8 -H 'Host: auth-qa.databaes.net' http://127.0.0.1:80/ -o /dev/null 2>&1 | grep -E '> Host:|< HTTP|< location:|timed out|Failed|Connected' || true
-          curl -skv --max-time 8 --resolve auth-qa.databaes.net:443:127.0.0.1 https://auth-qa.databaes.net/ -o /dev/null 2>&1 | grep -E '> Host:|< HTTP|< location:|timed out|Failed|Connected|subject:|issuer:' || true
+          echo "=== Curl self via tailscale IP ==="
+          TS_IP=$(tailscale ip -4 2>/dev/null | head -1)
+          echo "TS_IP=$TS_IP"
+          curl -skI --connect-timeout 8 --resolve auth-qa.databaes.net:443:${TS_IP} https://auth-qa.databaes.net/ || true
+          curl -skI --connect-timeout 8 --resolve signoz-qa.databaes.net:443:${TS_IP} https://signoz-qa.databaes.net/ || true
           echo
-          echo "=== Local HTTP/HTTPS signoz-qa ==="
-          curl -sv --max-time 8 -H 'Host: signoz-qa.databaes.net' http://127.0.0.1:80/ -o /dev/null 2>&1 | grep -E '> Host:|< HTTP|< location:|timed out|Failed|Connected' || true
-          curl -skv --max-time 8 --resolve signoz-qa.databaes.net:443:127.0.0.1 https://signoz-qa.databaes.net/ -o /dev/null 2>&1 | grep -E '> Host:|< HTTP|< location:|timed out|Failed|Connected|subject:|issuer:' || true
+          echo "=== Backend reachability ==="
+          curl -sS -o /dev/null -w 'auth-root %{http_code}\n' --connect-timeout 8 http://192.168.30.75:9000/ || true
+          curl -sS -o /dev/null -w 'auth-outpost %{http_code}\n' --connect-timeout 8 http://192.168.30.75:9000/outpost.goauthentik.io/auth/traefik || true
+          curl -sS -o /dev/null -w 'signoz-root %{http_code}\n' --connect-timeout 8 http://192.168.30.91:8081/ || true
           echo
-          echo "=== Authentik backend reachability from Traefik LXC ==="
-          curl -sv --max-time 8 http://192.168.30.75:9000/ -o /dev/null 2>&1 | grep -E '< HTTP|timed out|Failed|Connected|location:' || true
-          curl -sv --max-time 8 http://192.168.30.75:9000/outpost.goauthentik.io/auth/traefik -o /dev/null 2>&1 | grep -E '< HTTP|timed out|Failed|Connected|location:' || true
-          echo
-          echo "=== SigNoz backend reachability from Traefik LXC ==="
-          curl -sv --max-time 8 http://192.168.30.91:8081/ -o /dev/null 2>&1 | grep -E '< HTTP|timed out|Failed|Connected|location:' || true
-          echo
-          echo "=== Traefik runtime routers ==="
-          curl -s http://127.0.0.1:8080/api/http/routers 2>/dev/null | python3 -c "import json,sys; data=json.load(sys.stdin); [print(r['name'], '|', r.get('status','?'), '|', r.get('rule','')) for r in data if 'auth-qa' in r.get('name','') or 'signoz-qa' in r.get('name','')]" || true
-          echo
-          echo "=== Traefik runtime services ==="
-          curl -s http://127.0.0.1:8080/api/http/services 2>/dev/null | python3 -c "import json,sys; data=json.load(sys.stdin); [print(s['name'], '|', s.get('status','?'), '|', s.get('serverStatus',{})) for s in data if 'auth-qa' in s.get('name','') or 'signoz-qa' in s.get('name','')]" || true
-          echo
-          echo "=== Deployed QA config snippets ==="
-          grep -n -A6 -B2 'auth-qa-router\|signoz-qa-router\|authentik-qa\|auth-qa-service\|signoz-qa-service' /opt/traefik/config/dynamic/services.yml || true
-          echo
-          echo "=== Traefik logs (last 80 filtered lines) ==="
-          docker logs traefik --tail 200 2>&1 | grep -Ei 'auth-qa|signoz-qa|192\.168\.30\.75|192\.168\.30\.91|timeout|dial|refused|error' | tail -80 || true
+          echo "=== Traefik access log tail for qa ==="
+          docker logs traefik --tail 80 2>&1 | grep -E 'auth-qa|signoz-qa' | tail -20 || true
           ENDSSH
 
       - name: Cleanup
