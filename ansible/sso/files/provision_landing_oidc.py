@@ -46,12 +46,21 @@ def must(st, obj, what):
     return obj
 
 
-# Scope mappings: openid, email, profile, groups (groups => ID token has groups).
+# Scope mappings: openid/email/profile (managed) + a custom "groups" scope.
 maps = api("GET", "/propertymappings/provider/scope/?page_size=200")[1].get("results", [])
-scope_pks = [m["pk"] for m in maps if (m.get("managed") or "") and
-             any(s in m["managed"] for s in ("scope-openid", "scope-email", "scope-profile", "scope-groups"))]
-if len(scope_pks) < 4:
-    print("WARN: expected 4 scope mappings, found", len(scope_pks), [m.get("managed") for m in maps])
+mg = lambda m: m.get("managed") or ""
+scope_pks = [m["pk"] for m in maps if any(k in mg(m) for k in ("scope-openid", "scope-email", "scope-profile"))]
+# This Authentik build ships no managed "groups" scope — find or create one so the
+# ID token carries group membership (needed to gate the admin nav by ops-admins).
+grp = next((m for m in maps if m.get("scope_name") == "groups" or m.get("name") == "OAuth Groups"), None)
+if not grp:
+    grp = must(*api("POST", "/propertymappings/provider/scope/", {
+        "name": "OAuth Groups", "scope_name": "groups", "description": "User group memberships",
+        "expression": "return {\"groups\": [group.name for group in request.user.ak_groups.all()]}"}),
+        "create groups scope mapping")
+    print("created custom 'groups' scope mapping")
+scope_pks.append(grp["pk"])
+print("scope mappings resolved:", len(scope_pks))
 
 # Authorization flow: implicit consent (silent check must not prompt).
 flows = api("GET", "/flows/instances/?slug=default-provider-authorization-implicit-consent")[1].get("results", [])
