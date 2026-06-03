@@ -69,6 +69,10 @@ if not flows:
     print("FAIL: implicit-consent authorization flow not found"); sys.exit(1)
 auth_flow = flows[0]["pk"]
 
+# Invalidation flow (required field in this Authentik build).
+inv = api("GET", "/flows/instances/?slug=default-provider-invalidation-flow")[1].get("results", [])
+invalidation_flow = inv[0]["pk"] if inv else auth_flow
+
 # Redirect URIs (regex match on each origin so /, /callback, /silent-refresh.html all pass).
 redirect_uris = [{"matching_mode": "regex", "url": "%s/.*" % o} for o in ORIGINS]
 
@@ -77,6 +81,7 @@ prov = api("GET", "/providers/oauth2/?name=" + urllib.parse.quote("Landing Page"
 provider_body = {
     "name": "Landing Page",
     "authorization_flow": auth_flow,
+    "invalidation_flow": invalidation_flow,
     "client_type": "public",
     "redirect_uris": redirect_uris,
     "sub_mode": "user_id",
