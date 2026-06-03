@@ -102,7 +102,7 @@ Current GPU nodes:
 
 - **Bootstrap vault** (CT 200, always stable): stores SSH keys and slot state for all envs. Credentials: `VAULT_BOOTSTRAP_ADDR` / `VAULT_DEV_TOKEN` GitHub secrets.
 - **Env vaults** (blue/green deployed): store application secrets (Tailscale, WireGuard, AdGuard, etc). Credentials: `VAULT_ADDR`/`VAULT_TOKEN` (dev), `VAULT_QA_ADDR`/`VAULT_QA_TOKEN` (qa), `VAULT_PROD_ADDR`/`VAULT_PROD_TOKEN` (prod).
-- **Root tokens per env**: `VAULT_DEV_ROOT_TOKEN`, `VAULT_QA_ROOT_TOKEN`, `VAULT_PROD_ROOT_TOKEN` — used by the vault-ct pipeline on re-runs.
+- **Root tokens per env**: `VAULT_DEV_ROOT_TOKEN`, `VAULT_QA_ROOT_TOKEN`, and **`VAULT_ROOT_TOKEN`** (prod — stored UNPREFIXED, *not* `VAULT_PROD_ROOT_TOKEN`) — used by the vault-ct pipeline on re-runs and by `reseed-env-vault-ci-token.yml`.
 
 ## Blue/green deployment pattern
 
@@ -181,7 +181,7 @@ Each of these bit someone and is documented in its own section of the linked doc
 | VAULT_PROD_TOKEN      | Prod vault CI token                          |
 | VAULT_DEV_ROOT_TOKEN  | Dev vault root token (vault-ct re-runs)      |
 | VAULT_QA_ROOT_TOKEN   | QA vault root token (vault-ct re-runs)       |
-| VAULT_PROD_ROOT_TOKEN | Prod vault root token (vault-ct re-runs)     |
+| VAULT_ROOT_TOKEN      | Prod vault root token (vault-ct re-runs; unprefixed — no VAULT_PROD_ROOT_TOKEN) |
 | PVE_USER              | Proxmox user (e.g. root@pam)                 |
 | PVE_PASS              | Proxmox password (dev/QA nodes — benedict/heaton) |
 | PVE_PROD_PASS         | Proxmox password (prod node — betsy)         |
