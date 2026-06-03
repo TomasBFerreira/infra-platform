@@ -9,8 +9,7 @@ jobs:
     env:
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
-      SSH_USER: ${{ secrets.SSH_USER }}
-    steps:
+          steps:
       - name: Resolve active QA Traefik slot
         run: |
           ACTIVE_IP=$(vault kv get -field=ip secret/traefik/qa/active-slot)
@@ -27,7 +26,7 @@ jobs:
 
       - name: Diagnose active QA Traefik host
         run: |
-          ssh -i /tmp/traefik_dbg_key -o StrictHostKeyChecking=no ${SSH_USER}@${ACTIVE_IP} bash <<'ENDSSH'
+          ssh -i /tmp/traefik_dbg_key -o StrictHostKeyChecking=no root@${ACTIVE_IP} bash <<'ENDSSH'
           set +e
           echo "=== Host identity ==="
           hostname
