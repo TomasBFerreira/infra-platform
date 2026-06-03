@@ -92,6 +92,16 @@ scale_sets:
     min_runners: 0
     max_runners: 2
 
+  # ── databaes-investing onboarding (ARC-first, backend+SPA, 2026-06-03) ──
+  # Two-service app (Go API + Angular SPA) at dev.databaes.net/investing.
+  # Same build-on-ubuntu-latest + crane-pull + k3s-import pattern.
+  - repo: TomasBFerreira/databaes-investing
+    env: dev
+    label: dev
+    name: databaes-investing-dev
+    min_runners: 0
+    max_runners: 2
+
   # ── nextcloud dev path (staging for LXC → k3s migration, 2026-05-19) ────
   # Prod nextcloud still serves cloud.databaes.net from CT 105 on betsy; this
   # scale set is for the dev path so we can validate the k3s manifests under
