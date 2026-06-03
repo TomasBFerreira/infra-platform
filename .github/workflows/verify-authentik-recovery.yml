@@ -77,4 +77,5 @@ jobs:
           echo "✅ SMTP wired ($HOST, from $FROM)"
 
       - name: Summary
-        run: echo "::notice::Authentik recovery verified on $ENVIRONMENT ($SSO_IP): recovery flow exists + bound to brand + SMTP wired. 'Forgot password?' is live and will send via Brevo."
+        run: |
+          echo "::notice::Authentik recovery verified on ${ENVIRONMENT} (${SSO_IP}) - recovery flow exists, bound to brand, SMTP wired. Forgot-password is live and sends via Brevo."
