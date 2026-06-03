@@ -9,7 +9,7 @@ jobs:
     env:
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
-          steps:
+    steps:
       - name: Resolve active QA Traefik slot
         run: |
           ACTIVE_IP=$(vault kv get -field=ip secret/traefik/qa/active-slot)
