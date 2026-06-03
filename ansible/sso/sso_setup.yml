@@ -74,6 +74,39 @@
         state: directory
         mode: '0750'
 
+    # SMTP for account recovery / email verification. Creds live in the env vault
+    # at secret/sso/email (Brevo relay; seed from the BREVO_* GitHub secrets — see
+    # /app/issues/self-service-accounts-2026-06-02.md and docs/vaults.md). Read is
+    # empty-safe: if the secret or a vault token is absent, _smtp_host is "" and
+    # Authentik simply runs with email disabled — no failure.
+    - name: Read SMTP (Brevo) credentials for Authentik from env vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        get() { vault kv get -field="$1" secret/sso/email 2>/dev/null || true; }
+        echo "host=$(get host)"
+        echo "port=$(get port)"
+        echo "username=$(get username)"
+        echo "password=$(get password)"
+        echo "from=$(get from)"
+        echo "use_tls=$(get use_tls)"
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') }}"
+      register: smtp_raw
+      changed_when: false
+      no_log: true
+
+    - name: Parse SMTP facts
+      set_fact:
+        _smtp_host: "{{ (smtp_raw.stdout | regex_search('host=(.*)', '\\1') or ['']) | first }}"
+        _smtp_port: "{{ (smtp_raw.stdout | regex_search('port=(.*)', '\\1') or ['587']) | first }}"
+        _smtp_user: "{{ (smtp_raw.stdout | regex_search('username=(.*)', '\\1') or ['']) | first }}"
+        _smtp_pass: "{{ (smtp_raw.stdout | regex_search('password=(.*)', '\\1') or ['']) | first }}"
+        _smtp_from: "{{ (smtp_raw.stdout | regex_search('from=(.*)', '\\1') or ['noreply@databaes.net']) | first }}"
+        _smtp_tls: "{{ (smtp_raw.stdout | regex_search('use_tls=(.*)', '\\1') or ['true']) | first }}"
+      no_log: true
+
     - name: Write Authentik environment file
       copy:
         dest: /opt/authentik/.env
@@ -90,6 +123,17 @@
           # Used by Traefik forward auth — the externally reachable URL of this Authentik instance
           # Must use https:// — Cloudflare terminates TLS, browser enforces mixed-content if this is http://
           AUTHENTIK_HOST_BROWSER={% if vault_env == 'prod' %}https://auth.databaes.net{% elif vault_env == 'qa' %}https://auth-qa.databaes.net{% else %}https://auth-dev.databaes.net{% endif %}
+
+          # ── SMTP (Brevo relay) — self-service account recovery / verification ──
+          # Empty host => email disabled (safe default until secret/sso/email is seeded).
+          AUTHENTIK_EMAIL__HOST={{ _smtp_host | default('') }}
+          AUTHENTIK_EMAIL__PORT={{ _smtp_port | default('587') }}
+          AUTHENTIK_EMAIL__USERNAME={{ _smtp_user | default('') }}
+          AUTHENTIK_EMAIL__PASSWORD={{ _smtp_pass | default('') }}
+          AUTHENTIK_EMAIL__USE_TLS={{ _smtp_tls | default('true') }}
+          AUTHENTIK_EMAIL__USE_SSL=false
+          AUTHENTIK_EMAIL__TIMEOUT=15
+          AUTHENTIK_EMAIL__FROM={{ _smtp_from | default('noreply@databaes.net') }}
 
     - name: Deploy Authentik docker-compose
       copy:
@@ -907,6 +951,30 @@
         headers:
           Authorization: "Bearer {{ sso_bootstrap_token }}"
       register: authentik_brands
+
+    # Bind the built-in recovery flow to the brand so the login page shows a
+    # "Forgot password?" link and self-service password reset works end-to-end
+    # (requires SMTP, configured above). Idempotent PATCH.
+    - name: Get the default recovery flow
+      tags: [branding, recovery]
+      uri:
+        url: "http://localhost:9000/api/v3/flows/instances/?slug=default-recovery-flow"
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+      register: authentik_recovery_flow
+
+    - name: Bind the recovery flow to the brand
+      tags: [branding, recovery]
+      when: authentik_recovery_flow.json.results | length > 0
+      uri:
+        url: "http://localhost:9000/api/v3/core/brands/{{ authentik_brands.json.results[0].brand_uuid }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ sso_bootstrap_token }}"
+        body_format: json
+        body:
+          flow_recovery: "{{ authentik_recovery_flow.json.results[0].pk }}"
+        status_code: [200]
 
     - name: Apply databaes.net branding to Authentik
       tags: [branding]

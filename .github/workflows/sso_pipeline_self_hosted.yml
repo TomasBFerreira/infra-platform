@@ -347,6 +347,24 @@ jobs:
           timeout 120 bash -c "until nc -z ${STAGING_IP} 22; do sleep 5; done"
           echo "SSH is up"
 
+      - name: Seed SMTP (Brevo) creds into env vault for Authentik
+        env:
+          BREVO_RELAY_USER: ${{ secrets.BREVO_RELAY_USER }}
+          BREVO_RELAY_PASS: ${{ secrets.BREVO_RELAY_PASS }}
+        run: |
+          # VAULT_ADDR/VAULT_TOKEN (env vault) are in GITHUB_ENV from resolve step.
+          # Idempotent: sso_setup.yml reads secret/sso/email and enables Authentik
+          # email only if host is non-empty. Skips cleanly if secrets are unset.
+          if [ -n "$BREVO_RELAY_USER" ] && [ -n "$BREVO_RELAY_PASS" ]; then
+            vault kv put secret/sso/email \
+              host="smtp-relay.brevo.com" port="587" \
+              username="$BREVO_RELAY_USER" password="$BREVO_RELAY_PASS" \
+              from="noreply@databaes.net" use_tls="true"
+            echo "secret/sso/email seeded for Authentik SMTP."
+          else
+            echo "BREVO_RELAY_* secrets not set — skipping SMTP seed (Authentik email stays disabled)."
+          fi
+
       - name: Run Ansible playbook
         run: |
           ssh-keygen -R "${STAGING_IP}" || true
