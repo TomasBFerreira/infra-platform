@@ -1,0 +1,424 @@
+name: Zigbee IoT Pipeline (ARC)
+
+# Blue/green deploy of the zigbee-iot LXC via the ARC ephemeral-runner stack.
+# Prereq: arc-deploy.yml has been dispatched for the target env so the
+# `arc-pilot-<env>` scale set + the `terraform-state` namespace + RBAC exist.
+# State is stored as Kubernetes Secrets in `terraform-state` (same cluster as
+# the pod), keyed by `secret_suffix=zigbee-iot-<slot>-<env>`.
+#
+# IMPORTANT: The Zigbee USB dongle must be physically plugged into the Proxmox
+# node for the target env (benedict=dev, heaton=qa, betsy=prod) before running.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+
+concurrency:
+  group: zigbee-iot-pipeline-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-slots:
+    runs-on: arc-pilot-${{ github.event.inputs.environment || 'dev' }}
+    outputs:
+      environment: ${{ steps.slots.outputs.environment }}
+      pve_api_url: ${{ steps.slots.outputs.pve_api_url }}
+      pve_node: ${{ steps.slots.outputs.pve_node }}
+      active_slot: ${{ steps.slots.outputs.active_slot }}
+      active_vmid: ${{ steps.slots.outputs.active_vmid }}
+      active_ip: ${{ steps.slots.outputs.active_ip }}
+      active_host: ${{ steps.slots.outputs.active_host }}
+      staging_slot: ${{ steps.slots.outputs.staging_slot }}
+      staging_vmid: ${{ steps.slots.outputs.staging_vmid }}
+      staging_ip: ${{ steps.slots.outputs.staging_ip }}
+      staging_host: ${{ steps.slots.outputs.staging_host }}
+      first_run: ${{ steps.slots.outputs.first_run }}
+      gateway: ${{ steps.slots.outputs.gateway }}
+      network_bridge: ${{ steps.slots.outputs.network_bridge }}
+    steps:
+      - name: Resolve active and staging slots
+        id: slots
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+
+          case "$ENV" in
+            dev)
+              BLUE_VMID=289;  BLUE_IP="192.168.20.89"
+              GREEN_VMID=290; GREEN_IP="192.168.20.90"
+              PVE_NODE="benedict"
+              PVE_API_URL="https://192.168.50.4:8006/api2/json"
+              GATEWAY="192.168.20.1"; NETWORK_BRIDGE="vmbr20"
+              ;;
+            qa)
+              BLUE_VMID=389;  BLUE_IP="192.168.30.89"
+              GREEN_VMID=390; GREEN_IP="192.168.30.90"
+              PVE_NODE="heaton"
+              PVE_API_URL="https://192.168.50.8:8006/api2/json"
+              GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
+              ;;
+            prod)
+              BLUE_VMID=189;  BLUE_IP="192.168.10.89"
+              GREEN_VMID=190; GREEN_IP="192.168.10.90"
+              PVE_NODE="betsy"
+              PVE_API_URL="https://192.168.50.2:8006/api2/json"
+              GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
+              ;;
+          esac
+
+          BLUE_HOST="zigbee-iot-lxc-blue"
+          GREEN_HOST="zigbee-iot-lxc-green"
+
+          ACTIVE_SLOT=$(vault kv get -field=slot secret/zigbee-iot/$ENV/active-slot 2>/dev/null || echo "none")
+
+          if [ "$ACTIVE_SLOT" = "none" ]; then
+            STAGING_SLOT="blue"
+            STAGING_VMID="$BLUE_VMID"; STAGING_IP="$BLUE_IP"; STAGING_HOST="$BLUE_HOST"
+            ACTIVE_VMID=""; ACTIVE_IP=""; ACTIVE_HOST=""
+            FIRST_RUN="true"
+          elif [ "$ACTIVE_SLOT" = "blue" ]; then
+            STAGING_SLOT="green"
+            STAGING_VMID="$GREEN_VMID"; STAGING_IP="$GREEN_IP"; STAGING_HOST="$GREEN_HOST"
+            ACTIVE_VMID="$BLUE_VMID"; ACTIVE_IP="$BLUE_IP"; ACTIVE_HOST="$BLUE_HOST"
+            FIRST_RUN="false"
+          else
+            STAGING_SLOT="blue"
+            STAGING_VMID="$BLUE_VMID"; STAGING_IP="$BLUE_IP"; STAGING_HOST="$BLUE_HOST"
+            ACTIVE_VMID="$GREEN_VMID"; ACTIVE_IP="$GREEN_IP"; ACTIVE_HOST="$GREEN_HOST"
+            FIRST_RUN="false"
+          fi
+
+          {
+            echo "environment=$ENV"
+            echo "pve_api_url=$PVE_API_URL"
+            echo "pve_node=$PVE_NODE"
+            echo "active_slot=$ACTIVE_SLOT"
+            echo "active_vmid=$ACTIVE_VMID"
+            echo "active_ip=$ACTIVE_IP"
+            echo "active_host=$ACTIVE_HOST"
+            echo "staging_slot=$STAGING_SLOT"
+            echo "staging_vmid=$STAGING_VMID"
+            echo "staging_ip=$STAGING_IP"
+            echo "staging_host=$STAGING_HOST"
+            echo "first_run=$FIRST_RUN"
+            echo "gateway=$GATEWAY"
+            echo "network_bridge=$NETWORK_BRIDGE"
+          } >> "$GITHUB_OUTPUT"
+
+  terraform-staging:
+    needs: resolve-slots
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
+    env:
+      ENV: ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+      TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
+      TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+      TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+      TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+      TF_VAR_gateway: ${{ needs.resolve-slots.outputs.gateway }}
+      TF_VAR_vmid: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      TF_VAR_ip_address: ${{ needs.resolve-slots.outputs.staging_ip }}
+      TF_VAR_vm_hostname: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Proxmox SSH key from vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+            | awk 'NF > 0' > /tmp/pve_key
+          chmod 600 /tmp/pve_key
+
+      - name: Terraform Init
+        working-directory: terraform/zigbee-iot
+        run: |
+          terraform init -input=false \
+            -backend-config="secret_suffix=zigbee-iot-${STAGING_SLOT}-${ENV}"
+
+      - name: Pre-flight — destroy any stale staging LXC
+        working-directory: terraform/zigbee-iot
+        env:
+          PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          terraform destroy -no-color -input=false -auto-approve || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"
+
+      - name: Terraform Apply
+        working-directory: terraform/zigbee-iot
+        run: terraform apply -no-color -input=false -auto-approve
+
+  configure-usb-staging:
+    needs: [resolve-slots, terraform-staging]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
+    env:
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
+    steps:
+      - name: Fetch Proxmox SSH key from vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+            | awk 'NF > 0' > /tmp/pve_key
+          chmod 600 /tmp/pve_key
+
+      - name: Configure USB device passthrough for Zigbee dongle
+        env:
+          PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} bash -s -- "${STAGING_VMID}" << 'SSHEOF'
+            VMID="$1"
+            CONF="/etc/pve/lxc/${VMID}.conf"
+
+            # Allow access to USB ACM devices (major 166) — the Sonoff ZBDongle-E
+            grep -q 'lxc.cgroup2.devices.allow: c 166:' "$CONF" \
+              || echo 'lxc.cgroup2.devices.allow: c 166:* rwm' >> "$CONF"
+
+            # Bind-mount the USB serial device into the container
+            grep -q 'lxc.mount.entry.*ttyACM0' "$CONF" \
+              || echo 'lxc.mount.entry: /dev/ttyACM0 dev/ttyACM0 none bind,optional,create=file' >> "$CONF"
+
+            # Also allow by-id symlink path for stability
+            grep -q 'lxc.mount.entry.*serial' "$CONF" \
+              || echo 'lxc.mount.entry: /dev/serial dev/serial none rbind,optional,create=dir' >> "$CONF"
+
+            pct reboot ${VMID}
+          SSHEOF
+          echo "USB passthrough configured, waiting for reboot..."
+          sleep 15
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH on ${STAGING_IP}..."
+          timeout 120 bash -c "until (echo > /dev/tcp/${STAGING_IP}/22) 2>/dev/null; do sleep 5; done"
+          echo "SSH is up"
+
+  ansible-staging:
+    needs: [resolve-slots, configure-usb-staging]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      ENV: ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch SSH key from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/zigbee_iot_worker \
+            | awk 'NF > 0' > /tmp/zigbee_iot_key
+          chmod 600 /tmp/zigbee_iot_key
+
+      - name: Fetch secrets from Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          TS_AUTHKEY=$(vault kv get -field=authkey "secret/tailscale/${ENV}")
+          echo "::add-mask::$TS_AUTHKEY"
+          {
+            echo "TS_AUTHKEY=$TS_AUTHKEY"
+            echo "TS_TAGS=tag:container,tag:${ENV}"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Ansible playbook
+        run: |
+          ssh-keygen -R "${STAGING_IP}" || true
+          ansible-playbook \
+            -i "${STAGING_IP}," \
+            -v \
+            -e "ansible_host=${STAGING_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no -i /tmp/zigbee_iot_key'" \
+            -e "tailscale_hostname=${ENV}-${STAGING_HOST}" \
+            -e "tailscale_authkey=$TS_AUTHKEY" \
+            -e "tailscale_advertise_tags=$TS_TAGS" \
+            -e "deploy_env=${ENV}" \
+            ansible/zigbee-iot/zigbee_iot_setup.yml
+
+  flip-active:
+    needs: [resolve-slots, ansible-staging]
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
+    steps:
+      - name: Write new active slot to Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          ENV="${{ needs.resolve-slots.outputs.environment }}"
+          vault kv put secret/zigbee-iot/$ENV/active-slot \
+            slot="${{ needs.resolve-slots.outputs.staging_slot }}" \
+            vmid="${{ needs.resolve-slots.outputs.staging_vmid }}" \
+            ip="${{ needs.resolve-slots.outputs.staging_ip }}"
+
+  teardown-old-active:
+    needs: [resolve-slots, flip-active]
+    if: needs.resolve-slots.outputs.first_run == 'false' && needs.flip-active.result == 'success'
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
+    env:
+      ENV: ${{ needs.resolve-slots.outputs.environment }}
+      ACTIVE_SLOT: ${{ needs.resolve-slots.outputs.active_slot }}
+      ACTIVE_VMID: ${{ needs.resolve-slots.outputs.active_vmid }}
+      ACTIVE_IP: ${{ needs.resolve-slots.outputs.active_ip }}
+      ACTIVE_HOST: ${{ needs.resolve-slots.outputs.active_host }}
+      TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
+      TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+      TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+      TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+      TF_VAR_gateway: ${{ needs.resolve-slots.outputs.gateway }}
+      TF_VAR_vmid: ${{ needs.resolve-slots.outputs.active_vmid }}
+      TF_VAR_ip_address: ${{ needs.resolve-slots.outputs.active_ip }}
+      TF_VAR_vm_hostname: ${{ needs.resolve-slots.outputs.active_host }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Proxmox SSH key from vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+            | awk 'NF > 0' > /tmp/pve_key
+          chmod 600 /tmp/pve_key
+
+      - name: Tailscale logout on old active LXC
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/zigbee_iot_worker \
+            | awk 'NF > 0' > /tmp/zigbee_iot_key
+          chmod 600 /tmp/zigbee_iot_key
+          ssh -o StrictHostKeyChecking=no -i /tmp/zigbee_iot_key \
+            ${SSH_USER}@${ACTIVE_IP} "tailscale logout || true" || true
+
+      - name: Terraform Init
+        working-directory: terraform/zigbee-iot
+        run: |
+          terraform init -input=false \
+            -backend-config="secret_suffix=zigbee-iot-${ACTIVE_SLOT}-${ENV}"
+
+      - name: Terraform Destroy old active LXC
+        working-directory: terraform/zigbee-iot
+        env:
+          PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          terraform destroy -no-color -input=false -auto-approve || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${ACTIVE_VMID} 2>/dev/null || true; pct destroy ${ACTIVE_VMID} 2>/dev/null || true"
+
+  cleanup-on-failure:
+    needs: [resolve-slots, terraform-staging, configure-usb-staging, ansible-staging]
+    if: failure()
+    runs-on: arc-pilot-${{ needs.resolve-slots.outputs.environment }}
+    env:
+      ENV: ${{ needs.resolve-slots.outputs.environment }}
+      STAGING_SLOT: ${{ needs.resolve-slots.outputs.staging_slot }}
+      STAGING_VMID: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      STAGING_IP: ${{ needs.resolve-slots.outputs.staging_ip }}
+      STAGING_HOST: ${{ needs.resolve-slots.outputs.staging_host }}
+      TF_VAR_pve_api: ${{ needs.resolve-slots.outputs.pve_api_url }}
+      TF_VAR_pve_user: ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass: ${{ needs.resolve-slots.outputs.environment == 'prod' && secrets.PVE_PROD_PASS || secrets.PVE_PASS }}
+      TF_VAR_ssh_user: ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      TF_VAR_target_node: ${{ needs.resolve-slots.outputs.pve_node }}
+      TF_VAR_network_bridge: ${{ needs.resolve-slots.outputs.network_bridge }}
+      TF_VAR_gateway: ${{ needs.resolve-slots.outputs.gateway }}
+      TF_VAR_vmid: ${{ needs.resolve-slots.outputs.staging_vmid }}
+      TF_VAR_ip_address: ${{ needs.resolve-slots.outputs.staging_ip }}
+      TF_VAR_vm_hostname: ${{ needs.resolve-slots.outputs.staging_host }}
+    steps:
+      - name: Fetch Proxmox SSH key from vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/github_runner_proxmox_access \
+            | awk 'NF > 0' > /tmp/pve_key
+          chmod 600 /tmp/pve_key
+
+      - name: Collect failure logs from CT
+        env:
+          PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          mkdir -p failure-logs
+          LOG_FILE="failure-logs/zigbee-iot-${ENV}-${STAGING_VMID}.log"
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          {
+            echo "=== zigbee-iot failure log: run ${{ github.run_id }}, env=${ENV}, vmid=${STAGING_VMID} ==="
+            echo "=== $(date -u) ==="
+            echo "--- system journal (last 100 lines) ---"
+            ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} \
+              "pct exec ${STAGING_VMID} -- journalctl -n 100 --no-pager 2>/dev/null || echo '(journal unavailable)'" 2>/dev/null || echo "(pct exec failed)"
+          } | tee "$LOG_FILE" || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zigbee-iot-failure-${{ env.ENV }}-run${{ github.run_id }}
+          path: failure-logs/
+          if-no-files-found: warn
+
+      - uses: actions/checkout@v4
+
+      - name: Terraform Init
+        working-directory: terraform/zigbee-iot
+        run: |
+          terraform init -input=false \
+            -backend-config="secret_suffix=zigbee-iot-${STAGING_SLOT}-${ENV}"
+
+      - name: Terraform Destroy staging LXC
+        working-directory: terraform/zigbee-iot
+        env:
+          PVE_API: ${{ needs.resolve-slots.outputs.pve_api_url }}
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          terraform destroy -no-color -input=false -auto-approve || true
+          PVE_HOST=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['PVE_API']).hostname)")
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no -i /tmp/pve_key ${PVE_SSH_USER}@${PVE_HOST} \
+            "pct stop ${STAGING_VMID} 2>/dev/null || true; pct destroy ${STAGING_VMID} 2>/dev/null || true"

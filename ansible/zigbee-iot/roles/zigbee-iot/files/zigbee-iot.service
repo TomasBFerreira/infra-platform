@@ -1,0 +1,17 @@
+[Unit]
+Description=Zigbee IoT monitoring stack (Mosquitto + Zigbee2MQTT + Telegraf)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=appadm
+Group=appadm
+WorkingDirectory=/opt/zigbee-iot
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+ExecReload=/usr/bin/docker compose up -d --remove-orphans
+
+[Install]
+WantedBy=multi-user.target
