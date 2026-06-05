@@ -51,60 +51,11 @@
         state: absent
         purge: yes
 
-    # -- Tailscale -------------------------------------------------------------
-    - name: Add Tailscale GPG key
-      shell: |
-        curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
-          -o /usr/share/keyrings/tailscale-archive-keyring.gpg
-      args:
-        creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
-
-    - name: Add Tailscale APT repository
-      apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian bookworm main"
-        state: present
-        filename: tailscale
-
-    - name: Install Tailscale
-      apt:
-        name: tailscale
-        state: present
-        update_cache: yes
-
-    - name: Enable and start tailscaled
-      systemd:
-        name: tailscaled
-        enabled: yes
-        state: started
-
-    - name: Check if Tailscale is already connected
-      command: tailscale status --json
-      register: ts_status
-      changed_when: false
-      failed_when: false
-
-    - name: Set tailscale_connected fact
-      set_fact:
-        tailscale_connected: "{{ (ts_status.stdout | from_json).BackendState == 'Running' }}"
-      when: ts_status.rc == 0
-
-    - name: Authenticate Tailscale
-      command: >
-        timeout 90
-        tailscale up
-        --authkey={{ tailscale_authkey }}
-        --reset
-        --hostname={{ tailscale_hostname }}
-      when: not (tailscale_connected | default(false))
-      no_log: true
-
-    - name: Wait for Tailscale to come online
-      command: tailscale status
-      register: ts_online
-      retries: 10
-      delay: 3
-      until: ts_online.rc == 0
-      changed_when: false
+    # -- Tailscale: intentionally NOT installed -------------------------------
+    # This CT is reachable over the tailnet via the network-vm subnet router,
+    # which advertises 192.168.10.0/24 (+ dev/qa/mgmt). Nothing resolves DNS to
+    # this host's own Tailscale IP, so a per-CT `tailscale up` adds no value and
+    # only couples the deploy to the shared secret/tailscale/<env> auth key.
 
     # -- Docker ----------------------------------------------------------------
     - name: Add Docker GPG key
