@@ -1,0 +1,44 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    volumes:
+      - ./config/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    ports:
+      - "{{ mosquitto_port }}:1883"
+
+  zigbee2mqtt:
+    image: koenkk/zigbee2mqtt
+    container_name: zigbee2mqtt
+    restart: unless-stopped
+    volumes:
+      - zigbee2mqtt-data:/app/data
+      - ./config/zigbee2mqtt/configuration.yaml:/app/data/configuration.yaml:ro
+    ports:
+      - "{{ zigbee2mqtt_port }}:8080"
+    devices:
+      # Sonoff ZBDongle-E presents as /dev/ttyUSB0; pass the stable by-id symlink
+      # (matches the serial.port in configuration.yaml). Docker resolves it to the
+      # real char device and exposes it at the same path inside the container.
+      - /dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_5862b13b64f3ef118ae8c51b6d9880ab-if00-port0:/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_5862b13b64f3ef118ae8c51b6d9880ab-if00-port0
+    depends_on:
+      - mosquitto
+
+  telegraf:
+    image: telegraf:1.30
+    container_name: telegraf
+    restart: unless-stopped
+    volumes:
+      - ./config/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    ports:
+      - "{{ telegraf_port }}:9273"
+    depends_on:
+      - mosquitto
+
+volumes:
+  mosquitto-data:
+  mosquitto-log:
+  zigbee2mqtt-data:

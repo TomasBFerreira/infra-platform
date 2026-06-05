@@ -1,0 +1,20 @@
+[agent]
+  interval = "10s"
+  round_interval = true
+  flush_interval = "10s"
+
+# -- Input: Zigbee2MQTT power telemetry via MQTT -------------------------------
+
+[[inputs.mqtt_consumer]]
+  servers = ["tcp://mosquitto:1883"]
+  topics = ["zigbee2mqtt/+"]
+  data_format = "json"
+  topic_tag = "device"
+  json_string_fields = ["state"]
+
+# -- Output: Prometheus scrape endpoint ----------------------------------------
+
+[[outputs.prometheus_client]]
+  listen = ":9273"
+  metric_version = 2
+  expiration_interval = "120s"

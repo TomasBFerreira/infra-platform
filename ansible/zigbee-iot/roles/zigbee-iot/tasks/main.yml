@@ -1,0 +1,83 @@
+---
+# -- Deploy directory and config files ----------------------------------------
+
+- name: Create install directory
+  file:
+    path: "{{ zigbee_iot_install_dir }}"
+    state: directory
+    owner: "{{ zigbee_iot_user }}"
+    group: "{{ zigbee_iot_group }}"
+    mode: "0755"
+
+- name: Create config subdirectories
+  file:
+    path: "{{ zigbee_iot_install_dir }}/config/{{ item }}"
+    state: directory
+    owner: "{{ zigbee_iot_user }}"
+    group: "{{ zigbee_iot_group }}"
+    mode: "0755"
+  loop:
+    - mosquitto
+    - zigbee2mqtt
+    - telegraf
+
+- name: Deploy docker-compose.yml
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ zigbee_iot_install_dir }}/docker-compose.yml"
+    owner: "{{ zigbee_iot_user }}"
+    group: "{{ zigbee_iot_group }}"
+    mode: "0644"
+  notify: restart zigbee-iot
+
+- name: Deploy Mosquitto config
+  copy:
+    src: mosquitto.conf
+    dest: "{{ zigbee_iot_install_dir }}/config/mosquitto/mosquitto.conf"
+    owner: "{{ zigbee_iot_user }}"
+    group: "{{ zigbee_iot_group }}"
+    mode: "0644"
+  notify: restart zigbee-iot
+
+- name: Deploy Zigbee2MQTT config
+  template:
+    src: zigbee2mqtt-configuration.yaml.j2
+    dest: "{{ zigbee_iot_install_dir }}/config/zigbee2mqtt/configuration.yaml"
+    owner: "{{ zigbee_iot_user }}"
+    group: "{{ zigbee_iot_group }}"
+    mode: "0644"
+  notify: restart zigbee-iot
+
+- name: Deploy Telegraf config
+  template:
+    src: telegraf.conf.j2
+    dest: "{{ zigbee_iot_install_dir }}/config/telegraf/telegraf.conf"
+    owner: "{{ zigbee_iot_user }}"
+    group: "{{ zigbee_iot_group }}"
+    mode: "0644"
+  notify: restart zigbee-iot
+
+# -- Systemd service ----------------------------------------------------------
+
+- name: Deploy zigbee-iot systemd service
+  copy:
+    src: zigbee-iot.service
+    dest: /etc/systemd/system/zigbee-iot.service
+    mode: "0644"
+  notify: restart zigbee-iot
+
+- name: Enable and start zigbee-iot service
+  systemd:
+    name: zigbee-iot
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+# -- Pull images ahead of first start -----------------------------------------
+
+- name: Pull Docker images
+  command: docker compose pull
+  args:
+    chdir: "{{ zigbee_iot_install_dir }}"
+  become_user: "{{ zigbee_iot_user }}"
+  changed_when: false

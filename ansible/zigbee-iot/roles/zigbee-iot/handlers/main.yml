@@ -1,0 +1,6 @@
+---
+- name: restart zigbee-iot
+  systemd:
+    name: zigbee-iot
+    state: restarted
+    daemon_reload: yes

@@ -1,0 +1,23 @@
+homeassistant: false
+
+permit_join: true
+
+mqtt:
+  base_topic: zigbee2mqtt
+  server: mqtt://mosquitto:1883
+
+serial:
+  # Stable by-id path for the Sonoff ZBDongle-E (CP210x bridge -> /dev/ttyUSB0).
+  # The /dev/serial rbind in the LXC passthrough makes this symlink resolvable
+  # inside the container.
+  port: /dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_5862b13b64f3ef118ae8c51b6d9880ab-if00-port0
+  adapter: ember
+
+frontend:
+  port: 8080
+
+advanced:
+  log_level: info
+  last_seen: ISO_8601
+  elapsed: true
+  network_key: GENERATE

@@ -41,6 +41,7 @@ Runner state (singletons, no slot rotation):
 | `secret/ssh_keys/traefik_worker` | `private_key`, `public_key` | `seed-network-split-ssh-keys.yml` workflow (one-off, 2026-05-19) |
 | `secret/ssh_keys/adguard_worker` | `private_key`, `public_key` | `seed-network-split-ssh-keys.yml` workflow (one-off, 2026-05-19) |
 | `secret/ssh_keys/cloudflared_worker` | `private_key`, `public_key` | `seed-network-split-ssh-keys.yml` workflow (one-off, 2026-05-19) |
+| `secret/ssh_keys/zigbee_iot_worker` | `private_key`, `public_key` | Manual setup — SSH key for zigbee-iot LXC pipeline |
 | `secret/ssh_keys/github_runner_proxmox_access` | `private_key`, `public_key` | Manual setup — authorised on every PVE host's root, used by anything that needs `pct exec`/host-level SSH (LXC env runners had it baked in; ARC pods fetch it per-job, see traefik/adguard/cloudflared pipelines) |
 | `secret/worker-node/<N>/state` | `vmid, ip, hostname, pve_node, provisioned_at` | worker-node pipeline |
 | `secret/github-runner/gh_pat` | `token` | github-runner pipeline (injected from GH_PAT secret each run); **also reused by ops-portal-incidents (prod) to dispatch ops-portal-pipelines workflows** until a dedicated `secret/ops-portal/pipelines/gh-pat` is provisioned |
@@ -66,6 +67,7 @@ Runner state (singletons, no slot rotation):
 | `secret/traefik/<env>/active-slot` | `slot, vmid, ip` | traefik pipeline (network-vm split, 2026-05-19) |
 | `secret/adguard/<env>/active-slot` | `slot, vmid, ip` | adguard pipeline (network-vm split, 2026-05-19) |
 | `secret/cloudflared/<env>/active-slot` | `slot, vmid, ip` | cloudflared pipeline (network-vm split Phase 4 — auto-created on first deploy) |
+| `secret/zigbee-iot/<env>/active-slot` | `slot, vmid, ip` | zigbee-iot pipeline (auto-created on first deploy) |
 | `secret/ssh_keys/cloudflared_worker` | `private_key, public_key` | Manual setup (or seed-network-split-ssh-keys.yml) — SSH key for the cloudflared-lxc pipeline. |
 | `secret/network-vm/prod/active-slot` | `slot, vmid, ip` | network-vm pipeline |
 | `secret/pbs/cluster-storage` | `server, datastore, username, token_secret, fingerprint` | pbs pipeline — used by `pvesm add pbs` on all cluster nodes |

@@ -1,0 +1,13 @@
+---
+zigbee_iot_install_dir: /opt/zigbee-iot
+zigbee_iot_user: appadm
+zigbee_iot_group: appadm
+
+# Zigbee2MQTT web UI
+zigbee2mqtt_port: 8080
+
+# Telegraf Prometheus metrics
+telegraf_port: 9273
+
+# MQTT (internal only)
+mosquitto_port: 1883
