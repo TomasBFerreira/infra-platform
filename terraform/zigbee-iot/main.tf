@@ -17,7 +17,11 @@ resource "proxmox_lxc" "zigbee_iot" {
     gw     = var.gateway
   }
 
-  unprivileged = true
+  # Privileged: the Zigbee USB dongle (/dev/ttyUSB0) is passed through from the
+  # host, and an unprivileged CT maps the device to an inaccessible uid
+  # (nobody:nogroup) so Zigbee2MQTT can't open the serial port. Privileged =
+  # container root == host root, so the passed-through device just works.
+  unprivileged = false
 
   features {
     nesting = true
