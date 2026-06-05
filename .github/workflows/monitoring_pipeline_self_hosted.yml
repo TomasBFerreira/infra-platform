@@ -69,15 +69,8 @@ jobs:
               GATEWAY="192.168.30.1"; NETWORK_BRIDGE="vmbr30"
               ;;
             prod)
-              # Relocated 2026-06-05 from 195/196 (.95/.96): the 2026-05-20
-              # traefik-lxc rollout claimed VMID 195 (betsy CT 195 is now
-              # traefik-lxc-blue), and the legacy single CT 196 (monitoring-green)
-              # kept wedging in userspace D-state on a hung NFS mount, causing
-              # recurring grafana.databaes.net 503 outages. New numbering
-              # 191/192 (.91/.92) is free on betsy and clear of the traefik-lxc
-              # slots. See /app/reports/2026-06-05-grafana-newrelic-audit.md.
-              BLUE_VMID=191;  BLUE_IP="192.168.10.91"
-              GREEN_VMID=192; GREEN_IP="192.168.10.92"
+              BLUE_VMID=195;  BLUE_IP="192.168.10.95"
+              GREEN_VMID=196; GREEN_IP="192.168.10.96"
               PVE_API_URL="https://192.168.50.2:8006/api2/json"
               PVE_NODE="betsy"
               GATEWAY="192.168.10.1"; NETWORK_BRIDGE="vmbr10"
