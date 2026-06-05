@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-assert DNS-forward DNAT to the live AdGuard-lxc periodically
+
+[Timer]
+# Fire shortly after boot (survives gateway reboots) and every 2 min thereafter
+# (re-points within 2 min of an adguard blue/green flip).
+OnBootSec=30
+OnUnitActiveSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
