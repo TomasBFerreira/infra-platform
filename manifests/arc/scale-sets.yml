@@ -406,3 +406,14 @@ scale_sets:
     name: otel-monitoring-prod
     min_runners: 0
     max_runners: 2
+
+  # ── databaes-investing prod (2026-06-05) ───────────────────────────────
+  # Onboarded dev+qa on 2026-06-03 (entries above); add the prod listener so
+  # deploy.yml's env=prod path (runs-on: databaes-investing-prod) has a runner.
+  # Same build-on-ubuntu-latest + crane-pull + k3s-import pattern as dev/qa.
+  - repo: TomasBFerreira/databaes-investing
+    env: prod
+    label: prod
+    name: databaes-investing-prod
+    min_runners: 0
+    max_runners: 2
