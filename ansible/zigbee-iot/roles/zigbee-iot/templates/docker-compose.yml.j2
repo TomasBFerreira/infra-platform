@@ -16,7 +16,9 @@ services:
     restart: unless-stopped
     volumes:
       - zigbee2mqtt-data:/app/data
-      - ./config/zigbee2mqtt/configuration.yaml:/app/data/configuration.yaml:ro
+      # NOT :ro — Zigbee2MQTT v2 rewrites configuration.yaml on startup
+      # (settings migration + onboarding) and crash-loops on EROFS if it can't.
+      - ./config/zigbee2mqtt/configuration.yaml:/app/data/configuration.yaml
     ports:
       - "{{ zigbee2mqtt_port }}:8080"
     devices:
