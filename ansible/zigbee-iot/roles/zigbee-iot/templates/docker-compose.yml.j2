@@ -20,7 +20,10 @@ services:
     ports:
       - "{{ zigbee2mqtt_port }}:8080"
     devices:
-      - /dev/ttyACM0:/dev/ttyACM0
+      # Sonoff ZBDongle-E presents as /dev/ttyUSB0; pass the stable by-id symlink
+      # (matches the serial.port in configuration.yaml). Docker resolves it to the
+      # real char device and exposes it at the same path inside the container.
+      - /dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_5862b13b64f3ef118ae8c51b6d9880ab-if00-port0:/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_5862b13b64f3ef118ae8c51b6d9880ab-if00-port0
     depends_on:
       - mosquitto
 

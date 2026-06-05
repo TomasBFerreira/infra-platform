@@ -198,13 +198,15 @@ jobs:
             VMID="$1"
             CONF="/etc/pve/lxc/${VMID}.conf"
 
-            # Allow access to USB ACM devices (major 166) — the Sonoff ZBDongle-E
-            grep -q 'lxc.cgroup2.devices.allow: c 166:' "$CONF" \
-              || echo 'lxc.cgroup2.devices.allow: c 166:* rwm' >> "$CONF"
+            # Allow access to USB serial devices (major 188) — the Sonoff
+            # ZBDongle-E enumerates via its CP210x bridge as /dev/ttyUSB0,
+            # NOT a CDC-ACM device (major 166).
+            grep -q 'lxc.cgroup2.devices.allow: c 188:' "$CONF" \
+              || echo 'lxc.cgroup2.devices.allow: c 188:* rwm' >> "$CONF"
 
             # Bind-mount the USB serial device into the container
-            grep -q 'lxc.mount.entry.*ttyACM0' "$CONF" \
-              || echo 'lxc.mount.entry: /dev/ttyACM0 dev/ttyACM0 none bind,optional,create=file' >> "$CONF"
+            grep -q 'lxc.mount.entry.*ttyUSB0' "$CONF" \
+              || echo 'lxc.mount.entry: /dev/ttyUSB0 dev/ttyUSB0 none bind,optional,create=file' >> "$CONF"
 
             # Also allow by-id symlink path for stability
             grep -q 'lxc.mount.entry.*serial' "$CONF" \
