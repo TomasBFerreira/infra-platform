@@ -57,6 +57,15 @@
     mode: "0644"
   notify: restart zigbee-iot
 
+# -- Pull images before first start -------------------------------------------
+
+- name: Pull Docker images
+  command: docker compose pull
+  args:
+    chdir: "{{ zigbee_iot_install_dir }}"
+  become_user: "{{ zigbee_iot_user }}"
+  changed_when: false
+
 # -- Systemd service ----------------------------------------------------------
 
 - name: Deploy zigbee-iot systemd service
@@ -72,12 +81,3 @@
     enabled: yes
     state: started
     daemon_reload: yes
-
-# -- Pull images ahead of first start -----------------------------------------
-
-- name: Pull Docker images
-  command: docker compose pull
-  args:
-    chdir: "{{ zigbee_iot_install_dir }}"
-  become_user: "{{ zigbee_iot_user }}"
-  changed_when: false

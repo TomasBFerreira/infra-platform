@@ -43,6 +43,7 @@
           - jq
           - ca-certificates
           - gnupg
+          - sudo          # required for ansible become_user (e.g. docker tasks as appadm)
         state: present
 
     - name: Disable unattended upgrades
