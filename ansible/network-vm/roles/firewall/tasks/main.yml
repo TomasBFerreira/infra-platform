@@ -23,3 +23,38 @@
 - name: Enable UFW
   ufw:
     state: enabled
+
+# ── DNS-forward DNAT to the live AdGuard-lxc ────────────────────────────────
+# The k3s worker(s) point resolv.conf at this gateway VIP (.55/.56); the gateway
+# DNATs :53 to the env's adguard-lxc. Previously applied by hand -> lost on every
+# gateway reboot (cluster loses DNS, ARC runners crashloop, deploys hang queued)
+# and broke on every adguard blue/green flip (target slot destroyed). This
+# self-healing unit re-asserts it on boot + every 2 min, rediscovering the live
+# adguard slot. See /app/issues/heaton-qa-node-down-2026-06-05.md.
+- name: Install dns-forward-dnat sync script
+  copy:
+    src: dns-forward-dnat-sync.sh
+    dest: /usr/local/bin/dns-forward-dnat-sync
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Install dns-forward-dnat systemd service + timer
+  copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop:
+    - dns-forward-dnat.service
+    - dns-forward-dnat.timer
+
+- name: Enable + start dns-forward-dnat timer
+  systemd:
+    name: dns-forward-dnat.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Assert the DNS-forward DNAT now (don't wait for the first timer tick)
+  command: /usr/local/bin/dns-forward-dnat-sync
+  changed_when: false

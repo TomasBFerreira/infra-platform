@@ -1,0 +1,8 @@
+[Unit]
+Description=DNS-forward DNAT to the live AdGuard-lxc (self-healing)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dns-forward-dnat-sync
