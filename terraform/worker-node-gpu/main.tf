@@ -35,6 +35,16 @@ resource "proxmox_virtual_environment_vm" "worker_node_gpu" {
     bridge = var.network_bridge
   }
 
+  # GPU passthrough. The host must have the card bound to vfio-pci first (see
+  # manifests/nvidia-device-plugin/README.md). pcie=false keeps the VM on
+  # i440fx so the guest NIC name doesn't change. Passes all functions of the
+  # device (VGA + audio) since gpu_pci_id has no function suffix.
+  hostpci {
+    device = "hostpci0"
+    id     = var.gpu_pci_id
+    pcie   = false
+  }
+
   initialization {
     ip_config {
       ipv4 {

@@ -84,7 +84,7 @@ Current GPU nodes:
 >
 > **Rancher cluster ID (2026-04-13):** `worker-node-gpu-01` was re-registered with prod Rancher on 2026-04-13 after a cluster reset (previous ID `c-dj4lv` was stuck `Connected:False` due to a k3s version mismatch bootstrap deadlock). New cluster ID: **`c-qctq5`**. All 21 cluster conditions are `True`, cluster is `Active`. Update diagnostics workflows and playbooks that reference the old cluster ID when running against prod.
 >
-> **GPU passthrough status (deferred):** The GTX 970 is passed through to VMID 121 at the Proxmox layer, but no pod in the cluster consumes it — no NVIDIA device plugin, no `nvidia.com/gpu` resource requests, no device mounts. All transcoders (Plex, Jellyfin, Streambox) run on CPU. This is a deliberate hold, not a bug. See `/app/issues/gpu-passthrough-deferred.md` for the full status and the plan to re-enable it.
+> **GPU passthrough status (ENABLED 2026-06-06):** The GTX 970 is now passed through to VMID 121 end-to-end — `vfio-pci` on betsy, `hostpci` on the VM (Terraform `worker-node-gpu`), NVIDIA 535 driver + container toolkit in the guest, the k3s `nvidia` containerd runtime, and the device-plugin DaemonSet (`manifests/nvidia-device-plugin/`). The node advertises `nvidia.com/gpu: 1`. **Correction:** the prior claim that it "is passed through at the Proxmox layer" was false — passthrough had never actually been configured (no `hostpci` on the VM) until this date. **No pod consumes the GPU yet** (Plex/Jellyfin were removed; a `feat/jellyfin-seerr-migration` branch is pending) — it's ready and schedulable. See `/app/issues/gpu-passthrough-deferred.md`.
 
 **GitHub Actions runners — env singletons:**
 - github-runner-prod: VMID 101, IP 192.168.10.101 (betsy)

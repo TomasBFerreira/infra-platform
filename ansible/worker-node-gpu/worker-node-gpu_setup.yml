@@ -133,6 +133,100 @@
         enabled: yes
         state: started
 
+    # ── GPU enablement (driver + container runtime + device plugin) ──────────
+    # Requires the Proxmox host to have the GPU on vfio-pci and the VM hostpci
+    # attached (Terraform). See manifests/nvidia-device-plugin/README.md.
+
+    - name: Install NVIDIA driver (proprietary 535 server — Maxwell needs non-open)
+      apt:
+        name:
+          - nvidia-headless-535-server
+          - nvidia-utils-535-server
+        state: present
+        update_cache: yes
+
+    - name: Persist NVIDIA module load at boot
+      copy:
+        dest: /etc/modules-load.d/nvidia.conf
+        content: |
+          nvidia
+          nvidia_uvm
+        mode: '0644'
+
+    - name: Load nvidia module now
+      modprobe:
+        name: nvidia
+        state: present
+
+    - name: Enable nvidia-persistenced
+      systemd:
+        name: nvidia-persistenced
+        enabled: yes
+        state: started
+      failed_when: false
+
+    - name: Raise inotify limits (device-plugin FS watcher fails on a busy node otherwise)
+      copy:
+        dest: /etc/sysctl.d/99-inotify.conf
+        content: |
+          fs.inotify.max_user_instances = 1024
+          fs.inotify.max_user_watches = 1048576
+        mode: '0644'
+
+    - name: Apply inotify sysctl
+      command: sysctl -p /etc/sysctl.d/99-inotify.conf
+      changed_when: false
+
+    - name: Add NVIDIA container toolkit apt repo
+      shell: |
+        set -e
+        install -d -m0755 /usr/share/keyrings
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+          | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+        curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+          | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+          > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+      args:
+        creates: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+    - name: Install nvidia-container-toolkit
+      apt:
+        name: nvidia-container-toolkit
+        state: present
+        update_cache: yes
+
+    - name: Restart k3s so it templates the nvidia containerd runtime
+      systemd:
+        name: k3s
+        state: restarted
+
+    - name: Wait for k3s node to be Ready after restart
+      command: k3s kubectl get nodes
+      register: k3s_gpu_nodes
+      retries: 18
+      delay: 10
+      until: k3s_gpu_nodes.rc == 0 and 'Ready' in k3s_gpu_nodes.stdout
+
+    - name: Copy nvidia-device-plugin manifests to node
+      copy:
+        src: "{{ playbook_dir }}/../../manifests/nvidia-device-plugin/"
+        dest: /tmp/nvidia-device-plugin/
+        mode: '0644'
+
+    - name: Apply nvidia-device-plugin (RuntimeClass + DaemonSet)
+      command: k3s kubectl apply -k /tmp/nvidia-device-plugin/
+
+    - name: Wait for node to advertise nvidia.com/gpu (best-effort)
+      command: >-
+        k3s kubectl get node {{ vm_hostname }}
+        -o jsonpath={.status.capacity.nvidia\.com/gpu}
+      register: gpu_cap
+      retries: 12
+      delay: 10
+      until: gpu_cap.stdout | trim == '1'
+      failed_when: false
+      changed_when: false
+
     # ── Standard users ───────────────────────────────────────────────────────
 
     - name: Ensure appadm user exists
