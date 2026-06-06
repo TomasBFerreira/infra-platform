@@ -1,0 +1,8 @@
+# RuntimeClass that routes GPU pods through the nvidia-container-runtime.
+# k3s auto-templates the matching `nvidia` containerd runtime handler when
+# nvidia-container-toolkit is installed and k3s is (re)started.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+handler: nvidia
