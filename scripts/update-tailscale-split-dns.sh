@@ -53,7 +53,10 @@ for d in data.get("devices", []):
 
 missing = sorted(targets - {(d.get("hostname") or "").lower() for d in data.get("devices", [])})
 if missing:
-    raise SystemExit(f"Could not resolve active AdGuard hosts in Tailscale API: {missing}")
+    import sys
+    print(f"WARNING: Could not resolve AdGuard hosts in Tailscale API (skipping): {missing}", file=sys.stderr)
+if not ips:
+    raise SystemExit("No active AdGuard hosts resolved — refusing to wipe split-DNS")
 
 print(json.dumps(ips))
 PY
