@@ -1,0 +1,139 @@
+name: Check Tailscale Health
+
+# Daily check that all networking LXCs are connected to Tailscale.
+# Runs on the management runner (CT 200) which has SSH access to all
+# Proxmox nodes. Fails the job if any LXC is not in BackendState=Running,
+# which triggers a GitHub email notification.
+#
+# Also runs on-demand for incident diagnosis.
+#
+# LXC inventory (networking LXCs only — the ones with Tailscale):
+#   dev  (benedict 192.168.50.4): 256 (network-vm-green), 293 (cloudflared), 295 (traefik), 297 (adguard)
+#   prod (betsy    192.168.50.2): 155 (network-vm-blue),  193 (cloudflared), 195 (traefik), 197 (adguard)
+#   qa   (heaton   192.168.50.8): checked via Proxmox reachability first
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # daily 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check Tailscale on all networking LXCs
+    runs-on: [self-hosted, management]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+
+    steps:
+      - name: Check dev LXCs (benedict)
+        id: dev
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          RESULT=$(ssh -o StrictHostKeyChecking=no \
+            "${PVE_USER_SHORT}@192.168.50.4" bash <<'EOF'
+          ALL_OK=true
+          for VMID in 256 293 295 297; do
+            NAME=$(pct config $VMID 2>/dev/null | grep '^hostname:' | awk '{print $2}')
+            STATE=$(pct exec $VMID -- tailscale status --json 2>/dev/null \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("BackendState","unknown"))' 2>/dev/null \
+              || echo "error")
+            TS_IP=$(pct exec $VMID -- tailscale ip -4 2>/dev/null || echo "none")
+            echo "  dev/$VMID $NAME: $STATE @ $TS_IP"
+            if [ "$STATE" != "Running" ]; then
+              echo "  FAIL: $NAME BackendState=$STATE (expected Running)"
+              ALL_OK=false
+            fi
+          done
+          $ALL_OK && echo "DEV_OK=true" || echo "DEV_OK=false"
+          EOF
+          )
+          echo "$RESULT"
+          if echo "$RESULT" | grep -q "DEV_OK=false"; then
+            echo "dev_ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "dev_ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check prod LXCs (betsy)
+        id: prod
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          RESULT=$(ssh -o StrictHostKeyChecking=no \
+            "${PVE_USER_SHORT}@192.168.50.2" bash <<'EOF'
+          ALL_OK=true
+          for VMID in 155 193 195 197; do
+            NAME=$(pct config $VMID 2>/dev/null | grep '^hostname:' | awk '{print $2}')
+            STATE=$(pct exec $VMID -- tailscale status --json 2>/dev/null \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("BackendState","unknown"))' 2>/dev/null \
+              || echo "error")
+            TS_IP=$(pct exec $VMID -- tailscale ip -4 2>/dev/null || echo "none")
+            echo "  prod/$VMID $NAME: $STATE @ $TS_IP"
+            if [ "$STATE" != "Running" ]; then
+              echo "  FAIL: $NAME BackendState=$STATE (expected Running)"
+              ALL_OK=false
+            fi
+          done
+          $ALL_OK && echo "PROD_OK=true" || echo "PROD_OK=false"
+          EOF
+          )
+          echo "$RESULT"
+          if echo "$RESULT" | grep -q "PROD_OK=false"; then
+            echo "prod_ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prod_ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check QA host reachability (heaton)
+        id: qa
+        run: |
+          if nc -zw5 192.168.50.8 22; then
+            PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+            RESULT=$(ssh -o StrictHostKeyChecking=no \
+              "${PVE_USER_SHORT}@192.168.50.8" bash <<'EOF'
+          ALL_OK=true
+          for VMID in 356 393 395 397; do
+            NAME=$(pct config $VMID 2>/dev/null | grep '^hostname:' | awk '{print $2}' || echo "vmid-$VMID")
+            pct status $VMID 2>/dev/null | grep -q running || { echo "  qa/$VMID $NAME: LXC not running"; ALL_OK=false; continue; }
+            STATE=$(pct exec $VMID -- tailscale status --json 2>/dev/null \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("BackendState","unknown"))' 2>/dev/null \
+              || echo "error")
+            TS_IP=$(pct exec $VMID -- tailscale ip -4 2>/dev/null || echo "none")
+            echo "  qa/$VMID $NAME: $STATE @ $TS_IP"
+            if [ "$STATE" != "Running" ]; then
+              echo "  FAIL: $NAME BackendState=$STATE (expected Running)"
+              ALL_OK=false
+            fi
+          done
+          $ALL_OK && echo "QA_OK=true" || echo "QA_OK=false"
+          EOF
+            )
+            echo "$RESULT"
+            if echo "$RESULT" | grep -q "QA_OK=false"; then
+              echo "qa_ok=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "qa_ok=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "  WARN: heaton (192.168.50.8) unreachable — QA check skipped"
+            echo "qa_ok=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail if any env is unhealthy
+        run: |
+          DEV="${{ steps.dev.outputs.dev_ok }}"
+          PROD="${{ steps.prod.outputs.prod_ok }}"
+          QA="${{ steps.qa.outputs.qa_ok }}"
+
+          echo "dev_ok=${DEV}  prod_ok=${PROD}  qa_ok=${QA}"
+
+          FAILED=false
+          [ "$DEV" = "false" ]  && { echo "ERROR: Dev Tailscale nodes are not Running — run repair-tailscale-exitnode.yml (dev, force_reauth=true)"; FAILED=true; }
+          [ "$PROD" = "false" ] && { echo "ERROR: Prod Tailscale nodes are not Running — run repair-tailscale-exitnode.yml (prod, force_reauth=true)"; FAILED=true; }
+          [ "$QA" = "false" ]   && { echo "ERROR: QA Tailscale nodes are not Running — check heaton and run repair-tailscale-exitnode.yml (qa, force_reauth=true)"; FAILED=true; }
+          [ "$QA" = "skipped" ] && echo "WARN: heaton unreachable — QA Tailscale state unknown"
+
+          $FAILED && exit 1 || echo "All reachable Tailscale nodes are healthy."
+
