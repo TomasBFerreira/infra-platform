@@ -21,7 +21,7 @@ adguard_env_tailscale_ips:
   # these from `tailscale status --json` using DEV/QA/PROD_HOSTNAME_RE.
   # All 3 envs cut over to traefik-lxc as Phase 3b of the network-vm split:
   # dev on 2026-05-26 (PR #242), qa + prod on 2026-05-27 (this commit).
-  dev:  100.81.178.128 # dev-traefik-lxc-blue  (cut over 2026-05-26)
+  dev:  100.81.178.127 # dev-traefik-lxc-blue  (cut over 2026-05-26; corrected 2026-06-28)
   qa:   100.85.44.36   # qa-traefik-lxc-blue   (cut over 2026-05-27)
   prod: 100.87.158.82  # prod-traefik-lxc-blue (cut over 2026-05-27)
 

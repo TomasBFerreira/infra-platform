@@ -37,17 +37,25 @@ status_json=$(tailscale status --json)
 
 # Resolve an env's TS IPv4 by matching netvm hostname regex against Self + Peer.
 # Prefers an "online" peer (we treat Self as always online). Returns empty if
-# none found — caller decides whether that's fatal.
+# none found — caller skips gracefully via upsert_batch's empty-ip guard.
+#
+# Fix (2026-06-28): two bugs caused silent rewrite deletion since ~2026-06-17:
+#   1. `.HostName | test($re)` threw "null has no keys" when a peer's HostName
+#      was null (offline peers often omit it); fixed with `(.HostName // "")`.
+#   2. `.[0].TailscaleIPs[0]` returned jq error when no peer matched, because
+#      `.[0]` on empty array yields null; fixed with `(.[0] // {...})` fallback.
+#   3. `grep | head` pipeline returned exit 1 on empty match, killing the script
+#      via set -e; fixed with `|| true` at the end of the pipeline.
 resolve_env_ip() {
   local re=$1
   jq -r --arg re "${re}" '
     def online(p): (p.Online // false) or (p.HostName // "" | test("^$"));
-    ((.Self | select(.HostName | test($re)) | .TailscaleIPs[0]),
+    ((.Self | select((.HostName // "") | test($re)) | .TailscaleIPs[0]),
      (.Peer | to_entries | map(.value)
-        | map(select(.HostName | test($re)))
+        | map(select((.HostName // "") | test($re)))
         | sort_by((.Online // false) | not)
-        | .[0].TailscaleIPs[0])
-    ) // empty' <<<"${status_json}" | grep -Ev '^$' | head -n1
+        | (.[0] // {TailscaleIPs:[]}) | .TailscaleIPs[0])
+    ) // empty' <<<"${status_json}" | grep -Ev '^(null)?$' | head -n1 || true
 }
 
 upsert_batch() {
