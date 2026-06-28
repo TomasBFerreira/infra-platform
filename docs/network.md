@@ -59,21 +59,27 @@ IP last-octet = VMID last 2 digits (e.g. VMID 245 → .45). Exception: github-ru
 
 ## Cloudflare Tunnels
 
-Two tunnels exist — one for prod, one for dev. All external traffic enters via Cloudflare, terminating at the appropriate network-vm.
+**Only prod uses a Cloudflare tunnel.** Dev and QA are Tailscale-only (AdGuard rewrites → traefik-lxc Tailscale IP). There is no public Cloudflare CNAME for `*-dev.*` or `*-qa.*` hostnames — they don't exist in public DNS and are intentionally unreachable from the internet.
 
 | Tunnel | Handles | Points at |
 |--------|---------|-----------|
-| Prod tunnel (`6eff4426-...`) | `*.databaes.net` (non-dev subdomains) | prod network-vm Traefik |
-| Dev tunnel (`80b044ef-...`) | `*-dev.databaes.net` subdomains | dev network-vm Traefik |
+| Prod tunnel (`6eff4426-...`) | `*.databaes.net` (prod subdomains only) | prod traefik-lxc via Traefik |
 
-DNS is managed automatically: adding a router to `services.yml` in `traefik-gitops` triggers `sync-dns.yml` which creates the Cloudflare CNAME. Domains matching `*-dev.*` get the dev tunnel CNAME; all others get the prod tunnel CNAME.
+How a dev service is reached from outside the homelab:
+1. Client connects to Tailscale.
+2. Tailscale configures the client to use AdGuard (CT 297, `100.74.54.52`) for `*.databaes.net`.
+3. AdGuard resolves e.g. `tomajflix-dev.databaes.net` → `100.81.178.127` (traefik-lxc-dev Tailscale IP).
+4. Traefik on `traefik-lxc-dev` routes to the k8s NodePort.
+
+`sync-dns.yml` in `traefik-gitops` skips all `*-dev.*` and `*-qa.*` domains — no Cloudflare CNAME is ever created for them.
+
+> **History**: a dev Cloudflare tunnel (`80b044ef-...`) and `CLOUDFLARE_DEV_TUNNEL_TOKEN` existed up to 2026-06-28 but were never the intended architecture. Existing dev Cloudflare CNAMEs on both `databaes.net` and `tomajflix.app` zones should be cleaned up manually via the Cloudflare dashboard. The `cloudflared-lxc-dev` CT (293) on benedict can be decommissioned once cleaned up.
 
 ### Tunnel Token Storage
 
 | Token | Stored in |
 |-------|-----------|
 | Prod tunnel | `secret/cloudflare-tunnel` in prod env vault (seeded from bootstrap vault) |
-| Dev tunnel | `CLOUDFLARE_DEV_TUNNEL_TOKEN` GitHub secret (infra-platform repo) |
 
 ## Traefik
 
