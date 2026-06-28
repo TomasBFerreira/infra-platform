@@ -59,27 +59,34 @@ IP last-octet = VMID last 2 digits (e.g. VMID 245 → .45). Exception: github-ru
 
 ## Cloudflare Tunnels
 
-**Only prod uses a Cloudflare tunnel.** Dev and QA are Tailscale-only (AdGuard rewrites → traefik-lxc Tailscale IP). There is no public Cloudflare CNAME for `*-dev.*` or `*-qa.*` hostnames — they don't exist in public DNS and are intentionally unreachable from the internet.
+Dev and QA use Cloudflare tunnels **only on demand** — they are **disabled by default**. The normal access path for both envs is Tailscale + AdGuard rewrites; there are no public Cloudflare CNAMEs for `*-dev.*` or `*-qa.*` under normal operation.
 
-| Tunnel | Handles | Points at |
-|--------|---------|-----------|
-| Prod tunnel (`6eff4426-...`) | `*.databaes.net` (prod subdomains only) | prod traefik-lxc via Traefik |
+| Tunnel | Default state | Handles | Points at |
+|--------|--------------|---------|-----------|
+| Prod (`6eff4426-...`) | Always active | `*.databaes.net` prod subdomains | prod traefik-lxc |
+| Dev (`80b044ef-...`) | **Disabled** (opt-in) | `*-dev.databaes.net`, `*-dev.tomajflix.app` | dev traefik-lxc |
 
-How a dev service is reached from outside the homelab:
+### Normal dev/QA access path (Tailscale)
 1. Client connects to Tailscale.
-2. Tailscale configures the client to use AdGuard (CT 297, `100.74.54.52`) for `*.databaes.net`.
+2. Tailscale uses AdGuard (CT 297, `100.74.54.52`) as the `*.databaes.net` resolver.
 3. AdGuard resolves e.g. `tomajflix-dev.databaes.net` → `100.81.178.127` (traefik-lxc-dev Tailscale IP).
-4. Traefik on `traefik-lxc-dev` routes to the k8s NodePort.
+4. Traefik routes to the k8s NodePort.
 
-`sync-dns.yml` in `traefik-gitops` skips all `*-dev.*` and `*-qa.*` domains — no Cloudflare CNAME is ever created for them.
+`sync-dns.yml` in `traefik-gitops` always skips `*-dev.*` and `*-qa.*` — no Cloudflare CNAME is created automatically. The Traefik router rules in `services.yml` include the `.app` hostnames for dev so traffic routes correctly if the tunnel is manually activated.
 
-> **History**: a dev Cloudflare tunnel (`80b044ef-...`) and `CLOUDFLARE_DEV_TUNNEL_TOKEN` existed up to 2026-06-28 but were never the intended architecture. Existing dev Cloudflare CNAMEs on both `databaes.net` and `tomajflix.app` zones should be cleaned up manually via the Cloudflare dashboard. The `cloudflared-lxc-dev` CT (293) on benedict can be decommissioned once cleaned up.
+### Activating the dev CF tunnel (opt-in, temporary)
+Use this when you need dev/QA to be internet-accessible — e.g. testing from a non-Tailscale device or temporarily treating dev as prod-like.
+
+1. Ensure `cloudflared-lxc-dev` (CT 293, benedict) is running and healthy.
+2. Manually create Cloudflare CNAMEs for the affected `*-dev.*` domains pointing at `CLOUDFLARE_DEV_TUNNEL_HOSTNAME` (in the `infra-platform` GH secrets). Use the Cloudflare dashboard or API — `sync-dns.yml` will not do this automatically.
+3. When done, delete those CNAMEs. The tunnel CT can be stopped until next needed.
 
 ### Tunnel Token Storage
 
 | Token | Stored in |
 |-------|-----------|
-| Prod tunnel | `secret/cloudflare-tunnel` in prod env vault (seeded from bootstrap vault) |
+| Prod tunnel | `secret/cloudflare-tunnel` in prod env vault |
+| Dev tunnel | `CLOUDFLARE_DEV_TUNNEL_TOKEN` GitHub secret (infra-platform repo) |
 
 ## Traefik
 
