@@ -118,7 +118,9 @@ if [[ "$ips_json" == "[]" ]]; then
 fi
 
 # PATCH upserts the domains specified without touching others; POST replaces all.
-payload=$(printf '{"databaes.net": %s}' "$ips_json")
+# tomajflix.app is also routed through AdGuard so dev.tomajflix.app rewrites
+# are served to Tailscale clients (otherwise the query goes to public CF DNS).
+payload=$(printf '{"databaes.net": %s, "tomajflix.app": %s}' "$ips_json" "$ips_json")
 echo "PATCHing: $payload"
 
 curl -sS -f -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
@@ -126,4 +128,4 @@ curl -sS -f -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
   "${API}/dns/split-dns"
 
 echo
-echo "Tailscale split-DNS for databaes.net now points to: $ips_json"
+echo "Tailscale split-DNS for databaes.net + tomajflix.app now points to: $ips_json"
