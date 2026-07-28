@@ -1,0 +1,46 @@
+name: Restart containerd on prod worker (one-shot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_ip:
+        description: 'Worker node IP'
+        required: true
+        default: '192.168.10.21'
+
+jobs:
+  restart-containerd:
+    runs-on: [self-hosted, prod]
+    steps:
+      - name: Fetch SSH key from Vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/worker_node_key
+          chmod 600 /tmp/worker_node_key
+
+      - name: Restart containerd
+        env:
+          WORKER_IP: ${{ inputs.worker_ip }}
+        run: |
+          ssh -i /tmp/worker_node_key \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=15 \
+            tomas@$WORKER_IP \
+            "sudo systemctl restart containerd && echo 'containerd restarted OK'"
+
+      - name: Wait for pod to recover
+        env:
+          WORKER_IP: ${{ inputs.worker_ip }}
+        run: |
+          sleep 15
+          ssh -i /tmp/worker_node_key \
+            -o StrictHostKeyChecking=no \
+            tomas@$WORKER_IP \
+            "sudo crictl ps 2>/dev/null | grep streambox || echo 'streambox not yet running (may still be starting)'"
+
+      - name: Cleanup key
+        if: always()
+        run: rm -f /tmp/worker_node_key
