@@ -10,20 +10,12 @@ on:
 
 jobs:
   restart-containerd:
-    runs-on: streambox-prod
+    runs-on: [self-hosted, prod]
     env:
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
       WORKER_IP: ${{ inputs.worker_ip }}
     steps:
-      - name: Normalise Vault address
-        run: |
-          VAULT_ADDR_NORM="${VAULT_ADDR}"
-          if [[ "${VAULT_ADDR_NORM}" != http://* && "${VAULT_ADDR_NORM}" != https://* ]]; then
-            VAULT_ADDR_NORM="http://${VAULT_ADDR_NORM}"
-          fi
-          echo "VAULT_ADDR=${VAULT_ADDR_NORM}" >> $GITHUB_ENV
-
       - name: Fetch SSH key from Vault
         run: |
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
