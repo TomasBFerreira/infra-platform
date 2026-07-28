@@ -13,14 +13,22 @@ jobs:
     runs-on: [self-hosted, prod]
     env:
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
       WORKER_IP: ${{ inputs.worker_ip }}
     steps:
+      - name: Normalise Vault address
+        run: |
+          ADDR="${VAULT_ADDR}"
+          [[ "$ADDR" == http://* || "$ADDR" == https://* ]] || ADDR="http://${ADDR}"
+          echo "VAULT_ADDR=${ADDR}" >> $GITHUB_ENV
+
       - name: Fetch SSH key from Vault
         run: |
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
             | awk 'NF > 0' > /tmp/worker_node_key
           chmod 600 /tmp/worker_node_key
+          head -1 /tmp/worker_node_key   # should print -----BEGIN ... PRIVATE KEY-----
+          wc -l /tmp/worker_node_key
 
       - name: Restart containerd
         run: |
