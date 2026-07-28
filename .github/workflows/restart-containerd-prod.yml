@@ -10,36 +10,41 @@ on:
 
 jobs:
   restart-containerd:
-    runs-on: [self-hosted, prod]
+    runs-on: streambox-prod
+    env:
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      WORKER_IP: ${{ inputs.worker_ip }}
     steps:
+      - name: Normalise Vault address
+        run: |
+          VAULT_ADDR_NORM="${VAULT_ADDR}"
+          if [[ "${VAULT_ADDR_NORM}" != http://* && "${VAULT_ADDR_NORM}" != https://* ]]; then
+            VAULT_ADDR_NORM="http://${VAULT_ADDR_NORM}"
+          fi
+          echo "VAULT_ADDR=${VAULT_ADDR_NORM}" >> $GITHUB_ENV
+
       - name: Fetch SSH key from Vault
-        env:
-          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
             | awk 'NF > 0' > /tmp/worker_node_key
           chmod 600 /tmp/worker_node_key
 
       - name: Restart containerd
-        env:
-          WORKER_IP: ${{ inputs.worker_ip }}
         run: |
           ssh -i /tmp/worker_node_key \
             -o StrictHostKeyChecking=no \
             -o ConnectTimeout=15 \
-            tomas@$WORKER_IP \
-            "sudo systemctl restart containerd && echo 'containerd restarted OK'"
+            root@$WORKER_IP \
+            "systemctl restart containerd && echo 'containerd restarted OK'"
 
-      - name: Wait for pod to recover
-        env:
-          WORKER_IP: ${{ inputs.worker_ip }}
+      - name: Wait and check pod
         run: |
-          sleep 15
+          sleep 20
           ssh -i /tmp/worker_node_key \
             -o StrictHostKeyChecking=no \
-            tomas@$WORKER_IP \
-            "sudo crictl ps 2>/dev/null | grep streambox || echo 'streambox not yet running (may still be starting)'"
+            root@$WORKER_IP \
+            "crictl ps 2>/dev/null | grep streambox || echo 'streambox not yet listed (may still be starting)'"
 
       - name: Cleanup key
         if: always()
