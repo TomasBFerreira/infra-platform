@@ -27,24 +27,38 @@ jobs:
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
             | awk 'NF > 0' > /tmp/worker_node_key
           chmod 600 /tmp/worker_node_key
-          head -1 /tmp/worker_node_key   # should print -----BEGIN ... PRIVATE KEY-----
-          wc -l /tmp/worker_node_key
 
-      - name: Restart containerd
+      - name: Diagnose and fix NVML mismatch
         run: |
-          ssh -i /tmp/worker_node_key \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=15 \
-            root@$WORKER_IP \
-            "systemctl restart containerd && echo 'containerd restarted OK'"
+          ssh -i /tmp/worker_node_key -o StrictHostKeyChecking=no root@$WORKER_IP bash <<'EOF'
+          set -e
+          echo "=== Loaded NVIDIA modules ==="
+          lsmod | grep nvidia || echo "no nvidia modules loaded"
 
-      - name: Wait and check pod
+          echo "=== NVIDIA driver version ==="
+          cat /proc/driver/nvidia/version 2>/dev/null || echo "not found"
+
+          echo "=== Reloading NVIDIA kernel modules ==="
+          rmmod nvidia_uvm 2>/dev/null || true
+          rmmod nvidia_drm 2>/dev/null || true
+          rmmod nvidia_modeset 2>/dev/null || true
+          rmmod nvidia 2>/dev/null || true
+          modprobe nvidia
+          modprobe nvidia_modeset
+          modprobe nvidia_drm
+          modprobe nvidia_uvm
+          echo "NVIDIA modules reloaded"
+
+          echo "=== Restarting k3s (embeds containerd) ==="
+          systemctl restart k3s
+          echo "k3s restarted"
+          EOF
+
+      - name: Wait for node to rejoin and pod to start
         run: |
-          sleep 20
-          ssh -i /tmp/worker_node_key \
-            -o StrictHostKeyChecking=no \
-            root@$WORKER_IP \
-            "crictl ps 2>/dev/null | grep streambox || echo 'streambox not yet listed (may still be starting)'"
+          sleep 45
+          ssh -i /tmp/worker_node_key -o StrictHostKeyChecking=no root@$WORKER_IP \
+            "k3s kubectl get pods -n streambox 2>/dev/null || crictl ps 2>/dev/null | grep streambox || echo 'checking...'"
 
       - name: Cleanup key
         if: always()
