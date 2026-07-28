@@ -28,37 +28,30 @@ jobs:
             | awk 'NF > 0' > /tmp/worker_node_key
           chmod 600 /tmp/worker_node_key
 
-      - name: Diagnose and fix NVML mismatch
+      - name: Reboot worker node
         run: |
-          ssh -i /tmp/worker_node_key -o StrictHostKeyChecking=no root@$WORKER_IP bash <<'EOF'
-          set -e
-          echo "=== Loaded NVIDIA modules ==="
-          lsmod | grep nvidia || echo "no nvidia modules loaded"
-
-          echo "=== NVIDIA driver version ==="
-          cat /proc/driver/nvidia/version 2>/dev/null || echo "not found"
-
-          echo "=== Reloading NVIDIA kernel modules ==="
-          rmmod nvidia_uvm 2>/dev/null || true
-          rmmod nvidia_drm 2>/dev/null || true
-          rmmod nvidia_modeset 2>/dev/null || true
-          rmmod nvidia 2>/dev/null || true
-          modprobe nvidia
-          modprobe nvidia_modeset
-          modprobe nvidia_drm
-          modprobe nvidia_uvm
-          echo "NVIDIA modules reloaded"
-
-          echo "=== Restarting k3s (embeds containerd) ==="
-          systemctl restart k3s
-          echo "k3s restarted"
-          EOF
-
-      - name: Wait for node to rejoin and pod to start
-        run: |
-          sleep 45
+          echo "Rebooting $WORKER_IP to clear NVIDIA driver/library version mismatch..."
           ssh -i /tmp/worker_node_key -o StrictHostKeyChecking=no root@$WORKER_IP \
-            "k3s kubectl get pods -n streambox 2>/dev/null || crictl ps 2>/dev/null | grep streambox || echo 'checking...'"
+            "reboot" || true   # SSH exits non-zero as the connection drops on reboot
+
+      - name: Wait for node to come back up
+        run: |
+          echo "Waiting 90s for node to reboot..."
+          sleep 90
+          for i in $(seq 1 12); do
+            if ssh -i /tmp/worker_node_key -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@$WORKER_IP \
+                "echo 'node is up' && systemctl is-active k3s" 2>/dev/null; then
+              echo "Node back and k3s is active"
+              break
+            fi
+            echo "Attempt $i — not ready yet, waiting 10s..."
+            sleep 10
+          done
+
+      - name: Check streambox pod status
+        run: |
+          ssh -i /tmp/worker_node_key -o StrictHostKeyChecking=no root@$WORKER_IP \
+            "k3s kubectl get pods -n streambox 2>/dev/null || echo 'k3s not ready yet'"
 
       - name: Cleanup key
         if: always()
