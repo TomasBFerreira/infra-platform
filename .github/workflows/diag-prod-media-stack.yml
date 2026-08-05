@@ -1,0 +1,53 @@
+name: Diagnose prod media stack
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: [self-hosted, prod]
+    steps:
+      - name: Fetch SSH key
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
+            | awk 'NF > 0' > /tmp/diag_key
+          chmod 600 /tmp/diag_key
+
+      - name: Diagnose
+        run: |
+          ssh -i /tmp/diag_key -o StrictHostKeyChecking=no root@192.168.10.21 bash <<'REMOTE'
+          echo "=== Pod status ==="
+          kubectl get pods -n streambox -o wide
+          echo ""
+          kubectl get pods -n media-stack -o wide
+          echo ""
+          echo "=== Streambox env (redacted) ==="
+          kubectl exec -n streambox deployment/streambox -- env 2>/dev/null \
+            | grep -E "PROWLARR|RADARR|SONARR|NFS|MEDIA" \
+            | sed 's/=.*/=<redacted>/'
+          echo ""
+          echo "=== Prowlarr pod logs (last 30 lines) ==="
+          kubectl logs -n media-stack deployment/prowlarr --tail=30 2>&1 || \
+            kubectl logs -n media-stack -l app=prowlarr --tail=30 2>&1 || echo "(prowlarr pod not found)"
+          echo ""
+          echo "=== Radarr pod logs (last 20 lines) ==="
+          kubectl logs -n media-stack deployment/radarr --tail=20 2>&1 || \
+            kubectl logs -n media-stack -l app=radarr --tail=20 2>&1 || echo "(radarr pod not found)"
+          echo ""
+          echo "=== Streambox logs (last 30 lines) ==="
+          kubectl logs -n streambox deployment/streambox --tail=30 2>&1
+          echo ""
+          echo "=== NFS mount check ==="
+          kubectl exec -n streambox deployment/streambox -- df -h /media 2>/dev/null || echo "(cannot exec into streambox pod)"
+          echo ""
+          echo "=== Prowlarr API test ==="
+          PROWLARR_SVC=$(kubectl get svc -n media-stack | grep prowlarr | awk '{print $3}')
+          echo "Prowlarr cluster IP: $PROWLARR_SVC"
+          REMOTE
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/diag_key
