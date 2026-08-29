@@ -79,7 +79,7 @@ Runner state (singletons, no slot rotation):
 
 | Path | Fields | Seeded from | Written by |
 |------|--------|-------------|------------|
-| `secret/tailscale` | `authkey` | Bootstrap vault | vault-ct Ansible |
+| `secret/tailscale` | `authkey` | Bootstrap vault (initial seed) | vault-ct Ansible; rotate directly with `.github/workflows/seed-env-vault-secret.yml` (`environment=<env>`, `secret_path=tailscale`) — added 2026-08-29 since this path previously had no env-vault-targeted seeding tool |
 | `secret/wireguard` | `private_key, peer_public_key, endpoint, address, dns` | Bootstrap vault | vault-ct Ansible (prod only) |
 | `secret/adguard` | `username, password` | Bootstrap vault | vault-ct Ansible |
 | `secret/cloudflare-tunnel` | `token` | Bootstrap vault | vault-ct Ansible (prod only) |
@@ -94,6 +94,8 @@ Runner state (singletons, no slot rotation):
 **Bootstrap vault CI pipelines** use `VAULT_DEV_TOKEN` — a **periodic** token under the `bootstrap-ci` policy. Periodic tokens renew implicitly on every use and have no absolute expiry as long as something hits them within the configured period (default 720h = 30d).
 
 The `bootstrap-ci` policy and token are managed by `.github/workflows/reseed-bootstrap-vault-ci-token.yml`. **Rotate** by re-dispatching it — idempotent on the policy, mints a fresh token, writes it to the `VAULT_DEV_TOKEN` GitHub secret. The original `VAULT_DEV_TOKEN` was minted by hand with a 32-day default TTL and silently expired every month — see the 2026-04-26 and 2026-05-30 incidents in `/app/reports/2026-05-30-grafana-recovery.md` and the `~32d TTL` comment in `ansible/github-runner/github-runner_setup.yml`.
+
+**Tailscale authkeys** (`secret/tailscale` in bootstrap vault and in each env vault, `secret/tailscale/<env>` in bootstrap vault) are plain reusable pre-auth keys from the Tailscale admin console — they are **not** auto-rotating and can be revoked/expired on Tailscale's side independent of anything in this repo. On 2026-08-29 the prod and dev network-vm authkeys had both gone dead (`backend error: invalid key: API key does not exist`), causing every networking LXC in both envs to drop to `BackendState=NeedsLogin` simultaneously — compounded by `VAULT_DEV_TOKEN`, `VAULT_PROD_TOKEN`, and `GH_PAT` all having separately expired, which blocked the normal repair path. Fixed by: rotating the three CI credentials via their `reseed-*.yml` workflows, generating fresh tagged authkeys in the Tailscale admin console, seeding them via `seed-bootstrap-vault.yml` (dev) / `seed-env-vault-secret.yml` (prod), then re-running `repair-tailscale-exitnode.yml` with `force_reauth=true`. **`cloudflared`/`traefik`/`adguard` LXCs in both envs were left NeedsLogin** (tracked as an open CMDB problem) — they need their own `tag:container,tag:<env>` authkeys at `secret/tailscale/<env>` and a re-run of their setup playbooks; `repair-tailscale-exitnode.yml` only covers the network-vm.
 
 Policy paths granted by `bootstrap-ci`:
 - `secret/data/*` + `secret/metadata/*` (+ delete/destroy/undelete) — KV-v2 read+write+delete on every bootstrap secret.
