@@ -137,3 +137,29 @@ jobs:
 
           $FAILED && exit 1 || echo "All reachable Tailscale nodes are healthy."
 
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          WEBHOOK=$(vault kv get -field=slack_webhook_url secret/ops-portal/prod/incidents 2>/dev/null || echo "")
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::No slack_webhook_url in Vault — skipping notification."
+            exit 0
+          fi
+
+          DEV="${{ steps.dev.outputs.dev_ok }}"
+          PROD="${{ steps.prod.outputs.prod_ok }}"
+          QA="${{ steps.qa.outputs.qa_ok }}"
+
+          LINES="Tailscale health check failed (<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|run>)"
+          [ "$DEV" = "false" ]  && LINES="${LINES}\n• dev: one or more networking LXCs NeedsLogin — \`gh workflow run repair-tailscale-exitnode.yml -f environment=dev -f force_reauth=true\`"
+          [ "$PROD" = "false" ] && LINES="${LINES}\n• prod: one or more networking LXCs NeedsLogin — \`gh workflow run repair-tailscale-exitnode.yml -f environment=prod -f force_reauth=true\`"
+          [ "$QA" = "false" ]   && LINES="${LINES}\n• qa: one or more networking LXCs NeedsLogin"
+          [ "$QA" = "skipped" ] && LINES="${LINES}\n• qa: heaton unreachable, state unknown"
+
+          curl -sS -X POST "$WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d "{\"text\": \"$LINES\"}"
+
