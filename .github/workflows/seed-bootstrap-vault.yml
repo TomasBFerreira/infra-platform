@@ -30,6 +30,9 @@ on:
       ts_authkey:
         description: '[tailscale] authkey'
         required: false
+      ts_env:
+        description: '[tailscale] optional env suffix (dev|qa|prod) — writes secret/tailscale/<env> instead of the legacy secret/tailscale (used by traefik/adguard/cloudflared, not network-vm)'
+        required: false
       # adguard
       adguard_username:
         description: '[adguard] username'
@@ -95,8 +98,14 @@ jobs:
                 public_key="${{ github.event.inputs.ssh_public_key }}"
               ;;
             tailscale)
-              vault kv put secret/tailscale \
-                authkey="${{ github.event.inputs.ts_authkey }}"
+              TS_ENV="${{ github.event.inputs.ts_env }}"
+              if [ -n "$TS_ENV" ]; then
+                vault kv put "secret/tailscale/${TS_ENV}" \
+                  authkey="${{ github.event.inputs.ts_authkey }}"
+              else
+                vault kv put secret/tailscale \
+                  authkey="${{ github.event.inputs.ts_authkey }}"
+              fi
               ;;
             adguard)
               vault kv put secret/adguard \
