@@ -1,0 +1,77 @@
+name: Repair Tailscale on cloudflared/traefik/adguard LXCs
+
+# repair-tailscale-exitnode.yml only re-authenticates the network-vm.
+# cloudflared, traefik, and adguard are each their own Tailscale node
+# (authkey at bootstrap secret/tailscale/<env>, tags tag:container,tag:<env>)
+# and need the same re-auth independently. This does it in place via
+# `pct exec` (same technique as check-tailscale-health.yml) instead of a
+# full blue/green rebuild, since the fix is "log back in", not "replace
+# the CT".
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  repair:
+    runs-on: [self-hosted, management]
+    env:
+      ENV: ${{ inputs.environment }}
+      PVE_USER: ${{ secrets.PVE_USER }}
+    steps:
+      - name: Resolve Proxmox host + VMIDs for this env
+        run: |
+          case "$ENV" in
+            dev)  HOST=192.168.50.4; VMIDS="293,295,297" ;;
+            qa)   HOST=192.168.50.8; VMIDS="393,395,397" ;;
+            prod) HOST=192.168.50.2; VMIDS="193,195,197" ;;
+          esac
+          echo "PVE_HOST=$HOST" >> "$GITHUB_ENV"
+          echo "VMIDS=$VMIDS" >> "$GITHUB_ENV"
+
+      - name: Fetch Tailscale authkey from bootstrap vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          TS_AUTHKEY=$(vault kv get -field=authkey "secret/tailscale/${ENV}")
+          if [ -z "$TS_AUTHKEY" ]; then
+            echo "::error::No authkey at secret/tailscale/${ENV} — seed it first with seed-bootstrap-vault.yml (secret_path=tailscale, ts_env=${ENV})"
+            exit 1
+          fi
+          echo "::add-mask::$TS_AUTHKEY"
+          echo "TS_AUTHKEY=$TS_AUTHKEY" >> "$GITHUB_ENV"
+
+      - name: Re-authenticate each LXC in place
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${PVE_HOST}" \
+            "TS_AUTHKEY='${TS_AUTHKEY}' VMIDS='${VMIDS}' bash -s" <<'EOF'
+          ALL_OK=true
+          IFS=',' read -ra VMID_ARR <<< "$VMIDS"
+          for VMID in "${VMID_ARR[@]}"; do
+            NAME=$(pct config "$VMID" 2>/dev/null | grep '^hostname:' | awk '{print $2}')
+            if [ -z "$NAME" ]; then
+              echo "  $VMID: could not read hostname — skipping"
+              ALL_OK=false
+              continue
+            fi
+            echo "  $VMID ($NAME): re-authenticating..."
+            if pct exec "$VMID" -- timeout 90 tailscale up --authkey="$TS_AUTHKEY" --reset --hostname="$NAME" 2>&1 | sed "s/^/    /"; then
+              STATE=$(pct exec "$VMID" -- tailscale status --json 2>/dev/null \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin).get("BackendState","unknown"))' 2>/dev/null || echo "error")
+              echo "  $VMID ($NAME): BackendState=$STATE"
+              [ "$STATE" != "Running" ] && ALL_OK=false
+            else
+              echo "  $VMID ($NAME): tailscale up failed"
+              ALL_OK=false
+            fi
+          done
+          $ALL_OK && echo "ALL_OK=true" || echo "ALL_OK=false"
+          EOF
