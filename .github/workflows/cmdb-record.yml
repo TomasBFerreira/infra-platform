@@ -217,6 +217,7 @@ jobs:
           else:  # problem-close
               body = {
                 'resolution':  os.environ.get('RESOLUTION',''),
+                'note':        os.environ.get('RESOLUTION',''),
                 'resolved_by': os.environ['ACTOR'],
               }
           print(json.dumps(body))
