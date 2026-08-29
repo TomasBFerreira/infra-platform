@@ -94,13 +94,12 @@ jobs:
         env:
           VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_TARGET: ${{ inputs.vault_target }}
+          NEW_KEY: ${{ env.NEW_KEY }}
         run: |
           PATH_SUFFIX="${VAULT_TARGET#bootstrap:}"
           vault kv put "secret/${PATH_SUFFIX}" authkey="${NEW_KEY}"
           echo "Written to bootstrap vault at secret/${PATH_SUFFIX}"
-        env:
-          VAULT_TARGET: ${{ inputs.vault_target }}
-          NEW_KEY: ${{ env.NEW_KEY }}
 
       - name: Write new authkey to env vault (secret/tailscale)
         if: inputs.mode == 'create' && startsWith(inputs.vault_target, 'env:')
