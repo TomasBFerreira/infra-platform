@@ -99,6 +99,12 @@ on:
         description: '[problem-close] How it was resolved (multi-line OK)'
         required: false
         default: ''
+      force_close:
+        description: '[problem-close] pass ?force=true (API requires this or closed_by_change_id, which this workflow does not collect)'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
 
 env:
   # Reached via SSH hop through benedict (192.168.50.4) — the dev PVE node
@@ -177,7 +183,10 @@ jobs:
           case "$KIND" in
             change)        URL="${CMDB_BASE}/api/cmdb/changes" ;;
             problem-open)  URL="${CMDB_BASE}/api/cmdb/problems" ;;
-            problem-close) URL="${CMDB_BASE}/api/cmdb/problems/${PROBLEM_ID}/close" ;;
+            problem-close)
+              URL="${CMDB_BASE}/api/cmdb/problems/${PROBLEM_ID}/close"
+              [ "${{ github.event.inputs.force_close }}" = "true" ] && URL="${URL}?force=true"
+              ;;
             *) echo "ERROR: unknown kind=$KIND"; exit 1 ;;
           esac
 
