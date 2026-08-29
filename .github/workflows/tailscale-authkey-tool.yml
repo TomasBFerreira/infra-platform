@@ -1,0 +1,153 @@
+name: Tailscale authkey tool
+
+# Uses the Tailscale API (TAILSCALE_API_KEY / TAILSCALE_TAILNET, already used
+# by the network-vm pipeline's split-DNS refresh) to manage authkeys and
+# device key-expiry programmatically, instead of hand-generating keys in the
+# admin console every time one dies.
+#
+# Modes:
+#   probe   - read-only-ish capability check: creates a throwaway ephemeral
+#             key and immediately deletes it, to confirm the API key can
+#             create+delete keys before anything depends on it.
+#   create  - mint a real reusable, pre-authorized key with the given tags
+#             and print its ID (not its value — value is masked and written
+#             directly to the chosen Vault path).
+#   disable-expiry - set keyExpiryDisabled=true on a device by hostname, so
+#             an already-joined node stops needing periodic re-auth at all.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        required: true
+        type: choice
+        options: [probe, create, disable-expiry]
+      tags:
+        description: '[create] comma-separated tags, e.g. tag:container,tag:prod'
+        required: false
+      vault_target:
+        description: '[create] where to write the new authkey: bootstrap:<path> or env:<dev|qa|prod>'
+        required: false
+      hostname:
+        description: '[disable-expiry] exact Tailscale hostname, e.g. prod-network-vm-blue'
+        required: false
+
+jobs:
+  run:
+    runs-on: [self-hosted, management]
+    env:
+      TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+      TAILSCALE_TAILNET: ${{ secrets.TAILSCALE_TAILNET }}
+    steps:
+      - name: Probe — create + delete a throwaway ephemeral key
+        if: inputs.mode == 'probe'
+        run: |
+          API="https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}"
+          AUTH="Authorization: Bearer ${TAILSCALE_API_KEY}"
+
+          RESP=$(curl -sS -w '\n%{http_code}' -X POST "${API}/keys" \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            -d '{"capabilities":{"devices":{"create":{"reusable":false,"ephemeral":true,"preauthorized":true,"tags":["tag:container"]}}},"expirySeconds":300,"description":"claude-scope-probe"}')
+          BODY=$(echo "$RESP" | head -n -1)
+          CODE=$(echo "$RESP" | tail -1)
+          echo "Create status: $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Key creation failed — API key likely lacks 'Keys: Write' scope. Body: $BODY"
+            exit 1
+          fi
+          KEY_ID=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          echo "Created probe key id=$KEY_ID — deleting now"
+
+          DEL_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "${API}/keys/${KEY_ID}" -H "$AUTH")
+          echo "Delete status: $DEL_CODE"
+          if [ "$DEL_CODE" != "200" ]; then
+            echo "::warning::Probe key $KEY_ID created but delete returned $DEL_CODE — clean up manually in the admin console."
+            exit 1
+          fi
+          echo "PROBE OK — API key can create and delete tailnet keys."
+
+      - name: Create a real authkey and write it to Vault
+        if: inputs.mode == 'create'
+        run: |
+          API="https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}"
+          AUTH="Authorization: Bearer ${TAILSCALE_API_KEY}"
+
+          TAGS_JSON=$(python3 -c "import json,os; print(json.dumps(os.environ['TAGS'].split(',')))")
+          RESP=$(curl -sS -w '\n%{http_code}' -X POST "${API}/keys" \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            -d "{\"capabilities\":{\"devices\":{\"create\":{\"reusable\":true,\"ephemeral\":false,\"preauthorized\":true,\"tags\":${TAGS_JSON}}}},\"expirySeconds\":7776000,\"description\":\"infra-platform-managed $(date +%F)\"}")
+          BODY=$(echo "$RESP" | head -n -1)
+          CODE=$(echo "$RESP" | tail -1)
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Key creation failed ($CODE): $BODY"
+            exit 1
+          fi
+          NEW_KEY=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin)['key'])")
+          echo "::add-mask::$NEW_KEY"
+          echo "NEW_KEY=$NEW_KEY" >> "$GITHUB_ENV"
+          echo "Created authkey with tags ${TAGS} (90d expiry, reusable, preauthorized)"
+        env:
+          TAGS: ${{ inputs.tags }}
+
+      - name: Write new authkey to bootstrap vault path
+        if: inputs.mode == 'create' && startsWith(inputs.vault_target, 'bootstrap:')
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+        run: |
+          PATH_SUFFIX="${VAULT_TARGET#bootstrap:}"
+          vault kv put "secret/${PATH_SUFFIX}" authkey="${NEW_KEY}"
+          echo "Written to bootstrap vault at secret/${PATH_SUFFIX}"
+        env:
+          VAULT_TARGET: ${{ inputs.vault_target }}
+          NEW_KEY: ${{ env.NEW_KEY }}
+
+      - name: Write new authkey to env vault (secret/tailscale)
+        if: inputs.mode == 'create' && startsWith(inputs.vault_target, 'env:')
+        run: |
+          ENVIRONMENT="${VAULT_TARGET#env:}"
+          case "$ENVIRONMENT" in
+            dev)  RAW='${{ secrets.VAULT_ADDR }}';    ROOT='${{ secrets.VAULT_DEV_ROOT_TOKEN }}' ;;
+            qa)   RAW='${{ secrets.VAULT_QA_ADDR }}'; ROOT='${{ secrets.VAULT_QA_ROOT_TOKEN }}'  ;;
+            prod) RAW='${{ secrets.VAULT_PROD_ADDR }}'; ROOT='${{ secrets.VAULT_ROOT_TOKEN }}'   ;;
+          esac
+          if [[ "$RAW" != http://* && "$RAW" != https://* ]]; then RAW="http://${RAW}"; fi
+          export VAULT_ADDR="$RAW"
+          export VAULT_TOKEN="$ROOT"
+          vault kv put secret/tailscale authkey="${NEW_KEY}"
+          echo "Written to ${ENVIRONMENT} env vault at secret/tailscale"
+        env:
+          VAULT_TARGET: ${{ inputs.vault_target }}
+          NEW_KEY: ${{ env.NEW_KEY }}
+
+      - name: Disable key expiry on a device
+        if: inputs.mode == 'disable-expiry'
+        run: |
+          API="https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}"
+          AUTH="Authorization: Bearer ${TAILSCALE_API_KEY}"
+
+          curl -sS -f -H "$AUTH" "${API}/devices" > /tmp/ts_devices.json
+          DEVICE_ID=$(python3 -c "
+          import json
+          with open('/tmp/ts_devices.json') as f:
+              data = json.load(f)
+          for d in data.get('devices', []):
+              if (d.get('hostname') or '').lower() == '${HOSTNAME}'.lower():
+                  print(d['id'])
+                  break
+          ")
+          if [ -z "$DEVICE_ID" ]; then
+            echo "::error::No device found with hostname ${HOSTNAME}"
+            exit 1
+          fi
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${API}/device/${DEVICE_ID}/key" \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            -d '{"keyExpiryDisabled": true}')
+          echo "Set keyExpiryDisabled status: $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Failed to disable key expiry (device may need 'Devices: Write' scope on the API key)"
+            exit 1
+          fi
+          echo "Key expiry disabled for ${HOSTNAME} (device ${DEVICE_ID})"
+        env:
+          HOSTNAME: ${{ inputs.hostname }}
