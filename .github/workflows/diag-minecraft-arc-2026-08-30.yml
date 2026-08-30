@@ -1,14 +1,12 @@
 name: Diagnose minecraft-prod ARC crash-loop
 
-# One-off. minecraft-prod's first-ever ephemeral runner crash-looped
-# (pod deleted+recreated ~7x in 40s), got marked Failed, and the
-# AutoscalingRunnerSet is now reporting current=1/pending=1 with no
-# actual pod backing it — a wedged EphemeralRunnerSet, blocking every
-# job from ever getting a runner. Resets it via `helm uninstall`, run
-# locally against a fetched kubeconfig — same pattern as arc-deploy.yml
-# (helm isn't installed on the worker node itself; an earlier version of
-# this workflow tried `helm` over SSH on the worker and hit
-# "command not found").
+# One-off, v5. Scale set was reset (helm uninstall + arc-deploy reinstall)
+# after wedging on its first job. This dispatches minecraft's deploy.yml
+# itself (so there's no gap between "start watching" and "job exists")
+# and watches arc-runners pods in real time so we can grab the runner
+# container's own logs before the controller deletes it — every prior
+# attempt only ever captured controller meta-events (Pulled/Created/
+# Started/deleted), never the runner process's actual stdout/stderr.
 on:
   workflow_dispatch:
 
@@ -20,6 +18,7 @@ jobs:
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
       KUBECONFIG: ${{ github.workspace }}/.kubeconfig
       ARC_NAMESPACE: arc-runners
+      GH_PAT: ${{ secrets.GH_PAT }}
     steps:
       - name: Fetch SSH key
         run: |
@@ -35,29 +34,59 @@ jobs:
             | sed "s/127.0.0.1/${WORKER_IP}/g" > "$KUBECONFIG"
           chmod 600 "$KUBECONFIG"
 
-      - name: Install kubectl + helm if missing
+      - name: Install kubectl if missing
         run: |
           if ! command -v kubectl &>/dev/null; then
             curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /tmp/kubectl
             sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           fi
-          if ! command -v helm &>/dev/null; then
-            curl -fsSL https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz | tar -xz -C /tmp
-            sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-          fi
-          kubectl version --client && helm version
 
-      - name: Reset the wedged scale set
+      - name: Start watching arc-runners pods (background)
         run: |
-          echo "=== before ==="
-          kubectl get autoscalingrunnersets -n "${ARC_NAMESPACE}" | grep minecraft
-          echo "=== helm uninstall minecraft-prod ==="
-          helm uninstall minecraft-prod -n "${ARC_NAMESPACE}" --wait --timeout 60s || echo "(uninstall failed or nothing to uninstall)"
-          sleep 5
-          echo "=== after ==="
-          kubectl get autoscalingrunnersets -n "${ARC_NAMESPACE}" | grep minecraft || echo "(gone, as expected)"
-          kubectl get pods -n "${ARC_NAMESPACE}" | grep minecraft || echo "(no minecraft pods)"
+          nohup kubectl get pods -n "${ARC_NAMESPACE}" -w --output-watch-events -o name \
+            > /tmp/podwatch.log 2>&1 &
+          echo $! > /tmp/watch.pid
+          sleep 1
+          echo "watcher started, pid $(cat /tmp/watch.pid)"
+
+      - name: Dispatch minecraft deploy.yml
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${GH_PAT}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/TomasBFerreira/minecraft/actions/workflows/deploy.yml/dispatches \
+            -d '{"ref":"main"}'
+          echo "dispatched"
+
+      - name: Watch for the runner pod and capture its logs
+        run: |
+          POD=""
+          for i in $(seq 1 60); do
+            POD=$(grep -o 'pod/minecraft-prod-[a-z0-9-]*' /tmp/podwatch.log 2>/dev/null | grep -v listener | sed 's#pod/##' | sort -u | head -1)
+            [ -n "$POD" ] && { echo "found pod: $POD (iteration $i)"; break; }
+            sleep 1
+          done
+          kill "$(cat /tmp/watch.pid)" 2>/dev/null || true
+
+          if [ -z "$POD" ]; then
+            echo "No minecraft-prod runner pod appeared in 60s."
+            echo "=== raw watch log ==="
+            cat /tmp/podwatch.log
+            exit 0
+          fi
+
+          echo "=== describe $POD (immediately) ==="
+          kubectl describe pod -n "${ARC_NAMESPACE}" "$POD" 2>&1 | tail -40
+
+          echo "=== streaming logs from $POD for up to 45s ==="
+          timeout 45 kubectl logs -n "${ARC_NAMESPACE}" "$POD" --all-containers -f 2>&1 || true
+
+          echo "=== final pod state ==="
+          kubectl get pod -n "${ARC_NAMESPACE}" "$POD" -o wide 2>&1 || echo "(pod gone)"
+          kubectl logs -n "${ARC_NAMESPACE}" "$POD" --all-containers --previous 2>&1 || echo "(no previous-container logs)"
 
       - name: Cleanup
         if: always()
-        run: rm -f /tmp/diag_key "$KUBECONFIG"
+        run: |
+          kill "$(cat /tmp/watch.pid 2>/dev/null)" 2>/dev/null || true
+          rm -f /tmp/diag_key "$KUBECONFIG" /tmp/podwatch.log /tmp/watch.pid
