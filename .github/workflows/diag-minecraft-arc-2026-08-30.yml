@@ -78,6 +78,15 @@ jobs:
           echo "=== describe $POD (immediately) ==="
           kubectl describe pod -n "${ARC_NAMESPACE}" "$POD" 2>&1 | tail -40
 
+          echo "=== waiting for the runner container to actually start (up to 30s) ==="
+          for i in $(seq 1 30); do
+            PHASE=$(kubectl get pod -n "${ARC_NAMESPACE}" "$POD" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Gone")
+            RUNNING=$(kubectl get pod -n "${ARC_NAMESPACE}" "$POD" -o jsonpath='{.status.containerStatuses[0].state.running}' 2>/dev/null || echo "")
+            [ "$PHASE" = "Gone" ] && { echo "pod gone before it ever ran (iteration $i)"; break; }
+            [ -n "$RUNNING" ] && { echo "container running (iteration $i)"; break; }
+            sleep 1
+          done
+
           echo "=== streaming logs from $POD for up to 45s ==="
           timeout 45 kubectl logs -n "${ARC_NAMESPACE}" "$POD" --all-containers -f 2>&1 || true
 
