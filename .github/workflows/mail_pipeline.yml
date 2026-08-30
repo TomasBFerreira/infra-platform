@@ -1,0 +1,213 @@
+name: Mail Pipeline (single-slot)
+
+# Provisions / reconfigures the self-hosted Stalwart mail server.
+#
+# Single-slot deployment (documented exception to rule #5, alongside
+# github-runner and pbs): a mail server is stateful (mailboxes, outbound
+# queue, DKIM keys). See terraform/mail/main.tf for the full rationale.
+#
+# Scope today: DEV validation CT (VMID 204 / 192.168.20.4 on benedict). It
+# proves the Stalwart pattern + becomes the self-hosted mail system for the
+# A2 real-mailbox project. The eventual cluster-wide PRODUCTION mail singleton
+# reuses terraform/mail + ansible/mail with prod placement vars and would run
+# on [self-hosted, management] like pbs — that's a separate, user-approved step.
+#
+# Self-bootstrapping: seeds its own SSH key (bootstrap vault) and the
+# secret/mail/<env> app secrets (from the BREVO_* GitHub secrets) before
+# terraform/ansible run, so a fresh deploy needs no manual vault prep.
+#
+# ⚠ FIRST DEPLOY IS SUPERVISED: Stalwart's config.toml schema must be validated
+# against the running image (see ansible/mail/templates/config.toml.j2 header),
+# and vault token permissions for the seed steps may need a tweak. Do not treat
+# a green run as "mail fully working" until `docker logs stalwart-mail` is clean
+# and a test message relays.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: ['dev']   # qa/prod added when the cluster-wide prod variant lands
+      reset:
+        description: 'Destroy and recreate the CT (wipes mailboxes + queue!)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+concurrency:
+  group: mail-pipeline-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  MAIL_VMID: 204
+  MAIL_IP: 192.168.20.4
+  MAIL_HOSTNAME: mail-dev
+  MAIL_TARGET_NODE: benedict
+  MAIL_NETWORK_BRIDGE: vmbr20
+  MAIL_GATEWAY: 192.168.20.1
+  PVE_API_URL: https://192.168.50.4:8006/api2/json   # benedict (dev)
+
+jobs:
+  seed-secrets:
+    runs-on: [self-hosted, dev]
+    steps:
+      - name: Ensure mail SSH key exists in bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          set -e
+          if ! vault kv get -field=public_key secret/ssh_keys/mail_worker >/dev/null 2>&1; then
+            echo "Generating mail_worker SSH keypair..."
+            tmp=$(mktemp -d)
+            ssh-keygen -t ed25519 -N '' -C 'mail_worker' -f "$tmp/id" >/dev/null
+            vault kv put secret/ssh_keys/mail_worker \
+              private_key=@"$tmp/id" public_key=@"$tmp/id.pub"
+            rm -rf "$tmp"
+          else
+            echo "mail_worker key already present."
+          fi
+
+      - name: Ensure secret/mail/${{ github.event.inputs.environment }} app secrets
+        env:
+          VAULT_ADDR:        ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN:       ${{ secrets.VAULT_TOKEN }}
+          BREVO_RELAY_USER:  ${{ secrets.BREVO_RELAY_USER }}
+          BREVO_RELAY_PASS:  ${{ secrets.BREVO_RELAY_PASS }}
+        run: |
+          set -e
+          ENV='${{ github.event.inputs.environment }}'
+          # Preserve any already-generated admin/noreply/dkim values across re-runs.
+          ADMIN_PASS=$(vault kv get -field=admin_pass secret/mail/$ENV 2>/dev/null || true)
+          NOREPLY_PASS=$(vault kv get -field=noreply_pass secret/mail/$ENV 2>/dev/null || true)
+          DKIM_SEL=$(vault kv get -field=dkim_selector secret/mail/$ENV 2>/dev/null || true)
+          [ -z "$ADMIN_PASS" ]   && ADMIN_PASS=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)
+          [ -z "$NOREPLY_PASS" ] && NOREPLY_PASS=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)
+          [ -z "$DKIM_SEL" ]     && DKIM_SEL="stalwart"
+          echo "::add-mask::$ADMIN_PASS"; echo "::add-mask::$NOREPLY_PASS"
+          vault kv patch secret/mail/$ENV \
+            relay_host="smtp-relay.brevo.com" relay_port="587" \
+            relay_user="$BREVO_RELAY_USER" relay_pass="$BREVO_RELAY_PASS" \
+            admin_pass="$ADMIN_PASS" noreply_pass="$NOREPLY_PASS" \
+            dkim_selector="$DKIM_SEL" 2>/dev/null \
+          || vault kv put secret/mail/$ENV \
+            relay_host="smtp-relay.brevo.com" relay_port="587" \
+            relay_user="$BREVO_RELAY_USER" relay_pass="$BREVO_RELAY_PASS" \
+            admin_pass="$ADMIN_PASS" noreply_pass="$NOREPLY_PASS" \
+            dkim_selector="$DKIM_SEL"
+
+  terraform-apply:
+    needs: seed-secrets
+    runs-on: [self-hosted, dev]
+    env:
+      TF_VAR_pve_api:       https://192.168.50.4:8006/api2/json
+      TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+      TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+      - name: Terraform Init
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/mail init -input=false
+      - name: Pre-flight — destroy CT if reset=true
+        if: github.event.inputs.reset == 'true'
+        env:
+          PVE_USER: ${{ secrets.PVE_USER }}
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/mail destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${{ github.event.inputs.environment }}.tfstate || true
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+            "pct stop ${MAIL_VMID} 2>/dev/null || true; pct destroy ${MAIL_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/mail/terraform.${{ github.event.inputs.environment }}.tfstate
+      - name: Terraform Apply
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/mail apply \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${{ github.event.inputs.environment }}.tfstate
+
+  ansible-setup:
+    needs: terraform-apply
+    runs-on: [self-hosted, dev]
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync code to persistent clone
+        run: |
+          cd /app/infra-platform
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+      - name: Fetch mail SSH key from bootstrap vault
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+        run: |
+          set -o pipefail
+          vault kv get -field=private_key secret/ssh_keys/mail_worker \
+            | awk 'NF > 0' > /tmp/mail_key
+          chmod 600 /tmp/mail_key
+      - name: Wait for SSH on the mail CT
+        run: |
+          timeout 180 bash -c "until nc -z ${MAIL_IP} 22; do sleep 5; done"
+      - name: Run Ansible playbook
+        env:
+          # ansible/mail reads secret/mail/<env> from the env vault.
+          VAULT_ADDR:  ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd /app/infra-platform
+          ssh-keygen -R "${MAIL_IP}" || true
+          ansible-playbook \
+            -i "${MAIL_IP}," -v \
+            --private-key /tmp/mail_key \
+            -e "ansible_host=${MAIL_IP}" \
+            -e "ansible_user=root" \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" \
+            -e "mail_env=${{ github.event.inputs.environment }}" \
+            ansible/mail/mail_setup.yml
+
+  cleanup-on-failure:
+    needs: [seed-secrets, terraform-apply, ansible-setup]
+    if: failure() && github.event.inputs.reset == 'true'
+    runs-on: [self-hosted, dev]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+      TF_VAR_pve_api:       https://192.168.50.4:8006/api2/json
+      TF_VAR_pve_user:      ${{ secrets.PVE_USER }}
+      TF_VAR_pve_pass:      ${{ secrets.PVE_PASS }}
+      TF_VAR_ssh_user:      ${{ secrets.SSH_USER }}
+      TF_VAR_vault_token:   ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      TF_VAR_vault_address: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Terraform Destroy
+        run: |
+          cd /app/infra-platform
+          ./scripts/run-terraform.sh -chdir terraform/mail destroy \
+            -no-color -input=false -auto-approve \
+            -state=terraform.${{ github.event.inputs.environment }}.tfstate || true
+          PVE_SSH_USER=$(echo "$PVE_USER" | cut -d'@' -f1)
+          ssh -o StrictHostKeyChecking=no ${PVE_SSH_USER}@192.168.50.4 \
+            "pct stop ${MAIL_VMID} 2>/dev/null || true; pct destroy ${MAIL_VMID} 2>/dev/null || true"
+          rm -f /app/infra-platform/terraform/mail/terraform.${{ github.event.inputs.environment }}.tfstate
