@@ -340,6 +340,17 @@ scale_sets:
     name: nextcloud-prod
     min_runners: 0
     max_runners: 2
+  # ── minecraft onboarding (ARC-first, prod-only, no dev/qa, 2026-08-30) ──
+  # Private 2-person server, third-party image (itzg/minecraft-server), no
+  # custom build step. Wrongly registered via the legacy register-runner.yml
+  # path first (rule #12 violation, caught and reverted same session) —
+  # this is the correct entry.
+  - repo: TomasBFerreira/minecraft
+    env: prod
+    label: prod
+    name: minecraft-prod
+    min_runners: 0
+    max_runners: 2
   - repo: TomasBFerreira/ops-portal-identity
     env: prod
     label: prod
