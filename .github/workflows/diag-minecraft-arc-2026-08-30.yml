@@ -1,11 +1,20 @@
 name: Diagnose minecraft-prod ARC crash-loop
 
-# One-off, same shape as diag-prod-media-stack.yml. The minecraft-prod
-# ARC scale set's first-ever ephemeral runner crash-looped and its GH
-# Actions job sat "queued" indefinitely — pulling controller + any
-# leftover runner-pod logs to find the actual registration error.
+# One-off. minecraft-prod's first-ever ephemeral runner crash-looped
+# (pod deleted+recreated ~7x in 40s), got marked Failed, and the
+# AutoscalingRunnerSet is now reporting current=1/pending=1 with no
+# actual pod backing it — a wedged scale set, blocking every subsequent
+# job from ever getting a runner. This resets it (helm uninstall) and
+# then watches for the replacement runner pod to catch its actual
+# stdout/stderr (previous attempts only ever caught controller
+# meta-events, which don't include the runner's own registration error).
 on:
   workflow_dispatch:
+    inputs:
+      reset_only:
+        description: 'Only helm-uninstall the scale set, skip the watch/capture'
+        type: boolean
+        default: false
 
 jobs:
   diag:
@@ -20,38 +29,17 @@ jobs:
             | awk 'NF > 0' > /tmp/diag_key
           chmod 600 /tmp/diag_key
 
-      - name: Diagnose
+      - name: Reset the wedged scale set
         run: |
           ssh -i /tmp/diag_key -o StrictHostKeyChecking=no root@192.168.10.21 bash <<'REMOTE'
-          echo "=== Polling for a live minecraft-prod runner pod (up to 90s) ==="
-          POD=""
-          for i in $(seq 1 30); do
-            POD=$(kubectl get pods -n arc-runners -o name 2>/dev/null | grep minecraft-prod | grep -v listener | head -1)
-            [ -n "$POD" ] && { echo "found $POD at iteration $i"; break; }
-            sleep 3
-          done
-          if [ -n "$POD" ]; then
-            echo "=== describe $POD ==="
-            kubectl describe -n arc-runners "$POD" 2>&1 | tail -60
-            echo ""
-            echo "=== streaming logs from $POD for up to 60s ==="
-            timeout 60 kubectl logs -n arc-runners "$POD" --all-containers -f 2>&1
-          else
-            echo "(no minecraft-prod runner pod appeared in 90s — nothing was queued/dispatched, or it's even faster than this poll)"
-          fi
-          echo ""
-          echo "=== minecraft-prod pods (final state) ==="
-          kubectl get pods -n arc-runners | grep minecraft || echo "(none)"
-          echo ""
-          echo "=== controller logs, filtered for minecraft ==="
-          kubectl logs -n arc-runners deployment/arc-gha-rs-controller --tail=500 2>&1 | grep -i minecraft
-          echo ""
-          echo "=== minecraft-prod listener logs (last 60) ==="
-          kubectl logs -n arc-runners -l actions.github.com/scale-set-name=minecraft-prod,actions.github.com/scale-set-listener=true --tail=60 2>&1 \
-            || kubectl logs -n arc-runners minecraft-prod-754b578d-listener --tail=60 2>&1
-          echo ""
-          echo "=== autoscalingrunnerset describe ==="
-          kubectl describe autoscalingrunnerset minecraft-prod -n arc-runners 2>&1 | tail -40
+          echo "=== before ==="
+          kubectl get autoscalingrunnersets -n arc-runners | grep minecraft
+          echo "=== helm uninstall minecraft-prod ==="
+          helm uninstall minecraft-prod -n arc-runners --wait --timeout 60s || echo "(uninstall failed or nothing to uninstall)"
+          sleep 5
+          echo "=== after ==="
+          kubectl get autoscalingrunnersets -n arc-runners | grep minecraft || echo "(gone, as expected)"
+          kubectl get pods -n arc-runners | grep minecraft || echo "(no minecraft pods)"
           REMOTE
 
       - name: Cleanup
