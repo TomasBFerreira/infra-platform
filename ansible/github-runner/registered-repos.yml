@@ -60,6 +60,7 @@ prod:
   - TomasBFerreira/infra-platform
   - TomasBFerreira/landing-page
   - TomasBFerreira/media-stack
+  - TomasBFerreira/minecraft
   - TomasBFerreira/nextcloud
   - TomasBFerreira/ops-portal-audit
   - TomasBFerreira/ops-portal-cmdb
