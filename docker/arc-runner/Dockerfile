@@ -20,10 +20,13 @@
 # Bump in lockstep with GitHub's runner-version deprecation cadence. They
 # block versions ~6 months old: a deprecated runner connects to the broker
 # but every message-poll returns 403 with "Runner version vX.Y.Z is
-# deprecated and cannot receive messages." (caught 2026-05-13 on 2.321.0;
-# bumped to 2.334.0). Check https://github.com/actions/runner/releases
-# before bumping if you don't know the current floor.
-ARG ACTIONS_RUNNER_VERSION=2.334.0
+# deprecated and cannot receive messages." (caught 2026-05-13 on 2.321.0,
+# bumped to 2.334.0; that one deprecated too — caught 2026-08-30 while
+# onboarding minecraft-prod, bumped to 2.337.0. Deprecation cadence is
+# running well under 6 months in practice — check
+# https://api.github.com/repos/actions/runner/releases/latest before
+# assuming the current pin is still good.)
+ARG ACTIONS_RUNNER_VERSION=2.337.0
 FROM ghcr.io/actions/actions-runner:${ACTIONS_RUNNER_VERSION}
 
 ARG TERRAFORM_VERSION=1.9.8
