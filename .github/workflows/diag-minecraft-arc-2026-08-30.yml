@@ -34,12 +34,36 @@ jobs:
             | sed "s/127.0.0.1/${WORKER_IP}/g" > "$KUBECONFIG"
           chmod 600 "$KUBECONFIG"
 
-      - name: Install kubectl if missing
+      - name: Install kubectl + helm if missing
         run: |
           if ! command -v kubectl &>/dev/null; then
             curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /tmp/kubectl
             sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           fi
+          if ! command -v helm &>/dev/null; then
+            curl -fsSL https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz | tar -xz -C /tmp
+            sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          fi
+
+      - name: Reset the scale set if it's wedged
+        # NOTE: deliberately does NOT re-dispatch arc-deploy.yml from here —
+        # that workflow also needs [self-hosted, prod], the same single-
+        # concurrency LXC runner this job is occupying, which would
+        # deadlock (this job waiting on arc-deploy, arc-deploy queued
+        # behind this job). Reinstall via a separate top-level dispatch
+        # from outside this run instead if this step finds it missing.
+        run: |
+          CURRENT=$(kubectl get autoscalingrunnersets -n "${ARC_NAMESPACE}" minecraft-prod -o jsonpath='{.status.currentRunners}' 2>/dev/null || echo "")
+          if [ -n "$CURRENT" ] && [ "$CURRENT" != "0" ]; then
+            echo "currentRunners=${CURRENT}, resetting"
+            helm uninstall minecraft-prod -n "${ARC_NAMESPACE}" --wait --timeout 60s || true
+            sleep 5
+          fi
+          if ! kubectl get autoscalingrunnersets -n "${ARC_NAMESPACE}" minecraft-prod &>/dev/null; then
+            echo "SCALE SET MISSING — run arc-deploy.yml (env=prod) separately before dispatching, then re-run this workflow."
+            exit 1
+          fi
+          echo "scale set present and clean"
 
       - name: Start watching arc-runners pods (background)
         run: |
