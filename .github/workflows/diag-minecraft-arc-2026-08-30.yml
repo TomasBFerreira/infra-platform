@@ -3,45 +3,61 @@ name: Diagnose minecraft-prod ARC crash-loop
 # One-off. minecraft-prod's first-ever ephemeral runner crash-looped
 # (pod deleted+recreated ~7x in 40s), got marked Failed, and the
 # AutoscalingRunnerSet is now reporting current=1/pending=1 with no
-# actual pod backing it — a wedged scale set, blocking every subsequent
-# job from ever getting a runner. This resets it (helm uninstall) and
-# then watches for the replacement runner pod to catch its actual
-# stdout/stderr (previous attempts only ever caught controller
-# meta-events, which don't include the runner's own registration error).
+# actual pod backing it — a wedged EphemeralRunnerSet, blocking every
+# job from ever getting a runner. Resets it via `helm uninstall`, run
+# locally against a fetched kubeconfig — same pattern as arc-deploy.yml
+# (helm isn't installed on the worker node itself; an earlier version of
+# this workflow tried `helm` over SSH on the worker and hit
+# "command not found").
 on:
   workflow_dispatch:
-    inputs:
-      reset_only:
-        description: 'Only helm-uninstall the scale set, skip the watch/capture'
-        type: boolean
-        default: false
 
 jobs:
   diag:
     runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      KUBECONFIG: ${{ github.workspace }}/.kubeconfig
+      ARC_NAMESPACE: arc-runners
     steps:
       - name: Fetch SSH key
-        env:
-          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
         run: |
           vault kv get -field=private_key secret/ssh_keys/worker_node_worker \
             | awk 'NF > 0' > /tmp/diag_key
           chmod 600 /tmp/diag_key
 
+      - name: Build kubeconfig
+        run: |
+          WORKER_IP=192.168.10.21
+          ssh -i /tmp/diag_key -o StrictHostKeyChecking=no "root@${WORKER_IP}" \
+            'cat /etc/rancher/k3s/k3s.yaml' \
+            | sed "s/127.0.0.1/${WORKER_IP}/g" > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+
+      - name: Install kubectl + helm if missing
+        run: |
+          if ! command -v kubectl &>/dev/null; then
+            curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /tmp/kubectl
+            sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          fi
+          if ! command -v helm &>/dev/null; then
+            curl -fsSL https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz | tar -xz -C /tmp
+            sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          fi
+          kubectl version --client && helm version
+
       - name: Reset the wedged scale set
         run: |
-          ssh -i /tmp/diag_key -o StrictHostKeyChecking=no root@192.168.10.21 bash <<'REMOTE'
           echo "=== before ==="
-          kubectl get autoscalingrunnersets -n arc-runners | grep minecraft
+          kubectl get autoscalingrunnersets -n "${ARC_NAMESPACE}" | grep minecraft
           echo "=== helm uninstall minecraft-prod ==="
-          helm uninstall minecraft-prod -n arc-runners --wait --timeout 60s || echo "(uninstall failed or nothing to uninstall)"
+          helm uninstall minecraft-prod -n "${ARC_NAMESPACE}" --wait --timeout 60s || echo "(uninstall failed or nothing to uninstall)"
           sleep 5
           echo "=== after ==="
-          kubectl get autoscalingrunnersets -n arc-runners | grep minecraft || echo "(gone, as expected)"
-          kubectl get pods -n arc-runners | grep minecraft || echo "(no minecraft pods)"
-          REMOTE
+          kubectl get autoscalingrunnersets -n "${ARC_NAMESPACE}" | grep minecraft || echo "(gone, as expected)"
+          kubectl get pods -n "${ARC_NAMESPACE}" | grep minecraft || echo "(no minecraft pods)"
 
       - name: Cleanup
         if: always()
-        run: rm -f /tmp/diag_key
+        run: rm -f /tmp/diag_key "$KUBECONFIG"
