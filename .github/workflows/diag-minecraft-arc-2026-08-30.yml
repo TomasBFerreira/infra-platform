@@ -23,15 +23,25 @@ jobs:
       - name: Diagnose
         run: |
           ssh -i /tmp/diag_key -o StrictHostKeyChecking=no root@192.168.10.21 bash <<'REMOTE'
-          echo "=== minecraft-prod pods (any state) ==="
-          kubectl get pods -n arc-runners -l actions.github.com/scale-set-name=minecraft-prod -o wide 2>&1
-          kubectl get pods -n arc-runners | grep minecraft || echo "(no minecraft-prod pods currently)"
-          echo ""
-          echo "=== Any minecraft-prod runner pod logs ==="
-          for p in $(kubectl get pods -n arc-runners -o name | grep minecraft-prod | grep -v listener); do
-            echo "--- $p ---"
-            kubectl logs -n arc-runners "$p" --all-containers --tail=100 2>&1
+          echo "=== Polling for a live minecraft-prod runner pod (up to 90s) ==="
+          POD=""
+          for i in $(seq 1 30); do
+            POD=$(kubectl get pods -n arc-runners -o name 2>/dev/null | grep minecraft-prod | grep -v listener | head -1)
+            [ -n "$POD" ] && { echo "found $POD at iteration $i"; break; }
+            sleep 3
           done
+          if [ -n "$POD" ]; then
+            echo "=== describe $POD ==="
+            kubectl describe -n arc-runners "$POD" 2>&1 | tail -60
+            echo ""
+            echo "=== streaming logs from $POD for up to 60s ==="
+            timeout 60 kubectl logs -n arc-runners "$POD" --all-containers -f 2>&1
+          else
+            echo "(no minecraft-prod runner pod appeared in 90s — nothing was queued/dispatched, or it's even faster than this poll)"
+          fi
+          echo ""
+          echo "=== minecraft-prod pods (final state) ==="
+          kubectl get pods -n arc-runners | grep minecraft || echo "(none)"
           echo ""
           echo "=== controller logs, filtered for minecraft ==="
           kubectl logs -n arc-runners deployment/arc-gha-rs-controller --tail=500 2>&1 | grep -i minecraft
