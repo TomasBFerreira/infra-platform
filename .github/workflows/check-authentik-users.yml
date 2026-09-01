@@ -1,0 +1,42 @@
+name: Check Authentik users/groups
+
+# One-off — checking whether tomasbps/baby_princess exist as Authentik
+# users and what groups already exist, before wiring up an access-group
+# restriction for mc-console.
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: [self-hosted, prod]
+    env:
+      VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      VAULT_PROD_ADDR:  ${{ secrets.VAULT_PROD_ADDR }}
+      VAULT_PROD_TOKEN: ${{ secrets.VAULT_PROD_TOKEN }}
+    steps:
+      - name: Check
+        run: |
+          set -euo pipefail
+          normalise() { [[ "$1" == http://* || "$1" == https://* ]] && echo "$1" || echo "http://$1"; }
+          VAULT_ADDR=$(normalise "$VAULT_ADDR")
+          VAULT_PROD_ADDR=$(normalise "$VAULT_PROD_ADDR")
+
+          ACTIVE_SLOT=$(vault kv get -field=slot secret/sso/prod/active-slot 2>/dev/null || echo "blue")
+          case "$ACTIVE_SLOT" in
+            blue)  SSO_IP="192.168.10.75" ;;
+            green) SSO_IP="192.168.10.76" ;;
+          esac
+          AUTH_URL="http://${SSO_IP}:9000"
+
+          SSO_TOKEN=$(VAULT_ADDR="$VAULT_PROD_ADDR" VAULT_TOKEN="$VAULT_PROD_TOKEN" vault kv get -field=bootstrap_token secret/sso)
+
+          echo "=== users matching tomasbps/baby_princess ==="
+          curl -sf -H "Authorization: Bearer $SSO_TOKEN" "${AUTH_URL}/api/v3/core/users/?search=tomasbps" | python3 -c "import sys,json; [print(u['username'], u['pk'], u['is_active']) for u in json.load(sys.stdin)['results']]"
+          curl -sf -H "Authorization: Bearer $SSO_TOKEN" "${AUTH_URL}/api/v3/core/users/?search=baby_princess" | python3 -c "import sys,json; [print(u['username'], u['pk'], u['is_active']) for u in json.load(sys.stdin)['results']]"
+
+          echo "=== existing groups ==="
+          curl -sf -H "Authorization: Bearer $SSO_TOKEN" "${AUTH_URL}/api/v3/core/groups/" | python3 -c "import sys,json; [print(g['name'], g['pk'], [u for u in g.get('users_obj',[])] if 'users_obj' in g else g.get('users')) for g in json.load(sys.stdin)['results']]"
+
+          echo "=== mc-console application pk ==="
+          curl -sf -H "Authorization: Bearer $SSO_TOKEN" "${AUTH_URL}/api/v3/core/applications/?slug=minecraft-console" | python3 -c "import sys,json; r=json.load(sys.stdin)['results']; print(r[0] if r else 'NOT FOUND')"
