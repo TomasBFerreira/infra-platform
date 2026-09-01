@@ -351,6 +351,17 @@ scale_sets:
     name: minecraft-prod
     min_runners: 0
     max_runners: 2
+  # ── minecraft-console onboarding (ARC-first, prod-only, no dev/qa, 2026-09-01) ──
+  # Lightweight management console for the minecraft server(s). Builds
+  # a custom image (ghcr.io/tomasbferreira/minecraft-console) unlike
+  # minecraft's stock itzg image, so its deploy.yml has a separate
+  # ubuntu-latest build job — this scale set only runs the deploy job.
+  - repo: TomasBFerreira/minecraft-console
+    env: prod
+    label: prod
+    name: minecraft-console-prod
+    min_runners: 0
+    max_runners: 2
   - repo: TomasBFerreira/ops-portal-identity
     env: prod
     label: prod
