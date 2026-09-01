@@ -86,6 +86,7 @@ Runner state (singletons, no slot rotation):
 | `secret/authentik/vault-oidc` | `client_id, client_secret, sso_ip, discovery_url` | Bootstrap vault (`secret/authentik/<env>/vault-oidc`) | vault-ct Ansible |
 | `secret/sso` | `db_password, secret_key, bootstrap_password, bootstrap_token` | Not seeded | SSO pipeline |
 | `secret/network-vm/dev/active-slot` | *(same as bootstrap, legacy path)* | - | network-vm pipeline |
+| `secret/nextcloud/backup-app-password` | `username, password` | Not seeded (manual, via `minecraft` repo's `seed-nextcloud-backup-vault.yml`) | Nextcloud app-password for `tomasbps` (Settings → Security → Devices & Sessions), scoped to the `minecraft` repo's daily world-backup WebDAV upload — added 2026-09-01. **Gotcha**: `secret/nextcloud/admin` (what `nextcloud`'s own `deploy.yml` references for `NEXTCLOUD_ADMIN_USER`/`NEXTCLOUD_ADMIN_PASSWORD`) does **not** currently exist in the reachable prod vault (`vault kv list secret/` shows no `nextcloud/` prefix at all) — likely vestigial since Nextcloud moved to `user_oidc` for login. Didn't try to resurrect it; used this new dedicated path instead. Worth reconciling if `nextcloud`'s own deploy ever needs that path again.
 
 ## Vault Authentication
 
