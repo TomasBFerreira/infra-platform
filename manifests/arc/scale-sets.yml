@@ -439,3 +439,14 @@ scale_sets:
     name: databaes-investing-prod
     min_runners: 0
     max_runners: 2
+
+  # ── chess-coach dev (2026-09-08) ────────────────────────────────────────
+  # Phase 1 onboarding — dev only. Single Go binary (embeds its own static
+  # frontend), no separate web container. Prod scale-set deferred until
+  # accounts (Phase 2) land and prod promotion is actually confirmed.
+  - repo: TomasBFerreira/chess-coach
+    env: dev
+    label: dev
+    name: chess-coach-dev
+    min_runners: 0
+    max_runners: 2
