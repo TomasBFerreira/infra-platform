@@ -90,6 +90,12 @@ jobs:
           import json
           import subprocess
 
+          # {"env","slot"} objects, not a pre-joined "<env>-adguard-lxc-<slot>"
+          # string — the real Tailscale hostname has no env prefix (every
+          # env's AdGuard registers as plain "adguard-lxc-<slot>"; only its
+          # ACL tag carries the env), so the matcher in
+          # update-tailscale-split-dns.sh needs env and slot separately.
+          # See that script's header comment for the full story.
           envs = ["dev", "qa", "prod"]
           hosts = []
           for env in envs:
@@ -97,9 +103,8 @@ jobs:
                   ["vault", "kv", "get", f"-field=slot", f"secret/adguard/{env}/active-slot"],
                   text=True,
               ).strip()
-              host = f"{env}-adguard-lxc-{slot}"
-              if slot and slot != "none" and host not in hosts:
-                  hosts.append(host)
+              if slot and slot != "none":
+                  hosts.append({"env": env, "slot": slot})
 
           print(f"ACTIVE_ADGUARD_HOSTS_JSON={json.dumps(hosts)}")
           PY
