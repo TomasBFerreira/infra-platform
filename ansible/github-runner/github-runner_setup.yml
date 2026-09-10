@@ -62,11 +62,19 @@
     # Required so workflow steps can call `vault kv get` at runtime.
 
     - name: Add HashiCorp GPG key
+      # Deliberately no `creates:` guard: HashiCorp rotates this signing
+      # key periodically (confirmed live 2026-09-10 — a key generated
+      # 2026-09-09 replaced one from April, and `apt-get update` on every
+      # host whose keyring predated the rotation started failing with
+      # "NO_PUBKEY ..." until re-fetched). A `creates:` guard makes this
+      # task run exactly once per host, ever — permanently pinning
+      # whatever key existed at first-provision time instead of tracking
+      # HashiCorp's actual current key. Re-running curl+dearmor is cheap
+      # and always produces the same output for the same upstream key, so
+      # there's no real idempotency cost to just always doing it.
       shell: |
         curl -fsSL https://apt.releases.hashicorp.com/gpg \
-          | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-      args:
-        creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          | gpg --batch --yes --no-tty --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 
     - name: Add HashiCorp apt repository
       apt_repository:
