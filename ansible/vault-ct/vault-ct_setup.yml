@@ -44,10 +44,13 @@
         state: present
 
     - name: Add HashiCorp GPG key
+      # No `creates:` guard — see the sibling task's comment in
+      # ansible/github-runner/github-runner_setup.yml for why: HashiCorp
+      # rotates this key periodically (confirmed live 2026-09-10), and a
+      # `creates:` guard would pin whatever key existed at first-provision
+      # forever instead of tracking the current one.
       shell: |
-        curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-      args:
-        creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+        curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --batch --yes --no-tty --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 
     - name: Add HashiCorp apt repository
       apt_repository:
