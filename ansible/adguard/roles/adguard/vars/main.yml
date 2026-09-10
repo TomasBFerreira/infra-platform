@@ -50,6 +50,7 @@ adguard_dev_rewrites:
   - domain: dev.tomajflix.app
   - domain: dev.databaes.net
   - domain: chesscoach-dev.databaes.net
+  - domain: mcc-dev.databaes.net
 
 adguard_qa_rewrites:
   - domain: auth-qa.databaes.net
