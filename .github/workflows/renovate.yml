@@ -44,6 +44,8 @@ jobs:
     # see manifests/arc/scale-sets.yml and arc-smoketest.yml for the pattern.
     runs-on: arc-pilot-dev
     timeout-minutes: 30
+    outputs:
+      items_json: ${{ steps.find_prs.outputs.items_json }}
     env:
       # Bootstrap vault (CT 200, 192.168.50.200), authenticated with a
       # scoped token that can only read `secret/data/renovate/*` and
@@ -97,3 +99,58 @@ jobs:
           # Renovate also treats unset / empty as real run.
           RENOVATE_DRY_RUN: ${{ inputs.dry_run || 'null' }}
         run: renovate
+
+      - name: Find Renovate PRs opened this run
+        id: find_prs
+        if: inputs.dry_run == '' || inputs.dry_run == 'null'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # 13h lookback against a 12h (08:17/20:17 UTC) cadence — 1h buffer
+          # so a late/rerun doesn't silently drop a PR, at the cost of an
+          # occasional duplicate mention across two consecutive digests.
+          since=$(date -u -d '13 hours ago' +%Y-%m-%dT%H:%M:%S)
+
+          # repo -> CMDB CI name, kept in sync by hand with renovate/config.js
+          # and each repo's renovate-cmdb-notify.yml `affected_ci` input.
+          declare -A ci_for=(
+            [TomasBFerreira/nextcloud]=nextcloud-prod
+            [TomasBFerreira/wikijs]=wikijs-prod
+            [TomasBFerreira/media-stack]=media-stack
+            [TomasBFerreira/infra-platform]=authentik-prod
+          )
+
+          repo_qualifiers=""
+          for repo in "${!ci_for[@]}"; do
+            repo_qualifiers="${repo_qualifiers} repo:${repo}"
+          done
+
+          query="is:pr is:open author:app/renovate-tbf created:>=${since}${repo_qualifiers}"
+          echo "Search query: ${query}"
+
+          results=$(gh api search/issues -f q="${query}" -f per_page=50)
+
+          items="[]"
+          while IFS= read -r pr; do
+            repo=$(echo "$pr" | jq -r '.repository_url' | sed 's#.*/repos/##')
+            ci="${ci_for[$repo]:-$repo}"
+            entry=$(echo "$pr" | jq -c --arg ci "$ci" '{repo: (.repository_url | sub(".*/repos/"; "")), title: .title, url: .html_url, affected_ci: $ci}')
+            items=$(echo "$items" | jq -c ". + [${entry}]")
+          done < <(echo "$results" | jq -c '.items[]')
+
+          echo "Found $(echo "$items" | jq 'length') new Renovate PR(s)."
+          delimiter="EOF_$(openssl rand -hex 8)"
+          {
+            echo "items_json<<${delimiter}"
+            echo "$items"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+  email-digest:
+    needs: renovate
+    if: needs.renovate.outputs.items_json != '' && needs.renovate.outputs.items_json != '[]'
+    uses: ./.github/workflows/email-notify-renovate.yml
+    with:
+      items_json: ${{ needs.renovate.outputs.items_json }}
+    secrets: inherit
