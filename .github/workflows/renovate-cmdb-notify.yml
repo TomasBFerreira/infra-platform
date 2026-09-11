@@ -43,3 +43,14 @@ jobs:
       pr_url: ${{ github.event.pull_request.html_url }}
       affected_ci: authentik-prod
       repo: ${{ github.repository }}
+
+  email-notify:
+    needs: classify
+    if: needs.classify.outputs.action == 'opened'
+    uses: TomasBFerreira/infra-platform/.github/workflows/email-notify-renovate.yml@50a7862315363bba0ffca405b4f8286c7fde85d7 # main, once #395 merges
+    with:
+      pr_title: ${{ github.event.pull_request.title }}
+      pr_url: ${{ github.event.pull_request.html_url }}
+      affected_ci: authentik-prod
+      repo: ${{ github.repository }}
+    secrets: inherit
