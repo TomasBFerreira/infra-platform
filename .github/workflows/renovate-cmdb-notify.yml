@@ -1,0 +1,45 @@
+name: Renovate → CMDB notify
+
+# Calls the reusable workflow (in this same repo) to record Renovate-proposed
+# changes as cmdb_changes entries. See docs/renovate.md for the wider
+# architecture. This repo is onboarded to Renovate ONLY for the Authentik
+# version pin in ansible/sso/sso_setup.yml — see renovate.json at repo root.
+#
+# Only fires for PRs authored by renovate[bot] — humans don't trigger this.
+
+on:
+  pull_request:
+    types: [opened, reopened, closed]
+
+jobs:
+  classify:
+    if: startsWith(github.event.pull_request.user.login, 'renovate')
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.action.outputs.value }}
+    steps:
+      - id: action
+        env:
+          GH_ACTION: ${{ github.event.action }}
+          GH_MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          if [ "${GH_ACTION}" = "closed" ]; then
+            if [ "${GH_MERGED}" = "true" ]; then
+              echo "value=closed-merged" >> "$GITHUB_OUTPUT"
+            else
+              echo "value=closed-unmerged" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "value=opened" >> "$GITHUB_OUTPUT"
+          fi
+
+  notify:
+    needs: classify
+    uses: TomasBFerreira/infra-platform/.github/workflows/cmdb-notify-renovate.yml@0b48066fef729c84360636d4c28d2917a769932c # main
+    with:
+      action: ${{ needs.classify.outputs.action }}
+      pr_number: ${{ github.event.pull_request.number }}
+      pr_title: ${{ github.event.pull_request.title }}
+      pr_url: ${{ github.event.pull_request.html_url }}
+      affected_ci: authentik-prod
+      repo: ${{ github.repository }}

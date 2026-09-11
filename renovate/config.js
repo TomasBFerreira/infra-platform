@@ -22,10 +22,18 @@ module.exports = {
   onboarding: false,
   requireConfig: 'required',
 
-  // Pilot scope — start with one repo, expand once the CMDB hook + Slack
-  // integration are proven end-to-end.
+  // Pilot scope proven end-to-end on nextcloud (2026-05-18) — widened
+  // 2026-09-11 to cover the rest of the self-hosted COTS-app fleet for the
+  // ops-portal Updates tab. `infra-platform` itself is included ONLY for its
+  // Authentik version pin (see the repo's own renovate.json, which scopes
+  // Renovate down to a single customManager regex against
+  // ansible/sso/sso_setup.yml — it must NOT run infra-platform's default
+  // managers against the rest of this repo).
   repositories: [
     'TomasBFerreira/nextcloud',
+    'TomasBFerreira/wikijs',
+    'TomasBFerreira/media-stack',
+    'TomasBFerreira/infra-platform',
   ],
 
   // Concurrency caps so a sleepy Friday doesn't open 40 PRs at once.
