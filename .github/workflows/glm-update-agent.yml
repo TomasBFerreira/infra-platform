@@ -364,14 +364,17 @@ jobs:
           set -euo pipefail
           source scripts/mint-svc-jwt.sh
 
+          # secret/data/ops-portal/dev/svc-jwt/glm-agent is seeded by
+          # seed-ops-portal-vault.yml (infra-platform#398) — same per-issuer
+          # signing-key convention every real ops-portal-* service uses.
           SIGNING_SECRET=$(curl -sf \
             -H "X-Vault-Token: ${UPDATES_CALLER_SECRET}" \
-            "${VAULT_BOOTSTRAP_ADDR%/}/v1/secret/data/ops-portal/dev/svc-jwt/updates-callers" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['glm-agent'])" \
+            "${VAULT_BOOTSTRAP_ADDR%/}/v1/secret/data/ops-portal/dev/svc-jwt/glm-agent" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['signing_key'])" \
             2>/dev/null) || SIGNING_SECRET=""
 
           if [ -z "$SIGNING_SECRET" ]; then
-            echo "::warning::no glm-agent svc-jwt secret in vault yet — skipping report-back (ops-portal-updates won't show this run's outcome until this is seeded)"
+            echo "::warning::no glm-agent svc-jwt key in vault yet (run seed-ops-portal-vault.yml -f environment=dev) — skipping report-back (ops-portal-updates won't show this run's outcome until this is seeded)"
             exit 0
           fi
 
