@@ -1,0 +1,78 @@
+name: Email notify (Renovate digest)
+
+# Reusable workflow, called ONLY from renovate.yml in this same repo (see
+# its email-digest job) — NOT from the managed repos' own hooks.
+#
+# Why not workflow_call from each managed repo (nextcloud/wikijs/media-stack/
+# ...), the way cmdb-notify-renovate.yml is? GitHub Actions "secrets: inherit"
+# on a cross-repo reusable-workflow call only forwards the CALLING repo's own
+# secrets, never the called workflow's repo. BREVO_API_KEY lives on
+# infra-platform's secrets, not on nextcloud's/wikijs's/media-stack's — a
+# cross-repo call would 401 against Brevo every time. Keeping the call
+# same-repo (renovate.yml -> this file, both in infra-platform) sidesteps the
+# whole problem: the job just runs with infra-platform's own secrets.
+#
+# Sends ONE digest email (not one per PR) listing every Renovate PR opened
+# since the orchestrator's last run — see /app/issues/ for the design doc,
+# and ops-portal-updates for the dashboard's own ingestion of the same PR
+# data (queried independently, not derived from this email).
+
+on:
+  workflow_call:
+    inputs:
+      items_json:
+        description: >-
+          JSON array of {repo, title, url, affected_ci} — one entry per
+          newly opened Renovate PR. Caller skips calling this workflow at
+          all when the array would be empty.
+        required: true
+        type: string
+    secrets:
+      BREVO_API_KEY:
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send digest email via Brevo
+        env:
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          ITEMS_JSON: ${{ inputs.items_json }}
+        run: |
+          set -euo pipefail
+
+          count=$(echo "${ITEMS_JSON}" | jq 'length')
+          if [ "${count}" -eq 0 ]; then
+            echo "No new Renovate PRs this run — skipping email."
+            exit 0
+          fi
+
+          subject="[Updates] ${count} COTS update$( [ "${count}" -ne 1 ] && echo s ) available"
+
+          rows=$(echo "${ITEMS_JSON}" | jq -r '
+            map("<li><b>" + .affected_ci + "</b> (" + .repo + "): <a href=\"" + .url + "\">" + (.title | @html) + "</a></li>")
+            | join("")
+          ')
+
+          html="<p>Renovate opened ${count} new PR(s) for tracked COTS apps:</p><ul>${rows}</ul><p>Review each in its PR, or from the ops portal Updates tab once <code>ops-portal-updates</code> ships. This is a version-diff notice only — not a CVE/vulnerability scan.</p>"
+
+          payload=$(jq -nc \
+            --arg subject "$subject" \
+            --arg html "$html" \
+            '{
+              sender: {name: "Ops Updates", email: "noreply@databaes.net"},
+              to: [{email: "tomasbrazaof@gmail.com"}],
+              subject: $subject,
+              htmlContent: $html
+            }')
+
+          response=$(curl -sS --fail-with-body --max-time 15 \
+            -X POST https://api.brevo.com/v3/smtp/email \
+            -H "api-key: ${BREVO_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json' \
+            -d "${payload}")
+
+          echo "Brevo response: ${response}"
