@@ -1,0 +1,397 @@
+name: GLM update-agent (propose-only)
+
+# Dispatched by ops-portal-updates' "Ask GLM" button when a Renovate PR is
+# too gnarly to one-click (failing CI, needs a manual step, etc). Uses z.ai's
+# GLM API (key at PROD vault secret/AI/GLM/ops-upd) to look at the PR and
+# propose a fix.
+#
+# PROPOSE-ONLY, ALWAYS — this workflow NEVER merges a PR and NEVER pushes to
+# main. The only mutation it can make is a new commit on the SAME PR branch,
+# which still needs a human to review and merge. This mirrors the pivot away
+# from live LLM-driven remediation in ops-portal-incidents (see that
+# service's CLAUDE.md / memory project_deterministic_remediation_pivot) —
+# an LLM that can look and suggest is worth having; one that can act
+# unsupervised on real infra already burned this workspace once.
+#
+# Guardrails (same shape as ops-portal-incidents' cooldown/breaker):
+#   - critical_cis skip-list: for a CI on this list, GLM may only comment a
+#     recommendation — it will not touch the branch at all, regardless of
+#     what it proposes. Authentik/Postgres/Traefik/AdGuard changes always
+#     need a human to write the patch.
+#   - max 3 attempts per PR (counted via a marker HTML comment left on each
+#     of this workflow's own PR comments).
+#   - 15 minute cooldown between attempts on the same PR.
+#
+# Reports its result back to ops-portal-updates via
+# /svc/updates/agent-result (svcjwt, reached via the same benedict-hop
+# NodePort pattern cmdb-record.yml uses — see that workflow for why).
+
+on:
+  workflow_dispatch:
+    inputs:
+      pending_update_id:
+        required: true
+        description: ops-portal-updates pending_updates.id
+      repo:
+        required: true
+        description: owner/repo of the target PR
+      pr_url:
+        required: true
+      ci:
+        required: true
+        description: CMDB CI name (e.g. wikijs-prod)
+      critical:
+        required: true
+        default: 'false'
+      triggered_by:
+        required: true
+        default: unknown
+      run_id:
+        required: true
+        description: ops-portal-updates ai_agent_runs.id — echoed back on report
+
+env:
+  # ops-portal-updates exists in dev only today (see
+  # /app/issues/cots-update-tracking-2026-09-11.md) — hardcode until it's
+  # promoted to qa/prod, at which point this needs to become env-aware like
+  # every other cross-service call in this repo.
+  UPDATES_HOP_HOST: 192.168.50.4
+  UPDATES_BASE: http://192.168.20.11:30099
+  GLM_API_URL: https://api.z.ai/api/paas/v4/chat/completions
+  # Per docs.z.ai/api-reference — check there before bumping; the model
+  # catalog moves faster than this comment will.
+  GLM_MODEL: glm-5.3
+  MARKER: "<!-- glm-update-agent -->"
+  MAX_ATTEMPTS: "3"
+  COOLDOWN_MINUTES: "15"
+
+jobs:
+  agent:
+    runs-on: [self-hosted, management]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout infra-platform (for scripts/mint-svc-jwt.sh)
+        uses: actions/checkout@v4
+
+      - name: Parse target repo/PR number
+        id: parse
+        env:
+          PR_URL: ${{ inputs.pr_url }}
+          REPO: ${{ inputs.repo }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+          [ -n "$PR_NUMBER" ] || { echo "::error::could not parse a PR number out of $PR_URL"; exit 1; }
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "owner=${REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "repo_name=${REPO##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Guardrail — critical CI skip-list
+        id: critical_guard
+        if: inputs.critical == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ inputs.repo }}
+          PR_NUMBER: ${{ steps.parse.outputs.pr_number }}
+          CI: ${{ inputs.ci }}
+        run: |
+          set -euo pipefail
+          BODY="${MARKER}
+          **GLM update-agent: not touching this branch.**
+
+          \`${CI}\` is on the critical-CI skip-list (Authentik/Postgres/Traefik/AdGuard-class infra). I can look and recommend, but I won't push a commit here — a bad auto-proposal on critical infra is worse than no proposal. A human needs to review and patch this PR directly.
+
+          Recorded as CMDB problem for follow-up."
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY"
+          echo "skip_reason=critical_ci" >> "$GITHUB_OUTPUT"
+
+      - name: Guardrail — max attempts + cooldown
+        id: rate_guard
+        if: inputs.critical != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ inputs.repo }}
+          PR_NUMBER: ${{ steps.parse.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          COMMENTS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq "[.[] | select(.body | startswith(\"${MARKER}\"))]")
+          COUNT=$(echo "$COMMENTS" | jq 'length')
+          echo "Prior glm-update-agent attempts on this PR: $COUNT"
+
+          if [ "$COUNT" -ge "$MAX_ATTEMPTS" ]; then
+            echo "skip_reason=max_attempts" >> "$GITHUB_OUTPUT"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+              "${MARKER}
+          **GLM update-agent: giving up.** Already tried ${COUNT} times (cap is ${MAX_ATTEMPTS}) with no merged fix. This needs a human now."
+            exit 0
+          fi
+
+          if [ "$COUNT" -gt 0 ]; then
+            LAST_AT=$(echo "$COMMENTS" | jq -r 'map(.created_at) | sort | last')
+            LAST_EPOCH=$(date -u -d "$LAST_AT" +%s)
+            NOW_EPOCH=$(date -u +%s)
+            ELAPSED_MIN=$(( (NOW_EPOCH - LAST_EPOCH) / 60 ))
+            if [ "$ELAPSED_MIN" -lt "$COOLDOWN_MINUTES" ]; then
+              echo "skip_reason=cooldown" >> "$GITHUB_OUTPUT"
+              echo "Last attempt was ${ELAPSED_MIN}m ago, cooldown is ${COOLDOWN_MINUTES}m — skipping silently (no comment spam)."
+              exit 0
+            fi
+          fi
+
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target repo at PR head
+        if: steps.rate_guard.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh repo clone "${{ inputs.repo }}" target -- --depth 50
+          cd target
+          gh pr checkout "${{ steps.parse.outputs.pr_number }}" --repo "${{ inputs.repo }}"
+
+      - name: Gather PR context (diff + failing checks)
+        if: steps.rate_guard.outputs.proceed == 'true'
+        id: context
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ inputs.repo }}
+          PR_NUMBER: ${{ steps.parse.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          cd target
+          DIFF=$(gh pr diff "$PR_NUMBER" --repo "$REPO" 2>/dev/null | head -c 8000 || echo "(diff unavailable)")
+
+          FAILING=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,state,link 2>/dev/null \
+            | jq -r '[.[] | select(.state == "FAILURE")] | .[] | "- \(.name): \(.link)"' || true)
+
+          LOGS=""
+          for LINK in $(gh pr checks "$PR_NUMBER" --repo "$REPO" --json link,state 2>/dev/null \
+              | jq -r '.[] | select(.state=="FAILURE") | .link' | head -2); do
+            RUN_ID=$(echo "$LINK" | grep -oE 'runs/[0-9]+' | grep -oE '[0-9]+' || true)
+            [ -n "$RUN_ID" ] || continue
+            L=$(gh run view "$RUN_ID" --repo "$REPO" --log-failed 2>/dev/null | tail -c 4000 || true)
+            LOGS="${LOGS}
+          --- run ${RUN_ID} ---
+          ${L}"
+          done
+
+          {
+            echo "diff<<EOF_DIFF"
+            echo "$DIFF"
+            echo "EOF_DIFF"
+            echo "failing<<EOF_FAILING"
+            echo "${FAILING:-none reported}"
+            echo "EOF_FAILING"
+            echo "logs<<EOF_LOGS"
+            echo "${LOGS:-(no failure logs found)}"
+            echo "EOF_LOGS"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Ask GLM for a proposed fix
+        if: steps.rate_guard.outputs.proceed == 'true'
+        id: glm
+        env:
+          GLM_API_KEY_VAULT_ADDR: ${{ secrets.VAULT_PROD_ADDR }}
+          VAULT_PROD_TOKEN: ${{ secrets.VAULT_PROD_TOKEN }}
+          CI: ${{ inputs.ci }}
+          DIFF: ${{ steps.context.outputs.diff }}
+          FAILING: ${{ steps.context.outputs.failing }}
+          LOGS: ${{ steps.context.outputs.logs }}
+        run: |
+          set -euo pipefail
+          GLM_API_KEY=$(curl -sf \
+            -H "X-Vault-Token: ${VAULT_PROD_TOKEN}" \
+            "${GLM_API_KEY_VAULT_ADDR%/}/v1/secret/data/AI/GLM/ops-upd" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['api_key'])")
+          echo "::add-mask::${GLM_API_KEY}"
+
+          SYSTEM_PROMPT='You are a careful infrastructure assistant helping resolve a stuck automated dependency-update pull request (opened by Renovate) in a homelab. You will be given the PR diff, its failing CI checks, and recent failure logs.
+
+          Reply in exactly this shape:
+          1. A one-paragraph plain-English summary of what is wrong.
+          2. Either:
+             a) A fenced ```diff block containing a minimal unified diff (git apply -p1 compatible, paths relative to repo root) that fixes the issue, if you are reasonably confident — OR
+             b) The literal line `NEEDS_HUMAN:` followed by a short explanation of what a human needs to decide or do, if you are not confident enough to propose a diff (e.g. the fix requires a judgment call, a secret, or touches something you were not given enough context on).
+
+          Never propose changes outside what the diff/logs show is needed. Never suggest disabling tests or CI checks to make them pass.'
+
+          USER_PROMPT=$(cat <<EOF
+          CI: ${CI}
+
+          PR diff (may be truncated):
+          ${DIFF}
+
+          Failing checks:
+          ${FAILING}
+
+          Failure logs (may be truncated):
+          ${LOGS}
+          EOF
+          )
+
+          PAYLOAD=$(jq -n --arg sys "$SYSTEM_PROMPT" --arg user "$USER_PROMPT" --arg model "$GLM_MODEL" '{
+            model: $model,
+            messages: [
+              {role: "system", content: $sys},
+              {role: "user", content: $user}
+            ],
+            temperature: 0.2,
+            stream: false
+          }')
+
+          RESPONSE=$(curl -sS --fail-with-body --max-time 60 \
+            -X POST "$GLM_API_URL" \
+            -H "Authorization: Bearer ${GLM_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+          if [ -z "$CONTENT" ]; then
+            echo "::error::empty/unexpected GLM response: $(echo "$RESPONSE" | head -c 500)"
+            exit 1
+          fi
+
+          delimiter="EOF_$(openssl rand -hex 8)"
+          {
+            echo "content<<${delimiter}"
+            echo "$CONTENT"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply proposed diff, comment, and record CMDB
+        if: steps.rate_guard.outputs.proceed == 'true'
+        id: apply
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ inputs.repo }}
+          PR_NUMBER: ${{ steps.parse.outputs.pr_number }}
+          CONTENT: ${{ steps.glm.outputs.content }}
+        run: |
+          set -euo pipefail
+          echo "$CONTENT" > /tmp/glm_response.txt
+
+          # Extract a ```diff ... ``` fenced block if present.
+          python3 - > /tmp/has_diff.txt <<'PYEOF'
+          import re
+          text = open('/tmp/glm_response.txt').read()
+          m = re.search(r'```diff\n(.*?)```', text, re.DOTALL)
+          if m:
+              open('/tmp/proposed.diff', 'w').write(m.group(1))
+              print("yes")
+          else:
+              print("no")
+          PYEOF
+
+          HAS_DIFF=$(cat /tmp/has_diff.txt)
+          APPLIED="false"
+
+          if [ "$HAS_DIFF" = "yes" ] && [ -s /tmp/proposed.diff ]; then
+            cd target
+            if git apply --check -p1 /tmp/proposed.diff 2>/tmp/apply_err.txt; then
+              git apply -p1 /tmp/proposed.diff
+              git config user.name "glm-update-agent[bot]"
+              git config user.email "glm-update-agent@users.noreply.github.com"
+              git add -A
+              git commit -m "fix: GLM-proposed fix for failing update PR
+
+          Proposed by glm-update-agent.yml, run ${GITHUB_RUN_ID}. Review before merging — this is a suggestion, not a verified fix."
+              git push
+              APPLIED="true"
+            else
+              echo "git apply failed:"
+              cat /tmp/apply_err.txt
+            fi
+            cd ..
+          fi
+
+          SUMMARY=$(echo "$CONTENT" | head -c 1500)
+
+          if [ "$APPLIED" = "true" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "${MARKER}
+          **GLM update-agent proposed a fix** (new commit pushed to this branch — review before merging, this is not auto-applied):
+
+          ${SUMMARY}"
+            echo "status=proposed" >> "$GITHUB_OUTPUT"
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "${MARKER}
+          **GLM update-agent could not confidently propose a fix.**
+
+          ${SUMMARY}
+
+          Opening a CMDB problem for follow-up."
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "summary<<EOF_SUMMARY"
+            echo "$SUMMARY"
+            echo "EOF_SUMMARY"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record CMDB change (always, per cmdb-discipline)
+        if: steps.rate_guard.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh workflow run cmdb-record.yml --repo TomasBFerreira/infra-platform \
+            -f kind=change \
+            -f title="GLM update-agent ran on ${{ inputs.repo }}#${{ steps.parse.outputs.pr_number }}" \
+            -f description="Triggered by ${{ inputs.triggered_by }} via the ops-portal Updates tab. Result: ${{ steps.apply.outputs.status }}. correlation: glm-agent-run-${{ github.run_id }}" \
+            -f affected_cis="${{ inputs.ci }}" \
+            -f change_type=auto -f risk=low -f status=completed
+
+      - name: Open CMDB problem if GLM couldn't resolve it
+        if: steps.rate_guard.outputs.proceed == 'true' && steps.apply.outputs.status == 'failed'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh workflow run cmdb-record.yml --repo TomasBFerreira/infra-platform \
+            -f kind=problem-open \
+            -f title="Renovate PR needs human attention: ${{ inputs.repo }}#${{ steps.parse.outputs.pr_number }}" \
+            -f severity=warning \
+            -f affected_cis="${{ inputs.ci }}"
+
+      - name: Report result back to ops-portal-updates
+        # Runs even on the critical-CI skip path — otherwise that
+        # ai_agent_runs row never leaves "dispatched" on the dashboard.
+        if: always()
+        continue-on-error: true
+        env:
+          UPDATES_CALLER_SECRET: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+        run: |
+          set -euo pipefail
+          source scripts/mint-svc-jwt.sh
+
+          # secret/data/ops-portal/dev/svc-jwt/glm-agent is seeded by
+          # seed-ops-portal-vault.yml (infra-platform#398) — same per-issuer
+          # signing-key convention every real ops-portal-* service uses.
+          SIGNING_SECRET=$(curl -sf \
+            -H "X-Vault-Token: ${UPDATES_CALLER_SECRET}" \
+            "${VAULT_BOOTSTRAP_ADDR%/}/v1/secret/data/ops-portal/dev/svc-jwt/glm-agent" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['signing_key'])" \
+            2>/dev/null) || SIGNING_SECRET=""
+
+          if [ -z "$SIGNING_SECRET" ]; then
+            echo "::warning::no glm-agent svc-jwt key in vault yet (run seed-ops-portal-vault.yml -f environment=dev) — skipping report-back (ops-portal-updates won't show this run's outcome until this is seeded)"
+            exit 0
+          fi
+
+          TOKEN=$(mint_svc_jwt "glm-agent" "updates" "$SIGNING_SECRET")
+
+          STATUS="${{ steps.critical_guard.outputs.skip_reason && 'skipped_critical' || steps.rate_guard.outputs.skip_reason || steps.apply.outputs.status || 'failed' }}"
+          SUMMARY="${{ steps.apply.outputs.summary }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          PAYLOAD=$(jq -nc --arg run_id "${{ inputs.run_id }}" --arg status "$STATUS" --arg summary "$SUMMARY" --arg url "$RUN_URL" \
+            '{run_id: ($run_id|tonumber), status: $status, summary: $summary, workflow_run_url: $url}')
+          PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64 -w0)
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${UPDATES_HOP_HOST} \
+            "echo '$PAYLOAD_B64' | base64 -d | curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST '${UPDATES_BASE}/svc/updates/agent-result' -H 'X-Service-Token: ${TOKEN}' -H 'Content-Type: application/json' --data-binary @-" \
+            || echo "::warning::report-back to ops-portal-updates failed (service may not be deployed yet)"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf target /tmp/proposed.diff /tmp/glm_response.txt /tmp/apply_err.txt /tmp/has_diff.txt
