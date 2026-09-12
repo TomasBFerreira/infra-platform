@@ -194,3 +194,42 @@ jobs:
             -H "api-key: ${BREVO_API_KEY}" \
             -H 'Content-Type: application/json' \
             -d "${payload}"
+
+  updates-ingest:
+    # Feeds the ops-portal Updates tab's expiry panel. Best-effort — see
+    # renovate.yml's sibling job for why this can't fail the parent workflow.
+    needs: sweep
+    if: needs.sweep.outputs.items_json != '' && needs.sweep.outputs.items_json != '[]'
+    runs-on: [self-hosted, management]
+    env:
+      ITEMS_JSON: ${{ needs.sweep.outputs.items_json }}
+      UPDATES_HOP_HOST: 192.168.50.4
+      UPDATES_BASE: http://192.168.20.11:30099
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: POST the batch to /svc/updates/expiry-report
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          source scripts/mint-svc-jwt.sh
+
+          SIGNING_SECRET=$(curl -sf \
+            -H "X-Vault-Token: ${VAULT_DEV_TOKEN}" \
+            "${VAULT_BOOTSTRAP_ADDR%/}/v1/secret/data/ops-portal/dev/svc-jwt/updates-callers" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['expiry-watchdog'])" \
+            2>/dev/null) || SIGNING_SECRET=""
+
+          if [ -z "$SIGNING_SECRET" ]; then
+            echo "::warning::no expiry-watchdog svc-jwt secret in vault yet — skipping ingest"
+            exit 0
+          fi
+
+          TOKEN=$(mint_svc_jwt "expiry-watchdog" "updates" "$SIGNING_SECRET")
+          PAYLOAD=$(jq -nc --argjson findings "$ITEMS_JSON" '{findings: $findings}')
+          PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64 -w0)
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${UPDATES_HOP_HOST} \
+            "echo '$PAYLOAD_B64' | base64 -d | curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST '${UPDATES_BASE}/svc/updates/expiry-report' -H 'X-Service-Token: ${TOKEN}' -H 'Content-Type: application/json' --data-binary @-" \
+            || echo "ingest call failed (service may not be deployed yet)"
