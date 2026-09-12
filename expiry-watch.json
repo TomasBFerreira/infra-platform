@@ -1,0 +1,34 @@
+{
+  "_comment": "Curated list of credentials expiry-watchdog.yml CANNOT introspect programmatically — no API exists to read their remaining TTL. For these, a human notes when the credential was last rotated + how often it needs rotating, and the watchdog just does the date math and reminds on schedule. Honest best-effort tracking, not real introspection — see expiry-watchdog.yml's header comment and the 'manually tracked' badge it emits for these entries. Fields: name (label), last_rotated (YYYY-MM-DD, update by hand whenever you actually rotate it), rotate_every_days, warn_days_before (start nagging this many days before the cadence is up), note (where it lives / why it can't be read back via API).",
+
+  "credentials": [
+    {
+      "name": "GH_PAT (classic PAT, register-runner.yml + gh CLI ops)",
+      "last_rotated": "2026-09-10",
+      "rotate_every_days": 90,
+      "warn_days_before": 14,
+      "note": "secret/github-runner/gh_pat in bootstrap vault, also GH secret GH_PAT. Classic PATs expose no expiry via the GitHub API — GitHub only emails the owner near expiry. Rotate by hand (Settings -> Developer settings -> PATs classic), then sync-gh-pat-to-vault.yml. See infra-platform CLAUDE.md gotcha \"secret/github-runner/gh_pat expires and isn't auto-rotated\"."
+    },
+    {
+      "name": "TAILSCALE_API_KEY (own expiry, separate from the /keys it manages)",
+      "last_rotated": "2026-08-29",
+      "rotate_every_days": 90,
+      "warn_days_before": 14,
+      "note": "GH secret, used by tailscale-authkey-tool.yml and the network-vm split-DNS refresh. expiry-watchdog.yml's Tailscale API check reads this key's OWN expires field from GET /keys when it can still authenticate at all — this curated entry is the fallback for the day the key is already dead and the API call itself fails."
+    },
+    {
+      "name": "BREVO_API_KEY / BREVO_RELAY_USER+PASS",
+      "last_rotated": "2026-06-02",
+      "rotate_every_days": 365,
+      "warn_days_before": 30,
+      "note": "Brevo transactional-API key + SMTP relay creds. Brevo doesn't expose an expiry-read API for either. Low urgency (Brevo API keys don't auto-expire by default) — tracked mainly so a stale 'last rotated' date gets noticed eventually."
+    },
+    {
+      "name": "GLM (z.ai) API key for the ops-portal Updates AI agent",
+      "last_rotated": "2026-09-11",
+      "rotate_every_days": 180,
+      "warn_days_before": 30,
+      "note": "secret/AI/GLM/ops-upd in the PROD vault. z.ai's console shows key status but there's no automated introspection wired up here yet — update last_rotated whenever the key is regenerated."
+    }
+  ]
+}

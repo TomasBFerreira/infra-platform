@@ -1,0 +1,239 @@
+name: Expiry watchdog
+
+# Daily sweep for credentials that are about to expire — the "remind me
+# before something breaks" ask behind the COTS-update-tracking build-out
+# (see /app/issues/ for the design doc). Three sources, in order of how
+# trustworthy the signal actually is:
+#
+#   1. Vault periodic/leased tokens (bootstrap + dev/qa/prod env vaults) —
+#      real introspection via `vault token lookup`. This is the class of
+#      credential that has actually caused outages (VAULT_DEV_TOKEN,
+#      VAULT_PROD_TOKEN silently expiring — see infra-platform CLAUDE.md
+#      gotchas and /app/reports/2026-05-30-grafana-recovery.md).
+#   2. Tailscale authkeys + the API key itself — real introspection via
+#      GET /api/v2/tailnet/{tailnet}/keys (`expires` field).
+#   3. Everything else that has no expiry-read API at all (classic GH PAT,
+#      Brevo creds, the GLM key) — a CURATED list in expiry-watch.json,
+#      hand-maintained, date-math only. This is NOT the same quality of
+#      signal as 1/2 and the digest email says so explicitly per entry.
+#
+# Sends ONE digest email (Brevo, same-repo secrets — no cross-repo
+# secrets:inherit problem, see email-notify-renovate.yml's header for why
+# that matters) listing anything inside its warning window. Silent (no
+# email) when nothing is close to expiring.
+
+on:
+  schedule:
+    - cron: '11 6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_email:
+        description: Send the digest even if nothing is close to expiring (smoke test)
+        type: boolean
+        default: false
+
+jobs:
+  sweep:
+    runs-on: [self-hosted, management]
+    timeout-minutes: 10
+    outputs:
+      items_json: ${{ steps.aggregate.outputs.items_json }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Vault periodic tokens
+        id: vault_check
+        env:
+          VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_ADDR_DEV: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN_DEV: ${{ secrets.VAULT_TOKEN }}
+          VAULT_ADDR_QA: ${{ secrets.VAULT_QA_ADDR }}
+          VAULT_TOKEN_QA: ${{ secrets.VAULT_QA_TOKEN }}
+          VAULT_ADDR_PROD: ${{ secrets.VAULT_PROD_ADDR }}
+          VAULT_TOKEN_PROD: ${{ secrets.VAULT_PROD_TOKEN }}
+          VAULT_RENOVATE_TOKEN: ${{ secrets.VAULT_RENOVATE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Warn once a periodic token's current TTL window has less than
+          # this many hours left. Periodic tokens renew to their full
+          # `period` on every use, so a low TTL here really means "nothing
+          # has used/renewed this token recently, not that it's inherently
+          # about to die forever" — but that's exactly the failure mode
+          # that bit VAULT_DEV_TOKEN/VAULT_PROD_TOKEN before, so it's the
+          # right thing to flag.
+          warn_hours=48
+          findings="[]"
+
+          check_token () {
+            local label="$1" addr="$2" token="$3"
+            [ -n "$token" ] || { echo "skip ${label}: no token secret set"; return; }
+            local out
+            if ! out=$(VAULT_ADDR="$addr" VAULT_TOKEN="$token" vault token lookup -format=json 2>&1); then
+              findings=$(echo "$findings" | jq -c --arg label "$label" \
+                '. + [{name: $label, kind: "vault_token", severity: "critical", detail: "lookup failed — token may already be dead: see workflow log"}]')
+              echo "::warning::Vault token lookup failed for ${label}"
+              return
+            fi
+            local ttl period
+            ttl=$(echo "$out" | jq -r '.data.ttl // 0')
+            period=$(echo "$out" | jq -r '.data.period // 0')
+            if [ "$period" != "0" ] && [ "$ttl" -lt "$((warn_hours * 3600))" ]; then
+              local hours_left=$((ttl / 3600))
+              findings=$(echo "$findings" | jq -c --arg label "$label" --arg hrs "$hours_left" \
+                '. + [{name: $label, kind: "vault_token", severity: "warn", detail: ("periodic token, " + $hrs + "h left in current TTL window — needs a renewing use soon")}]')
+            fi
+          }
+
+          check_token "VAULT_DEV_TOKEN (bootstrap-ci)" "$VAULT_BOOTSTRAP_ADDR" "$VAULT_DEV_TOKEN"
+          check_token "VAULT_TOKEN (dev env-ci)" "$VAULT_ADDR_DEV" "$VAULT_TOKEN_DEV"
+          check_token "VAULT_QA_TOKEN (qa env-ci)" "$VAULT_ADDR_QA" "$VAULT_TOKEN_QA"
+          check_token "VAULT_PROD_TOKEN (prod env-ci)" "$VAULT_ADDR_PROD" "$VAULT_TOKEN_PROD"
+          check_token "VAULT_RENOVATE_TOKEN (bootstrap, renovate policy)" "$VAULT_BOOTSTRAP_ADDR" "$VAULT_RENOVATE_TOKEN"
+
+          echo "vault_findings=$(echo "$findings" | jq -c .)" >> "$GITHUB_OUTPUT"
+
+      - name: Check Tailscale key expiry
+        id: ts_check
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+          TAILSCALE_TAILNET: ${{ secrets.TAILSCALE_TAILNET }}
+        run: |
+          set -euo pipefail
+          warn_days=14
+          findings="[]"
+
+          if resp=$(curl -sS --fail-with-body --max-time 15 \
+              -H "Authorization: Bearer ${TAILSCALE_API_KEY}" \
+              "https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}/keys" 2>&1); then
+            now_epoch=$(date -u +%s)
+            findings=$(echo "$resp" | jq -c --arg now "$now_epoch" --arg warn_days "$warn_days" '
+              [.keys[]? | select(.expires != null) |
+                (.expires | fromdateiso8601) as $exp |
+                (($exp - ($now | tonumber)) / 86400 | floor) as $days_left |
+                select($days_left < ($warn_days | tonumber)) |
+                {name: ("tailscale key: " + (.description // .id)),
+                 kind: "tailscale_key",
+                 severity: (if $days_left < 3 then "critical" else "warn" end),
+                 detail: ($days_left | tostring) + " day(s) left"}
+              ]')
+          else
+            findings='[{"name":"TAILSCALE_API_KEY","kind":"tailscale_key","severity":"critical","detail":"API call itself failed — key may already be dead, see workflow log"}]'
+            echo "::warning::Tailscale API call failed: ${resp}"
+          fi
+
+          echo "ts_findings=$(echo "$findings" | jq -c .)" >> "$GITHUB_OUTPUT"
+
+      - name: Check curated (non-introspectable) credentials
+        id: curated_check
+        run: |
+          set -euo pipefail
+          today=$(date -u +%Y-%m-%d)
+          findings=$(jq -c --arg today "$today" '
+            [.credentials[] |
+              (.last_rotated | strptime("%Y-%m-%d") | mktime) as $rotated |
+              ($today | strptime("%Y-%m-%d") | mktime) as $now |
+              (.rotate_every_days * 86400) as $cadence |
+              (.warn_days_before * 86400) as $warn |
+              (($rotated + $cadence) - $now) as $seconds_left |
+              select($seconds_left < $warn) |
+              {name: .name, kind: "manually_tracked", severity: (if $seconds_left < 0 then "critical" else "warn" end),
+               detail: (($seconds_left / 86400 | floor | tostring) + " day(s) until due — MANUALLY TRACKED, not real introspection: " + .note)}
+            ]' expiry-watch.json)
+          echo "curated_findings=$(echo "$findings" | jq -c .)" >> "$GITHUB_OUTPUT"
+
+      - name: Aggregate
+        id: aggregate
+        run: |
+          set -euo pipefail
+          items=$(jq -c -n \
+            --argjson a '${{ steps.vault_check.outputs.vault_findings }}' \
+            --argjson b '${{ steps.ts_check.outputs.ts_findings }}' \
+            --argjson c '${{ steps.curated_check.outputs.curated_findings }}' \
+            '$a + $b + $c')
+          echo "Findings: $(echo "$items" | jq 'length')"
+          echo "$items" | jq .
+          delimiter="EOF_$(openssl rand -hex 8)"
+          {
+            echo "items_json<<${delimiter}"
+            echo "$items"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+  email-digest:
+    needs: sweep
+    if: needs.sweep.outputs.items_json != '[]' || inputs.force_email == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send expiry digest via Brevo
+        env:
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          ITEMS_JSON: ${{ needs.sweep.outputs.items_json }}
+        run: |
+          set -euo pipefail
+          count=$(echo "${ITEMS_JSON}" | jq 'length')
+          subject="[Expiry watchdog] ${count} credential(s) need attention"
+
+          rows=$(echo "${ITEMS_JSON}" | jq -r '
+            map("<li><b>" + (.severity | ascii_upcase) + "</b> " + .name + " — " + (.detail | @html) + "</li>")
+            | join("")
+          ')
+          html="<p>Expiry watchdog found ${count} credential(s) inside their warning window:</p><ul>${rows}</ul><p>Vault-token and Tailscale-key findings are real introspection. Anything labelled MANUALLY TRACKED comes from expiry-watch.json's hand-maintained rotation dates, not a live API — treat it as a reminder to check, not a certainty.</p>"
+
+          payload=$(jq -nc --arg subject "$subject" --arg html "$html" '{
+            sender: {name: "Ops Updates", email: "noreply@databaes.net"},
+            to: [{email: "tomasbrazaof@gmail.com"}],
+            subject: $subject,
+            htmlContent: $html
+          }')
+
+          curl -sS --fail-with-body --max-time 15 \
+            -X POST https://api.brevo.com/v3/smtp/email \
+            -H "api-key: ${BREVO_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            -d "${payload}"
+
+  updates-ingest:
+    # Feeds the ops-portal Updates tab's expiry panel. Best-effort — see
+    # renovate.yml's sibling job for why this can't fail the parent workflow.
+    needs: sweep
+    if: needs.sweep.outputs.items_json != '' && needs.sweep.outputs.items_json != '[]'
+    runs-on: [self-hosted, management]
+    env:
+      ITEMS_JSON: ${{ needs.sweep.outputs.items_json }}
+      UPDATES_HOP_HOST: 192.168.50.4
+      UPDATES_BASE: http://192.168.20.11:30099
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: POST the batch to /svc/updates/expiry-report
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          source scripts/mint-svc-jwt.sh
+
+          # secret/data/ops-portal/dev/svc-jwt/expiry-watchdog is seeded by
+          # seed-ops-portal-vault.yml (infra-platform#398) — same
+          # per-issuer signing-key convention every real ops-portal-*
+          # service uses, not a bespoke path.
+          SIGNING_SECRET=$(curl -sf \
+            -H "X-Vault-Token: ${VAULT_DEV_TOKEN}" \
+            "${VAULT_BOOTSTRAP_ADDR%/}/v1/secret/data/ops-portal/dev/svc-jwt/expiry-watchdog" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['signing_key'])" \
+            2>/dev/null) || SIGNING_SECRET=""
+
+          if [ -z "$SIGNING_SECRET" ]; then
+            echo "::warning::no expiry-watchdog svc-jwt key in vault yet (run seed-ops-portal-vault.yml -f environment=dev) — skipping ingest"
+            exit 0
+          fi
+
+          TOKEN=$(mint_svc_jwt "expiry-watchdog" "updates" "$SIGNING_SECRET")
+          PAYLOAD=$(jq -nc --argjson findings "$ITEMS_JSON" '{findings: $findings}')
+          PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64 -w0)
+
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${UPDATES_HOP_HOST} \
+            "echo '$PAYLOAD_B64' | base64 -d | curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST '${UPDATES_BASE}/svc/updates/expiry-report' -H 'X-Service-Token: ${TOKEN}' -H 'Content-Type: application/json' --data-binary @-" \
+            || echo "ingest call failed (service may not be deployed yet)"
