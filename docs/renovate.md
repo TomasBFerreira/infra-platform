@@ -140,6 +140,41 @@ actually opening any PRs.
 4. Install the Renovate GitHub App on the new repo via the app's install URL.
 5. `/github subscribe <owner>/<repo> pulls +label:renovate` in `#upgrades`.
 
+**As of 2026-09-11** onboarded beyond the pilot: `wikijs`, `media-stack`
+(both standard docker/kustomize managers against `manifests/`), and
+`infra-platform` itself.
+
+### Tracking a COTS app that isn't a Dockerfile/manifest in its own repo
+
+Authentik is Terraform+Ansible-provisioned (`terraform/authentik/`,
+`ansible/sso/sso_setup.yml`) rather than a repo Renovate can scan with its
+default managers. Pattern used (see `infra-platform`'s own `renovate.json`
+at repo root):
+
+1. Add `TomasBFerreira/infra-platform` to `repositories` in `config.js`.
+2. Give infra-platform's own `renovate.json` an `enabledManagers:
+   ["custom.regex"]` — **this is load-bearing**. Without it Renovate's
+   default managers would scan this entire repo (terraform, ansible,
+   docker, github-actions, npm...) and could open PRs across
+   infrastructure this onboarding was never meant to touch.
+3. Add a `customManagers` regex entry pointed at the exact file + line
+   holding the version pin (`ghcr.io/goauthentik/server:X.Y.Z` in
+   `ansible/sso/sso_setup.yml`, both blue/green slot occurrences — the
+   regex manager matches every occurrence in the file, not just the first).
+4. `infra-platform` still needs its own `renovate-cmdb-notify.yml` —
+   self-referencing `uses:` back into the same repo works fine.
+
+Same recipe applies to any future COTS component whose version lives in an
+Ansible/Terraform file rather than a Dockerfile or k8s manifest.
+
+### Feeding the ops-portal Updates tab
+
+Every managed repo's `renovate-cmdb-notify.yml` is also the trigger point
+for `email-notify-renovate.yml` (Brevo relay → Tomas's personal email) and
+for ingestion into `ops-portal-updates` (`/svc/updates/renovate-event`),
+which backs the Updates tab in the ops portal. See that service's CLAUDE.md
+and `ops-portal-shell`'s `features/updates/` for the consumer side.
+
 ### Common gotchas
 
 - **The `cmdb-notify-renovate.yml` reusable workflow pins `runs-on:

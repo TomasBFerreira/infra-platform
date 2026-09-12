@@ -1,0 +1,42 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits"],
+  "timezone": "Europe/Dublin",
+  "schedule": ["after 7am and before 9pm every weekday", "every weekend"],
+  "labels": ["renovate", "dependencies"],
+  "prHourlyLimit": 1,
+  "prConcurrentLimit": 1,
+
+  "_comment": "infra-platform is huge and NOT meant to be Renovate's general playground — this file exists solely to track the Authentik version pinned in ansible/sso/sso_setup.yml (COTS update tracking for the ops-portal Updates tab, see /app/issues/ for the design doc). enabledManagers below is the safety rail: without it, Renovate's default managers (terraform, ansible, docker, github-actions, npm, ...) would scan the whole repo and could open PRs across infrastructure this workflow was never meant to touch.",
+  "enabledManagers": ["custom.regex"],
+
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Authentik server image, pinned identically for both blue/green slots",
+      "fileMatch": ["^ansible/sso/sso_setup\\.yml$"],
+      "matchStrings": [
+        "image:\\s+ghcr\\.io/goauthentik/server:(?<currentValue>[^\\s]+)"
+      ],
+      "depNameTemplate": "ghcr.io/goauthentik/server",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "loose"
+    }
+  ],
+
+  "packageRules": [
+    {
+      "description": "Authentik: never auto-group major version bumps — they carry migration steps in the release notes that need a human read-through",
+      "matchDepNames": ["ghcr.io/goauthentik/server"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "authentik-major (READ RELEASE NOTES)",
+      "labels": ["renovate", "dependencies", "critical-ci"]
+    },
+    {
+      "description": "Authentik: minor/patch can be grouped, still human-merged only (propose-only policy — see ops-portal Updates tab design)",
+      "matchDepNames": ["ghcr.io/goauthentik/server"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "authentik"
+    }
+  ]
+}
