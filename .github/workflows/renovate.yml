@@ -135,7 +135,24 @@ jobs:
           while IFS= read -r pr; do
             repo=$(echo "$pr" | jq -r '.repository_url' | sed 's#.*/repos/##')
             ci="${ci_for[$repo]:-$repo}"
-            entry=$(echo "$pr" | jq -c --arg ci "$ci" '{repo: (.repository_url | sub(".*/repos/"; "")), title: .title, url: .html_url, affected_ci: $ci}')
+            title=$(echo "$pr" | jq -r '.title')
+
+            # Critical-CI heuristic for the ops-portal Updates tab / GLM
+            # agent's skip-list — see /app/issues/cots-update-tracking-2026-09-11.md.
+            # infra-platform is ALWAYS critical here (its only tracked PR is
+            # the Authentik version pin). Everything else is critical only
+            # if the PR title mentions postgres — a per-package check would
+            # be more precise than this per-title-text heuristic, but the
+            # search API doesn't hand us Renovate's per-dependency metadata.
+            critical="false"
+            if [ "$repo" = "TomasBFerreira/infra-platform" ]; then
+              critical="true"
+            elif echo "$title" | grep -qi "postgres"; then
+              critical="true"
+            fi
+
+            entry=$(echo "$pr" | jq -c --arg ci "$ci" --arg repo "$repo" --argjson critical "$critical" \
+              '{repo: $repo, title: .title, url: .html_url, affected_ci: $ci, critical: $critical}')
             items=$(echo "$items" | jq -c ". + [${entry}]")
           done < <(echo "$results" | jq -c '.items[]')
 
@@ -154,3 +171,50 @@ jobs:
     with:
       items_json: ${{ needs.renovate.outputs.items_json }}
     secrets: inherit
+
+  updates-ingest:
+    # Feeds the ops-portal Updates tab. Best-effort: ops-portal-updates only
+    # exists in dev today (see /app/issues/cots-update-tracking-2026-09-11.md)
+    # and this must never fail the Renovate run itself if the service isn't
+    # up yet — continue-on-error per item.
+    needs: renovate
+    if: needs.renovate.outputs.items_json != '' && needs.renovate.outputs.items_json != '[]'
+    runs-on: [self-hosted, management]
+    env:
+      ITEMS_JSON: ${{ needs.renovate.outputs.items_json }}
+      UPDATES_HOP_HOST: 192.168.50.4
+      UPDATES_BASE: http://192.168.20.11:30099
+      VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_DEV_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: POST each item to /svc/updates/renovate-event
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          source scripts/mint-svc-jwt.sh
+
+          SIGNING_SECRET=$(curl -sf \
+            -H "X-Vault-Token: ${VAULT_DEV_TOKEN}" \
+            "${VAULT_BOOTSTRAP_ADDR%/}/v1/secret/data/ops-portal/dev/svc-jwt/updates-callers" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['renovate-orchestrator'])" \
+            2>/dev/null) || SIGNING_SECRET=""
+
+          if [ -z "$SIGNING_SECRET" ]; then
+            echo "::warning::no renovate-orchestrator svc-jwt secret in vault yet — skipping ingest (dashboard won't show these PRs until this is seeded)"
+            exit 0
+          fi
+
+          TOKEN=$(mint_svc_jwt "renovate-orchestrator" "updates" "$SIGNING_SECRET")
+
+          echo "$ITEMS_JSON" | jq -c '.[]' | while IFS= read -r item; do
+            PAYLOAD=$(echo "$item" | jq -c '{
+              ci: .affected_ci, repo: .repo, pr_title: .title, pr_url: .url,
+              status: "open", critical: .critical
+            }')
+            PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64 -w0)
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${UPDATES_HOP_HOST} \
+              "echo '$PAYLOAD_B64' | base64 -d | curl -s -o /dev/null -w 'HTTP %{http_code} '  -X POST '${UPDATES_BASE}/svc/updates/renovate-event' -H 'X-Service-Token: ${TOKEN}' -H 'Content-Type: application/json' --data-binary @-" \
+              || echo "(ingest call failed for $(echo "$item" | jq -r .url) — service may not be deployed yet)"
+            echo "ingested: $(echo "$item" | jq -r .url)"
+          done
