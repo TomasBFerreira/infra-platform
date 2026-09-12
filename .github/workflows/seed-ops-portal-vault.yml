@@ -88,7 +88,20 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import json, os, secrets, urllib.request
-          SERVICES = ['incidents','infrastructure','domain','audit','cmdb','identity','deployments','shell']
+          # 'updates' is the ops-portal-updates service itself. The other
+          # three aren't deployed services — they're GitHub Actions workflow
+          # identities (renovate.yml, expiry-watchdog.yml,
+          # glm-update-agent.yml) that call INTO 'updates' over svc-jwt but
+          # never receive calls themselves. Including them here still works:
+          # each gets its own secret/data/ops-portal/<env>/svc-jwt/<name>
+          # signing key (which is all a caller needs — it mints its own
+          # outgoing tokens from that key, same as any real service would),
+          # and 'updates' trusted map picks them up for free. Their own
+          # entries in the trusted map (e.g. trusted['renovate-orchestrator'])
+          # are simply unused — nothing calls a GH Actions workflow over
+          # svc-jwt — which is harmless.
+          SERVICES = ['incidents','infrastructure','domain','audit','cmdb','identity','deployments','shell',
+                      'updates','renovate-orchestrator','expiry-watchdog','glm-agent']
           VAULT = os.environ['VAULT_ADDR']
           TOK = os.environ['VAULT_TOKEN']
           ENV = os.environ['ENV']
