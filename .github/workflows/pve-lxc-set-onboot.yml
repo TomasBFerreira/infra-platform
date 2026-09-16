@@ -1,0 +1,73 @@
+name: PVE LXC — Set Onboot Flag
+
+# Applies the Proxmox `onboot` flag to a live LXC out-of-band, for cases where
+# Terraform's desired state (onboot=true) needs to reach an already-running
+# CT before the next blue/green flip recreates it. Non-destructive — does not
+# touch the running container, only the boot-time metadata.
+#
+# Usage:
+#   gh workflow run pve-lxc-set-onboot.yml \
+#     --field environment=prod --field target_node=betsy --field vmid=166
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment (selects which self-hosted runner dispatches this)'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [dev, qa, prod]
+      target_node:
+        description: 'Proxmox node hostname'
+        required: true
+        default: 'betsy'
+        type: choice
+        options: [betsy, benedict, heaton]
+      vmid:
+        description: 'LXC VMID to update'
+        required: true
+      enabled:
+        description: 'onboot value to set'
+        required: true
+        default: '1'
+        type: choice
+        options: ['1', '0']
+
+jobs:
+  set-onboot:
+    runs-on: [self-hosted, "${{ github.event.inputs.environment }}"]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+      TARGET_NODE: ${{ github.event.inputs.target_node }}
+      VMID: ${{ github.event.inputs.vmid }}
+      ENABLED: ${{ github.event.inputs.enabled }}
+    steps:
+      - name: Validate inputs
+        run: |
+          if ! [[ "$VMID" =~ ^[0-9]+$ ]]; then
+            echo "vmid must be numeric, got: $VMID"
+            exit 1
+          fi
+
+      - name: Set onboot flag
+        run: |
+          PVE_USER_SHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          case "$TARGET_NODE" in
+            betsy)    NODE_IP=192.168.50.2 ;;
+            benedict) NODE_IP=192.168.50.4 ;;
+            heaton)   NODE_IP=192.168.50.8 ;;
+            *) echo "Unknown target_node: $TARGET_NODE"; exit 1 ;;
+          esac
+
+          echo "=== Current config (VMID $VMID on $TARGET_NODE) ==="
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${NODE_IP}" \
+            "pct config ${VMID} | grep -E '^(hostname|onboot):' || true"
+
+          echo "=== Setting onboot=${ENABLED} ==="
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${NODE_IP}" \
+            "pct set ${VMID} -onboot ${ENABLED}"
+
+          echo "=== Verifying ==="
+          ssh -o StrictHostKeyChecking=no "${PVE_USER_SHORT}@${NODE_IP}" \
+            "pct config ${VMID} | grep -E '^(hostname|onboot):'"
