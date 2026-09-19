@@ -2,8 +2,14 @@ name: GLM update-agent (propose-only)
 
 # Dispatched by ops-portal-updates' "Ask GLM" button when a Renovate PR is
 # too gnarly to one-click (failing CI, needs a manual step, etc). Uses z.ai's
-# GLM API (key at PROD vault secret/AI/GLM/ops-upd) to look at the PR and
-# propose a fix.
+# GLM API (key at PROD vault secret/AI/GLM, field "ops-upd") to look at the
+# PR and propose a fix.
+#
+# The path/field were never verified against the real secret when this
+# workflow was authored -- both were wrong (assumed secret/AI/GLM/ops-upd
+# field "api_key"; the real secret is at secret/AI/GLM field "ops-upd") --
+# meaning every dispatch of this workflow crashed at the "Ask GLM" step
+# before this was caught+fixed via read-vault-secret-keys.yml on 2026-09-19.
 #
 # PROPOSE-ONLY, ALWAYS — this workflow NEVER merges a PR and NEVER pushes to
 # main. The only mutation it can make is a new commit on the SAME PR branch,
@@ -202,8 +208,8 @@ jobs:
           set -euo pipefail
           GLM_API_KEY=$(curl -sf \
             -H "X-Vault-Token: ${VAULT_PROD_TOKEN}" \
-            "${GLM_API_KEY_VAULT_ADDR%/}/v1/secret/data/AI/GLM/ops-upd" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['api_key'])")
+            "${GLM_API_KEY_VAULT_ADDR%/}/v1/secret/data/AI/GLM" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ops-upd'])")
           echo "::add-mask::${GLM_API_KEY}"
 
           SYSTEM_PROMPT='You are a careful infrastructure assistant helping resolve a stuck automated dependency-update pull request (opened by Renovate) in a homelab. You will be given the PR diff, its failing CI checks, and recent failure logs.
