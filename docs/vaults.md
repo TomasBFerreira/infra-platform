@@ -158,3 +158,7 @@ This means the vault auto-unseals after a reboot but the unseal keys are on the 
 | `VAULT_DEV_ROOT_TOKEN` | Dev | Dev vault root token (updated on vault-ct deploy) |
 | `VAULT_ROOT_TOKEN` | Prod | Prod vault root token (updated on vault-ct deploy) |
 | `VAULT_BOOTSTRAP_ROOT_TOKEN` | Bootstrap | Bootstrap vault root token |
+
+## Confirming a Secret's Field Names Without Reading Its Values
+
+A workflow that assumes a field name (e.g. `glm-update-agent.yml` assuming `secret/AI/GLM/ops-upd`'s key is `api_key`) can silently drift from the real secret if it was seeded by hand. Rather than `vault kv get`-ing the path directly (which prints every value), dispatch **`read-vault-secret-keys.yml`** with the target `environment` and `path` — it prints only `sorted(dict.keys())`, never a value, and masks the vault token it used. Use this instead of a manual `vault kv get` whenever you just need to confirm a field exists/is named correctly.
