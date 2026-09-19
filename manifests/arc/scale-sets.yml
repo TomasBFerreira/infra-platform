@@ -166,6 +166,12 @@ scale_sets:
     name: ops-portal-domain-dev
     min_runners: 0
     max_runners: 2
+  - repo: TomasBFerreira/ops-portal-updates
+    env: dev
+    label: dev
+    name: ops-portal-updates-dev
+    min_runners: 0
+    max_runners: 2
   - repo: TomasBFerreira/ops-portal-shell
     env: dev
     label: dev

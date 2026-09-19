@@ -35,7 +35,6 @@ dev:
   - TomasBFerreira/ops-portal-infrastructure
   - TomasBFerreira/ops-portal-pipelines
   - TomasBFerreira/ops-portal-shell
-  - TomasBFerreira/ops-portal-updates
   - TomasBFerreira/otel-monitoring
   - TomasBFerreira/streambox
   - TomasBFerreira/traefik-gitops
