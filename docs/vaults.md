@@ -161,4 +161,6 @@ This means the vault auto-unseals after a reboot but the unseal keys are on the 
 
 ## Confirming a Secret's Field Names Without Reading Its Values
 
-A workflow that assumes a field name (e.g. `glm-update-agent.yml` assuming `secret/AI/GLM/ops-upd`'s key is `api_key`) can silently drift from the real secret if it was seeded by hand. Rather than `vault kv get`-ing the path directly (which prints every value), dispatch **`read-vault-secret-keys.yml`** with the target `environment` and `path` — it prints only `sorted(dict.keys())`, never a value, and masks the vault token it used. Use this instead of a manual `vault kv get` whenever you just need to confirm a field exists/is named correctly.
+A workflow that assumes a path/field name can silently drift from the real secret if it was seeded by hand. Rather than `vault kv get`-ing the path directly (which prints every value), dispatch **`read-vault-secret-keys.yml`** with the target `environment` and `path` — it prints only `sorted(dict.keys())`, never a value, and masks the vault token it used. Use this instead of a manual `vault kv get` whenever you just need to confirm a field exists/is named correctly.
+
+Caught a real bug this way on 2026-09-19: `glm-update-agent.yml` had assumed `secret/AI/GLM/ops-upd` field `api_key` since it was authored, never verified — the real secret is at `secret/AI/GLM` field `ops-upd`. Every dispatch of that workflow had been crashing at the "Ask GLM" step on the wrong path (404). Fixed in the same PR that added this tool.
