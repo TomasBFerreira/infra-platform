@@ -74,6 +74,8 @@ Runner state (singletons, no slot rotation):
 | `secret/wikijs/prod/api-token` | `token` | Manual setup — issued from wikijs Administration → API Access; consumed by `push-wiki-pages.yml`. Re-issue if it leaks; rotation has no automated path yet. |
 | `secret/sso/dev/active-slot` | `slot, vmid, ip` | SSO pipeline |
 | `secret/sso/prod/active-slot` | `slot, vmid, ip` | SSO pipeline |
+| `secret/wedding-site/<env>/postgres` | `password` | `seed-wedding-site-secrets.yml` (generated once, never rotated by re-runs — the PVC keeps the old one); consumed by wedding-site's `deploy.yml` |
+| `secret/wedding-site/<env>/mail` | `api_key` | `seed-wedding-site-secrets.yml` (copied from the `BREVO_API_KEY` Actions secret) — Brevo HTTPS API key used to email login codes |
 
 ## Env Vault — Secrets Inventory
 

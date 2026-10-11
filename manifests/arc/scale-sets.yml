@@ -456,3 +456,13 @@ scale_sets:
     name: chess-coach-dev
     min_runners: 0
     max_runners: 2
+
+  # ── wedding-site dev (2026-10-11) ───────────────────────────────────────
+  # Single Go binary embedding its own frontends, same shape as chess-coach.
+  # Dev only; the env=prod dispatch falls back to the shared prod LXC runner.
+  - repo: TomasBFerreira/wedding-site
+    env: dev
+    label: dev
+    name: wedding-site-dev
+    min_runners: 0
+    max_runners: 2
