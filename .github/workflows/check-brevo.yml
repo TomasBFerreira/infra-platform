@@ -1,8 +1,8 @@
 name: Check Brevo
 
 # Daily check that the Brevo API key still works and that every copy of it is
-# in sync. Fails the job on a problem, which triggers a GitHub notification
-# email (deliberately NOT sent through Brevo — that is what is being checked).
+# in sync. Fails the job on a problem (GitHub notification email) and posts to Slack
+# (deliberately NOT through Brevo — that is what is being checked).
 #
 # Why: on 2026-10-12 the key was found rejected ("API Key is not enabled") and
 # nothing noticed — wedding-site login codes, expiry-watchdog and renovate
@@ -48,6 +48,9 @@ jobs:
           if [ "$rc" -ne 0 ]; then
             echo "::error::Could not reach api.brevo.com (curl exit $rc) — not a key verdict, retry the run"; exit 1
           fi
+          if [ "$code" != "200" ] && [ "$code" != "401" ] && [ "$code" != "403" ]; then
+            echo "::error::Brevo /account returned HTTP $code — not a key verdict (outage or rate limit?), retry the run"; exit 1
+          fi
           if [ "$code" != "200" ]; then
             echo "::error::Brevo rejected the API key: HTTP $code $(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get("code"),"-",d.get("message"))' "$T" 2>/dev/null)"
             echo "Fix: enable or regenerate the key in Brevo (SMTP & API -> API Keys), update the BREVO_API_KEY Actions secret, then run seed-wedding-site-secrets.yml (dev + prod) and redeploy wedding-site."
@@ -81,21 +84,47 @@ jobs:
           [ "$sender_rc" -eq 0 ] && [ "$domain_rc" -eq 0 ]
 
       - name: Check Vault copies match the Actions secret
+        if: always()
         env:
           VAULT_ADDR:    ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
           VAULT_TOKEN:   ${{ secrets.VAULT_DEV_TOKEN }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
         run: |
           set -uo pipefail
-          want=$(printf %s "$BREVO_API_KEY" | sha256sum | cut -d' ' -f1)
+          norm() { tr -d '[:space:]' | sha256sum | cut -d' ' -f1; }
+          want=$(printf %s "$BREVO_API_KEY" | norm)
           bad=0
           for e in dev prod; do
-            got=$(vault kv get -field=api_key "secret/wedding-site/$e/mail" 2>/dev/null | tr -d '\n' | sha256sum | cut -d' ' -f1) || got=""
+            rc=0
+            val=$(vault kv get -field=api_key "secret/wedding-site/$e/mail" 2>&1) || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              case "$val" in
+                *"No value found"*|*"no value found"*) echo "::error::secret/wedding-site/$e/mail does not exist — run seed-wedding-site-secrets.yml env=$e"; bad=1; continue ;;
+                *) echo "::error::Could not read secret/wedding-site/$e/mail (vault token expired/sealed/unreachable? not a drift verdict): ${val:0:200}"; bad=1; continue ;;
+              esac
+            fi
+            got=$(printf %s "$val" | norm)
             if [ "$got" = "$want" ]; then
               echo "wedding-site/$e/mail: in sync"
             else
-              echo "::error::secret/wedding-site/$e/mail differs from (or is missing vs) the BREVO_API_KEY Actions secret — run seed-wedding-site-secrets.yml env=$e, then redeploy wedding-site"
+              echo "::error::secret/wedding-site/$e/mail differs from the BREVO_API_KEY Actions secret — run seed-wedding-site-secrets.yml env=$e, then redeploy wedding-site"
               bad=1
             fi
           done
           exit $bad
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          RUN_URL:     ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          WEBHOOK=$(vault kv get -field=slack_webhook_url secret/ops-portal/prod/incidents 2>/dev/null || echo "")
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::No slack_webhook_url in Vault — skipping notification."
+            exit 0
+          fi
+          TEXT="Brevo email check failed — wedding-site login codes and expiry/renovate digests may not be delivering (<${RUN_URL}|run>)"
+          curl -sS -m 15 -X POST "$WEBHOOK" -H 'Content-Type: application/json' \
+            -d "$(python3 -c 'import json,sys;print(json.dumps({"text":sys.argv[1]}))' "$TEXT")" >/dev/null
