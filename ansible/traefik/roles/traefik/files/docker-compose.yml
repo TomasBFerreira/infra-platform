@@ -7,6 +7,14 @@ services:
     security_opt:
       - no-new-privileges:true
     network_mode: host
+    # Rotate the json-file log. Traefik's accessLog goes to stdout, and the
+    # default driver config never rotates: it filled traefik-lxc-prod's 25 GB
+    # disk (17 GB traefik + 4.4 GB otelcol) on 2026-10-12.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     environment:
       - TZ=Europe/London
       # Surfaced to the container for sidecars / debugging only.
@@ -50,3 +58,11 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /opt/traefik/data/logs:/var/log/traefik:ro
     network_mode: host
+    # Rotate the json-file log. Traefik's accessLog goes to stdout, and the
+    # default driver config never rotates: it filled traefik-lxc-prod's 25 GB
+    # disk (17 GB traefik + 4.4 GB otelcol) on 2026-10-12.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
