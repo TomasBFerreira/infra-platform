@@ -1,0 +1,130 @@
+name: Check Brevo
+
+# Daily check that the Brevo API key still works and that every copy of it is
+# in sync. Fails the job on a problem (GitHub notification email) and posts to Slack
+# (deliberately NOT through Brevo — that is what is being checked).
+#
+# Why: on 2026-10-12 the key was found rejected ("API Key is not enabled") and
+# nothing noticed — wedding-site login codes, expiry-watchdog and renovate
+# digests were all silently undelivered. wedding-site sends in the background
+# and only logs failures, so a dead key looks like success to the guest.
+#
+# Consumers of BREVO_API_KEY: wedding-site (via Vault secret/wedding-site/
+# {dev,prod}/mail), expiry-watchdog.yml, email-notify-renovate.yml.
+#
+# Checks (key material is never printed):
+#   1. The Actions secret authenticates against GET /v3/account.
+#   2. The sender noreply@databaes.net is active and databaes.net is
+#      authenticated (DKIM/DMARC).
+#   3. The Vault copies for wedding-site dev + prod equal the Actions secret
+#      (compared by sha256), so a rotation that missed the seed step is caught.
+
+on:
+  schedule:
+    - cron: "30 6 * * *"   # daily 06:30 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Brevo key + sender + vault copies
+    runs-on: [self-hosted, management]
+    timeout-minutes: 5
+    steps:
+      - name: Check key, sender and domain
+        env:
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          SENDER:        noreply@databaes.net
+          DOMAIN:        databaes.net
+        run: |
+          set -uo pipefail
+          test -n "$BREVO_API_KEY" || { echo "::error::BREVO_API_KEY Actions secret is empty"; exit 1; }
+          get() { curl -sS -m 20 -o "$2" -w '%{http_code}' -H "api-key: $BREVO_API_KEY" -H 'accept: application/json' "https://api.brevo.com/v3/$1"; }
+          T=$(mktemp); trap 'rm -f "$T"' EXIT
+          rc=0
+          code=$(get account "$T") || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Could not reach api.brevo.com (curl exit $rc) — not a key verdict, retry the run"; exit 1
+          fi
+          if [ "$code" != "200" ] && [ "$code" != "401" ] && [ "$code" != "403" ]; then
+            echo "::error::Brevo /account returned HTTP $code — not a key verdict (outage or rate limit?), retry the run"; exit 1
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::error::Brevo rejected the API key: HTTP $code $(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get("code"),"-",d.get("message"))' "$T" 2>/dev/null)"
+            echo "Fix: enable or regenerate the key in Brevo (SMTP & API -> API Keys), update the BREVO_API_KEY Actions secret, then run seed-wedding-site-secrets.yml (dev + prod) and redeploy wedding-site."
+            exit 1
+          fi
+          echo "API key accepted."
+          code=$(get senders "$T") || true
+          python3 - "$T" "$SENDER" "$code" <<'PY'
+          import json, sys
+          path, sender, code = sys.argv[1:4]
+          if code != "200":
+              print(f"::error::Brevo /senders returned HTTP {code}"); sys.exit(1)
+          s = [x for x in json.load(open(path)).get("senders", []) if x.get("email", "").lower() == sender]
+          if not s or not s[0].get("active"):
+              print(f"::error::Brevo sender {sender} is missing or inactive"); sys.exit(1)
+          print(f"Sender {sender} active.")
+          PY
+          sender_rc=$?
+          code=$(get senders/domains "$T") || true
+          python3 - "$T" "$DOMAIN" "$code" <<'PY'
+          import json, sys
+          path, dom, code = sys.argv[1:4]
+          if code != "200":
+              print(f"::error::Brevo /senders/domains returned HTTP {code}"); sys.exit(1)
+          d = [x for x in json.load(open(path)).get("domains", []) if x.get("domain_name", "").lower() == dom]
+          if not d or not d[0].get("authenticated"):
+              print(f"::error::Brevo domain {dom} is not authenticated (DKIM/DMARC)"); sys.exit(1)
+          print(f"Domain {dom} authenticated.")
+          PY
+          domain_rc=$?
+          [ "$sender_rc" -eq 0 ] && [ "$domain_rc" -eq 0 ]
+
+      - name: Check Vault copies match the Actions secret
+        if: always()
+        env:
+          VAULT_ADDR:    ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN:   ${{ secrets.VAULT_DEV_TOKEN }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+        run: |
+          set -uo pipefail
+          norm() { tr -d '[:space:]' | sha256sum | cut -d' ' -f1; }
+          want=$(printf %s "$BREVO_API_KEY" | norm)
+          bad=0
+          for e in dev prod; do
+            rc=0
+            val=$(vault kv get -field=api_key "secret/wedding-site/$e/mail" 2>&1) || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              case "$val" in
+                *"No value found"*|*"no value found"*) echo "::error::secret/wedding-site/$e/mail does not exist — run seed-wedding-site-secrets.yml env=$e"; bad=1; continue ;;
+                *) echo "::error::Could not read secret/wedding-site/$e/mail (vault token expired/sealed/unreachable? not a drift verdict): ${val:0:200}"; bad=1; continue ;;
+              esac
+            fi
+            got=$(printf %s "$val" | norm)
+            if [ "$got" = "$want" ]; then
+              echo "wedding-site/$e/mail: in sync"
+            else
+              echo "::error::secret/wedding-site/$e/mail differs from the BREVO_API_KEY Actions secret — run seed-wedding-site-secrets.yml env=$e, then redeploy wedding-site"
+              bad=1
+            fi
+          done
+          exit $bad
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          RUN_URL:     ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          WEBHOOK=$(vault kv get -field=slack_webhook_url secret/ops-portal/prod/incidents 2>/dev/null || echo "")
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::No slack_webhook_url in Vault — skipping notification."
+            exit 0
+          fi
+          TEXT="Brevo email check failed — wedding-site login codes and expiry/renovate digests may not be delivering (<${RUN_URL}|run>)"
+          curl -sS -m 15 -X POST "$WEBHOOK" -H 'Content-Type: application/json' \
+            -d "$(python3 -c 'import json,sys;print(json.dumps({"text":sys.argv[1]}))' "$TEXT")" >/dev/null
