@@ -597,6 +597,39 @@ What still applies: Rule #3 (worker-node-bound), Rule #6 (SSO unless explicitly 
 5. Run **SSO pipeline** for the environment → deploys Authentik, stores OIDC creds
 6. Run **configure-vault-oidc** for the environment → wires up OIDC login
 
+## Reaching the dev cluster from a Claude/dev-box session (host-hop)
+
+**When:** you need to curl a dev NodePort, run `kubectl`, or `psql` into a dev Postgres to verify a deploy (e.g. "did the migration add the column?"). `*-dev.databaes.net` is Tailscale-only and resolves to Cloudflare from a session box (it just times out), and the dev worker (`worker-node-01`, `192.168.20.11`, VMID 211) has no route from the management subnet. Don't conclude "unreachable" — hop through the Proxmox node that hosts it.
+
+**Node → key:** `~/.ssh/proxmox_access` is root on every PVE host. Dev = **benedict** (`192.168.50.4`); qa = **heaton** (`192.168.50.8`); prod = **betsy** (`192.168.50.2`) (workers: qa VMID 311 `192.168.30.11`, prod VMID 111 `192.168.10.11`, per `docs/ops-portal-deploy.md`; the vault active-slot key is authoritative). Prod's env vault lives behind betsy the same way (`pct exec <vault CT>` on betsy).
+
+```bash
+# 0. 192.168.20.11 below is the CURRENT dev worker; blue/green can change it. Confirm via
+#    secret/worker-node/dev/active-slot in the bootstrap vault if the hop times out.
+# 1. Curl a dev NodePort
+ssh -i ~/.ssh/proxmox_access root@192.168.50.4 'curl -s http://192.168.20.11:<nodeport>/healthz'
+
+# 2. kubectl on the dev worker (k3s; kubectl is installed there), proxied through benedict
+ssh -i ~/.ssh/worker_key \
+    -o ProxyCommand="ssh -i $HOME/.ssh/proxmox_access -W %h:%p root@192.168.50.4" \
+    root@192.168.20.11 'kubectl get pods -n <ns>'
+
+# 3. psql inside an app's Postgres pod (POSTGRES_* env vars are set in the pod;
+#    pod name varies per app, check `kubectl get pods -n <ns>` -- postgres-0 is the usual StatefulSet name)
+ssh -i ~/.ssh/worker_key \
+    -o ProxyCommand="ssh -i $HOME/.ssh/proxmox_access -W %h:%p root@192.168.50.4" \
+    root@192.168.20.11 \
+    "kubectl exec -n <ns> postgres-0 -- sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"\\d <table>\"'"
+```
+
+`worker_key` and `worker_node` under `~/.ssh/` both authenticate to the dev worker (checked 2026-10-16). Worker SSH keys are also in the bootstrap vault at `secret/ssh_keys/<service>_worker`; the keys under `~/.ssh/` on the session box are the ones the deploy workflows use.
+
+**Gotchas**
+- **Migration Jobs vanish:** they use `ttlSecondsAfterFinished: 600`, so `kubectl logs job/<svc>-migrate` is gone ~10 min after the deploy. Verify the *schema* (`\d <table>`), not the Job.
+- **The same TTL can break the next deploy:** if a deploy lands while the old Job object still exists and the Job's pod template changed, `kubectl apply` fails with an immutable-field error (an *unchanged* Job is simply not re-run). Check `kubectl get job -n <ns>` first, or delete the old Job.
+- **Read-only first.** The hop is root on the node; treat it like prod access. Any mutation made this way still needs a CMDB change (`cmdb-record.yml`, below).
+- Verified for dev only (2026-10-16); qa/prod commands are untested, and the dev worker IP itself is also in the vault. Worker IPs come from `secret/worker-node/<env>/active-slot` in the bootstrap vault — resolve the IP there rather than hard-coding it.
+
 ## Recording a CMDB change from outside the cluster
 
 The CMDB lives behind Authentik at `ops-dev.databaes.net/api/cmdb/*`, which off-cluster automation (Claude sessions, ad-hoc workflows) can't authenticate to. Use `cmdb-record.yml` to write through the dev NodePort instead.
