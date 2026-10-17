@@ -601,7 +601,7 @@ What still applies: Rule #3 (worker-node-bound), Rule #6 (SSO unless explicitly 
 
 **When:** you need to curl a dev NodePort, run `kubectl`, or `psql` into a dev Postgres to verify a deploy (e.g. "did the migration add the column?"). `*-dev.databaes.net` is Tailscale-only and resolves to Cloudflare from a session box (it just times out), and the dev worker (`worker-node-01`, `192.168.20.11`, VMID 211) has no route from the management subnet. Don't conclude "unreachable" — hop through the Proxmox node that hosts it.
 
-**Node → key:** `~/.ssh/proxmox_access` is root on every PVE host. Dev = **benedict** (`192.168.50.4`); qa = **heaton** (`192.168.50.8`); prod = **betsy** (`192.168.50.2`) (workers: qa VMID 311 `192.168.30.11`, prod VMID 111 `192.168.10.11`, per `docs/ops-portal-deploy.md`; the vault active-slot key is authoritative). Prod's env vault lives behind betsy the same way (`pct exec <vault CT>` on betsy).
+**Node → key:** `~/.ssh/proxmox_access` is root on every PVE host. Dev = **benedict** (`192.168.50.4`); qa = **heaton** (`192.168.50.8`); prod = **betsy** (`192.168.50.2`) (workers: qa VMID 311 `192.168.30.11`, prod = `worker-node-gpu-01`, VMID 121 `192.168.10.21` — see the prod variant below; `docs/ops-portal-deploy.md` still lists VMID 111 `192.168.10.11`, but only 121 was running on betsy on 2026-10-17; the vault active-slot key is authoritative). Prod's env vault lives behind betsy the same way (`pct exec <vault CT>` on betsy).
 
 ```bash
 # 0. 192.168.20.11 below is the CURRENT dev worker; blue/green can change it. Confirm via
@@ -628,7 +628,18 @@ ssh -i ~/.ssh/worker_key \
 - **Migration Jobs vanish:** they use `ttlSecondsAfterFinished: 600`, so `kubectl logs job/<svc>-migrate` is gone ~10 min after the deploy. Verify the *schema* (`\d <table>`), not the Job.
 - **The same TTL can break the next deploy:** if a deploy lands while the old Job object still exists and the Job's pod template changed, `kubectl apply` fails with an immutable-field error (an *unchanged* Job is simply not re-run). Check `kubectl get job -n <ns>` first, or delete the old Job.
 - **Read-only first.** The hop is root on the node; treat it like prod access. Any mutation made this way still needs a CMDB change (`cmdb-record.yml`, below).
-- Verified for dev only (2026-10-16); qa/prod commands are untested, and the dev worker IP itself is also in the vault. Worker IPs come from `secret/worker-node/<env>/active-slot` in the bootstrap vault — resolve the IP there rather than hard-coding it.
+- Verified for dev (2026-10-16) and prod (2026-10-17). QA is untested. Worker IPs come from `secret/worker-node/<env>/active-slot` in the bootstrap vault — resolve the IP there rather than hard-coding it (the prod IP below can change on a blue/green flip).
+
+**Prod variant** (betsy `192.168.50.2` → `worker-node-gpu-01`, VMID 121, `192.168.10.21`; `kubectl` is installed there). Same `worker_key` and `proxmox_access` keys:
+
+```bash
+ssh -i ~/.ssh/worker_key \
+    -o ProxyCommand="ssh -i $HOME/.ssh/proxmox_access -W %h:%p root@192.168.50.2" \
+    root@192.168.10.21 'kubectl get pods -n <ns>'
+# NodePort curl: ssh -i ~/.ssh/proxmox_access root@192.168.50.2 'curl -s http://192.168.10.21:<nodeport>/healthz'
+```
+
+Prod is live: read-only (`get`, `logs`, `\d`, `curl` of GET endpoints) unless the change is explicitly approved, and any mutation needs a CMDB change (`cmdb-record.yml`). Don't run test registrations/logins against prod databases — a rejected request is fine, one that succeeds writes a real row.
 
 ## Recording a CMDB change from outside the cluster
 
