@@ -628,7 +628,18 @@ ssh -i ~/.ssh/worker_key \
 - **Migration Jobs vanish:** they use `ttlSecondsAfterFinished: 600`, so `kubectl logs job/<svc>-migrate` is gone ~10 min after the deploy. Verify the *schema* (`\d <table>`), not the Job.
 - **The same TTL can break the next deploy:** if a deploy lands while the old Job object still exists and the Job's pod template changed, `kubectl apply` fails with an immutable-field error (an *unchanged* Job is simply not re-run). Check `kubectl get job -n <ns>` first, or delete the old Job.
 - **Read-only first.** The hop is root on the node; treat it like prod access. Any mutation made this way still needs a CMDB change (`cmdb-record.yml`, below).
-- Verified for dev only (2026-10-16); qa/prod commands are untested, and the dev worker IP itself is also in the vault. Worker IPs come from `secret/worker-node/<env>/active-slot` in the bootstrap vault — resolve the IP there rather than hard-coding it.
+- Verified for dev (2026-10-16) and prod (2026-10-17). QA is untested. Worker IPs come from `secret/worker-node/<env>/active-slot` in the bootstrap vault — resolve the IP there rather than hard-coding it (the prod IP below can change on a blue/green flip).
+
+**Prod variant** (betsy `192.168.50.2` → `worker-node-gpu-01`, VMID 121, `192.168.10.21`; `kubectl` is installed there). Same `worker_key` and `proxmox_access` keys:
+
+```bash
+ssh -i ~/.ssh/worker_key \
+    -o ProxyCommand="ssh -i $HOME/.ssh/proxmox_access -W %h:%p root@192.168.50.2" \
+    root@192.168.10.21 'kubectl get pods -n <ns>'
+# NodePort curl: ssh -i ~/.ssh/proxmox_access root@192.168.50.2 'curl -s http://192.168.10.21:<nodeport>/healthz'
+```
+
+Prod is live: read-only (`get`, `logs`, `\d`, `curl` of GET endpoints) unless the change is explicitly approved, and any mutation needs a CMDB change (`cmdb-record.yml`). Don't run test registrations/logins against prod databases — a rejected request is fine, one that succeeds writes a real row.
 
 ## Recording a CMDB change from outside the cluster
 
