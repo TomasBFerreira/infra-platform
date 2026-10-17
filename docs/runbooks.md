@@ -601,7 +601,7 @@ What still applies: Rule #3 (worker-node-bound), Rule #6 (SSO unless explicitly 
 
 **When:** you need to curl a dev NodePort, run `kubectl`, or `psql` into a dev Postgres to verify a deploy (e.g. "did the migration add the column?"). `*-dev.databaes.net` is Tailscale-only and resolves to Cloudflare from a session box (it just times out), and the dev worker (`worker-node-01`, `192.168.20.11`, VMID 211) has no route from the management subnet. Don't conclude "unreachable" — hop through the Proxmox node that hosts it.
 
-**Node → key:** `~/.ssh/proxmox_access` is root on every PVE host. Dev = **benedict** (`192.168.50.4`); qa = **heaton** (`192.168.50.8`); prod = **betsy** (`192.168.50.2`) (workers: qa VMID 311 `192.168.30.11`, prod VMID 111 `192.168.10.11`, per `docs/ops-portal-deploy.md`; the vault active-slot key is authoritative). Prod's env vault lives behind betsy the same way (`pct exec <vault CT>` on betsy).
+**Node → key:** `~/.ssh/proxmox_access` is root on every PVE host. Dev = **benedict** (`192.168.50.4`); qa = **heaton** (`192.168.50.8`); prod = **betsy** (`192.168.50.2`) (workers: qa VMID 311 `192.168.30.11`, prod = `worker-node-gpu-01`, VMID 121 `192.168.10.21` — see the prod variant below; `docs/ops-portal-deploy.md` still lists VMID 111 `192.168.10.11`, but only 121 was running on betsy on 2026-10-17; the vault active-slot key is authoritative). Prod's env vault lives behind betsy the same way (`pct exec <vault CT>` on betsy).
 
 ```bash
 # 0. 192.168.20.11 below is the CURRENT dev worker; blue/green can change it. Confirm via
