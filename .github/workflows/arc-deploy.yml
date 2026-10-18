@@ -115,6 +115,11 @@ jobs:
 
       - name: Install kubectl + helm if missing
         run: |
+          # The management runner's service PATH is /sbin:/bin:/usr/sbin:/usr/bin
+          # (no /usr/local/bin), so tools we install there are invisible to this
+          # and every later step unless we add it.
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
           if ! command -v kubectl &>/dev/null; then
             curl -fsSL "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl" -o /tmp/kubectl
             sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
