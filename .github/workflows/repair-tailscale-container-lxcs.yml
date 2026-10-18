@@ -17,12 +17,18 @@ on:
         default: 'dev'
         type: choice
         options: [dev, qa, prod]
+      vmids:
+        description: 'Optional comma-separated VMIDs to repair instead of the default blue-slot set (e.g. 398 for a green-slot adguard)'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   repair:
     runs-on: [self-hosted, management]
     env:
       ENV: ${{ inputs.environment }}
+      VMIDS_OVERRIDE: ${{ inputs.vmids }}
       PVE_USER: ${{ secrets.PVE_USER }}
     steps:
       - name: Resolve Proxmox host + VMIDs for this env
@@ -32,6 +38,23 @@ jobs:
             qa)   HOST=192.168.50.8; VMIDS="393,395,397" ;;
             prod) HOST=192.168.50.2; VMIDS="193,195,197" ;;
           esac
+          # Default set is the blue slot; adguard/traefik/cloudflared may be on
+          # green (e.g. qa adguard is 398), so allow an explicit override.
+          if [ -n "$VMIDS_OVERRIDE" ]; then
+            if ! [[ "$VMIDS_OVERRIDE" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+              echo "::error::vmids must be comma-separated numeric VMIDs"
+              exit 1
+            fi
+            case "$ENV" in dev) PFX=2 ;; qa) PFX=3 ;; prod) PFX=1 ;; esac
+            IFS=',' read -ra OV <<< "$VMIDS_OVERRIDE"
+            for v in "${OV[@]}"; do
+              if [ "${#v}" -ne 3 ] || [ "${v:0:1}" != "$PFX" ]; then
+                echo "::error::VMID $v is not in the ${ENV} range (${PFX}xx)"
+                exit 1
+              fi
+            done
+            VMIDS="$VMIDS_OVERRIDE"
+          fi
           echo "PVE_HOST=$HOST" >> "$GITHUB_ENV"
           echo "VMIDS=$VMIDS" >> "$GITHUB_ENV"
 
@@ -63,7 +86,8 @@ jobs:
               continue
             fi
             echo "  $VMID ($NAME): re-authenticating..."
-            if pct exec "$VMID" -- timeout 90 tailscale up --authkey="$TS_AUTHKEY" --reset --hostname="$NAME" 2>&1 | sed "s/^/    /"; then
+            pct exec "$VMID" -- timeout 90 tailscale up --authkey="$TS_AUTHKEY" --reset --hostname="$NAME" 2>&1 | sed "s/^/    /"
+            if [ "${PIPESTATUS[0]}" -eq 0 ]; then
               STATE=$(pct exec "$VMID" -- tailscale status --json 2>/dev/null \
                 | python3 -c 'import json,sys; print(json.load(sys.stdin).get("BackendState","unknown"))' 2>/dev/null || echo "error")
               echo "  $VMID ($NAME): BackendState=$STATE"
@@ -73,5 +97,5 @@ jobs:
               ALL_OK=false
             fi
           done
-          $ALL_OK && echo "ALL_OK=true" || echo "ALL_OK=false"
+          $ALL_OK && echo "ALL_OK=true" || { echo "ALL_OK=false"; exit 1; }
           EOF
