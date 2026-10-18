@@ -122,12 +122,15 @@ jobs:
             TS_AUTHKEY=$(VAULT_ADDR="${VAULT_PROD_ADDR}" VAULT_TOKEN="${VAULT_PROD_TOKEN}" \
               vault kv get -field=authkey secret/tailscale)
           else
-            TS_AUTHKEY=$(vault kv get -field=authkey secret/tailscale)
+            # network-vm pipeline reads the per-env key at secret/tailscale/<env> (bootstrap
+            # vault); the bare secret/tailscale path is a stale legacy key. No fallback:
+            # a read error (bad token, sealed vault) should surface, not be masked.
+            TS_AUTHKEY=$(vault kv get -field=authkey "secret/tailscale/${ENV}")
           fi
           if [ -z "$TS_AUTHKEY" ]; then
             echo "ERROR: Could not fetch Tailscale auth key from Vault."
             echo "  Generate a new reusable/pre-auth key in the Tailscale admin console"
-            echo "  and update Vault: vault kv put secret/tailscale authkey=<key>"
+            echo "  and update Vault: vault kv put secret/tailscale/${ENV} authkey=<key> (bootstrap vault), or run tailscale-authkey-tool.yml mode=create vault_target=bootstrap:tailscale/${ENV}"
             exit 1
           fi
           echo "::add-mask::$TS_AUTHKEY"
