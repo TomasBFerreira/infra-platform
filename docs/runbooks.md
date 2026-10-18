@@ -409,6 +409,23 @@ Or via GitHub UI: **infra-platform → Actions → Register GitHub Actions Runne
 - Registers the runner with GitHub using a fresh JIT token
 - Installs and starts a per-repo systemd service (`github-runner-<repo-slug>.service`)
 
+### A whole environment was offline for more than 14 days
+GitHub **deletes** self-hosted runner registrations (and ARC runner scale sets)
+that have not connected for 14 days. After a long outage (e.g. the heaton/QA
+outage of Oct 2026) the LXC runner logs `The runner registration has been
+deleted from the server, please re-configure`, the services stay `inactive
+(dead)`, and ARC listeners crash-loop with `RunnerScaleSetNotFoundException:
+No runner scale set found with identifier N`. A plain restart or
+`helm upgrade` does nothing. Recover from the **management** runner:
+1. LXC runners: `gh workflow run register-runner.yml -f repo=<owner/repo> -f env=<env> [-f runner_ip=<ip>]`
+   per repo (it runs on the management runner for `env=qa`; playbook is
+   idempotent: remove + `--replace`). QA runner CT 301 = 192.168.30.101.
+2. ARC: delete the stale `AutoscalingRunnerSet` (it sticks on the
+   GitHub-deregister finalizer; clear with `kubectl patch ... -p
+   '{"metadata":{"finalizers":null}}' --type=merge`), then
+   `gh workflow run arc-deploy.yml -f env=<env>` to recreate it with a fresh id.
+See `issues/qa-arc-blocked-2026-06-21.md` and `issues/wedding-site-qa-env-2026-10-18.md`.
+
 ### Verify the runner is online
 
 After the workflow completes, check the runner appears in the target repo:

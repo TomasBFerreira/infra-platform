@@ -1,6 +1,9 @@
 name: Register GitHub Actions Runner
 
 # Registers a self-hosted runner on the env runner LXC for any repo.
+# env=qa executes on the MANAGEMENT runner (not a QA runner): GitHub deletes
+# registrations of runners offline >14 days, so QA must be recoverable when
+# every QA runner is dead (heaton outage, Oct 2026).
 # Run this once when onboarding a new repo that needs its own runner.
 # Each repo gets an isolated directory + systemd service on the shared LXC.
 #
@@ -32,7 +35,11 @@ on:
 
 jobs:
   register:
-    runs-on: [self-hosted, "${{ inputs.env }}"]
+    # QA recovery must not depend on a QA runner being alive: these are the
+    # workflows that re-create it (GitHub deletes runner registrations and ARC
+    # scale sets after 14 days offline — heaton outage, 2026-10). The management
+    # runner (CT 200) reaches the QA worker and CT 301, so it runs env=qa.
+    runs-on: ${{ fromJSON(inputs.env == 'qa' && '["self-hosted","management"]' || format('["self-hosted","{0}"]', inputs.env)) }}
     env:
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
@@ -63,15 +70,16 @@ jobs:
           E = '-----END OPENSSH PRIVATE KEY-----'
           body = raw[raw.find(B)+len(B):raw.find(E)].replace(' ', '').replace('\n', '').replace('\t', '')
           print(B); print(textwrap.fill(body, width=70)); print(E)
-          " > /tmp/runner_lxc_key
-          chmod 600 /tmp/runner_lxc_key
-          grep -q "BEGIN OPENSSH PRIVATE KEY" /tmp/runner_lxc_key \
+          " > ${RUNNER_TEMP}/runner_lxc_key
+          chmod 600 ${RUNNER_TEMP}/runner_lxc_key
+          grep -q "BEGIN OPENSSH PRIVATE KEY" ${RUNNER_TEMP}/runner_lxc_key \
             || { echo "ERROR: key missing PEM header — check secret/ssh_keys/github_runner_worker"; exit 1; }
 
       - name: Resolve runner LXC IP
         run: |
-          # Static fallback IPs per VMID scheme (VMID 101/201/301 → IP .101/.201/.301)
-          declare -A STATIC_IPS=([dev]="192.168.50.201" [prod]="192.168.50.101" [qa]="192.168.50.301")
+          # Static fallback IPs (dev/prod runners sit on 192.168.50.x; the QA runner CT 301
+          # is on heaton's vmbr30 at 192.168.30.101, NOT .50.301)
+          declare -A STATIC_IPS=([dev]="192.168.50.201" [prod]="192.168.50.101" [qa]="192.168.30.101")
 
           # 1. Try vault path (may not be populated yet)
           RUNNER_IP=$(vault kv get -field=ip secret/github-runner/${{ inputs.env }}/state 2>/dev/null || true)
@@ -106,7 +114,7 @@ jobs:
         run: |
           ansible-playbook \
             -i "${RUNNER_IP}," \
-            --private-key /tmp/runner_lxc_key \
+            --private-key ${RUNNER_TEMP}/runner_lxc_key \
             -u root \
             -e "github_repo=${{ inputs.repo }}" \
             -e "runner_env=${{ inputs.env }}" \
@@ -115,4 +123,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: rm -f /tmp/runner_lxc_key
+        run: rm -f ${RUNNER_TEMP}/runner_lxc_key
