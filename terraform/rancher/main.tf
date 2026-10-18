@@ -7,7 +7,7 @@ resource "proxmox_lxc" "rancher" {
   hostname   = var.vm_hostname
   ostemplate = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   cores      = 2
-  memory     = 4096
+  memory     = var.memory
 
   rootfs {
     storage = "local-lvm"
