@@ -60,3 +60,14 @@ variable "gateway" {
   description = "Default gateway for the CT (e.g. 192.168.10.1 for prod, 192.168.20.1 for dev, 192.168.30.1 for qa)"
   type        = string
 }
+
+variable "memory" {
+  description = "CT memory in MiB. k3s + Rancher sits at ~4 GiB resident; prod is sized above the default (see resolve-rancher)."
+  type        = number
+  default     = 4096
+
+  validation {
+    condition     = var.memory >= 2048
+    error_message = "memory must be at least 2048 MiB; k3s + Rancher will not run stably below that."
+  }
+}

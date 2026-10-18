@@ -96,6 +96,8 @@ Current GPU nodes:
 - rancher-dev:  VMID 202, IP 192.168.20.2 (benedict)
 - rancher-qa:   VMID 302, IP 192.168.30.2 (heaton)
 
+CT memory is per-env via the `memory` Terraform var, set in the pipeline's `resolve-rancher` case block (default 4096; **prod 6144**). k3s + Rancher sat at ~4.1 GiB resident, and prod hit the old 4 GiB cgroup limit on 2026-10-18 (memory pressure ~98%, UI timing out); 6144 is that observed usage plus ~2 GiB headroom, not a measured optimum. Applying a size change through the pipeline **destroys and recreates the CT** (the pipeline's pre-flight destroy step, not a provider limitation), so Rancher-local state is lost and the downstream cluster must be re-registered (`register-gpu-worker-rancher.yml`). A live `pct set <vmid> -memory N` on the Proxmox node resizes in place and keeps Rancher's data — use it first, and keep this file in sync so the next reprovision matches.
+
 **Proxmox Backup Server — cluster-wide singleton (management subnet):**
 - pbs: VMID 103, IP 192.168.50.103 (betsy — the 10 TB backup HDD is attached there). Bind-mounts `/mnt/backup-storage` into the CT at `/backup-storage` as the PBS datastore. Single-slot per rule #5 exception. Registered in `pvesm` as `pbs-storage` (cluster-wide). API token credentials in bootstrap vault at `secret/pbs/cluster-storage`.
 
