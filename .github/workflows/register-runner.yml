@@ -32,7 +32,11 @@ on:
 
 jobs:
   register:
-    runs-on: [self-hosted, "${{ inputs.env }}"]
+    # QA recovery must not depend on a QA runner being alive: these are the
+    # workflows that re-create it (GitHub deletes runner registrations and ARC
+    # scale sets after 14 days offline — heaton outage, 2026-10). The management
+    # runner (CT 200) reaches the QA worker and CT 301, so it runs env=qa.
+    runs-on: ${{ fromJSON(inputs.env == 'qa' && '["self-hosted","management"]' || format('["self-hosted","{0}"]', inputs.env)) }}
     env:
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
@@ -71,7 +75,7 @@ jobs:
       - name: Resolve runner LXC IP
         run: |
           # Static fallback IPs per VMID scheme (VMID 101/201/301 → IP .101/.201/.301)
-          declare -A STATIC_IPS=([dev]="192.168.50.201" [prod]="192.168.50.101" [qa]="192.168.50.301")
+          declare -A STATIC_IPS=([dev]="192.168.50.201" [prod]="192.168.50.101" [qa]="192.168.30.101")
 
           # 1. Try vault path (may not be populated yet)
           RUNNER_IP=$(vault kv get -field=ip secret/github-runner/${{ inputs.env }}/state 2>/dev/null || true)
