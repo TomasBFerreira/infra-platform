@@ -68,6 +68,7 @@ adguard_qa_rewrites:
   - domain: prowlarr-qa.databaes.net
   - domain: sonarr-qa.databaes.net
   - domain: radarr-qa.databaes.net
+  - domain: wedding-qa.databaes.net
 
 # Empty today — populate when a prod AdGuard rewrite is needed.
 adguard_prod_rewrites: []
