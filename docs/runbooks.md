@@ -424,6 +424,10 @@ No runner scale set found with identifier N`. A plain restart or
    GitHub-deregister finalizer; clear with `kubectl patch ... -p
    '{"metadata":{"finalizers":null}}' --type=merge`), then
    `gh workflow run arc-deploy.yml -f env=<env>` to recreate it with a fresh id.
+Gotcha: the management runner's service `PATH` is `/sbin:/bin:/usr/sbin:/usr/bin`
+(no `/usr/local/bin`). Tools a workflow installs there (kubectl, helm) are
+invisible until it adds `echo /usr/local/bin >> "$GITHUB_PATH"` — `arc-deploy.yml`
+does; do the same in any new workflow that runs on `[self-hosted, management]`.
 See `issues/qa-arc-blocked-2026-06-21.md` and `issues/wedding-site-qa-env-2026-10-18.md`.
 
 ### Verify the runner is online
