@@ -476,3 +476,13 @@ scale_sets:
     name: wedding-site-prod
     min_runners: 0
     max_runners: 2
+
+  # ── wedding-site qa (2026-10-18) ─────────────────────────────────────────
+  # QA counterpart on heaton's k3s worker (VM 311). The repo's deploy.yml
+  # routes env=qa dispatches here.
+  - repo: TomasBFerreira/wedding-site
+    env: qa
+    label: qa
+    name: wedding-site-qa
+    min_runners: 0
+    max_runners: 2
