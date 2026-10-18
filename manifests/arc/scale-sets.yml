@@ -459,7 +459,7 @@ scale_sets:
 
   # ── wedding-site dev (2026-10-11) ───────────────────────────────────────
   # Single Go binary embedding its own frontends, same shape as chess-coach.
-  # Dev only; the env=prod dispatch falls back to the shared prod LXC runner.
+  # Dev scale set; prod and qa have their own (wedding-site-prod / -qa below).
   - repo: TomasBFerreira/wedding-site
     env: dev
     label: dev
