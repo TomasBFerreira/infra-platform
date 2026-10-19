@@ -1,0 +1,73 @@
+name: Seed incidents Slack webhook
+
+# Merges `slack_webhook_url` into secret/ops-portal/<env>/incidents in the
+# BOOTSTRAP vault, which is where ops-portal-incidents' deploy.yml reads it.
+#
+# Uses a KV v2 PATCH (JSON merge-patch), NOT `kv put`: that secret also holds
+# webhook_token / internal_health_token / postgres_password, and a put would
+# wipe them. The URL comes from a GitHub secret (SLACK_WEBHOOK_URL_<ENV>) and
+# never appears in dispatch inputs, logs, or shell history.
+#
+# Re-run ops-portal-incidents' deploy for the env afterwards so the k8s Secret
+# picks the new value up.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Which env incidents service gets this Slack channel'
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+
+jobs:
+  seed:
+    runs-on: [self-hosted, management]
+    concurrency:
+      group: seed-incidents-slack-webhook-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
+    steps:
+      - name: Patch slack_webhook_url into bootstrap vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+          URL_DEV: ${{ secrets.SLACK_WEBHOOK_URL_DEV }}
+          URL_QA: ${{ secrets.SLACK_WEBHOOK_URL_QA }}
+          URL_PROD: ${{ secrets.SLACK_WEBHOOK_URL_PROD }}
+        run: |
+          set -euo pipefail
+          case "$TARGET_ENV" in
+            dev)  SLACK_URL="$URL_DEV" ;;
+            qa)   SLACK_URL="$URL_QA" ;;
+            prod) SLACK_URL="$URL_PROD" ;;
+            *)    echo "ERROR: unknown environment '$TARGET_ENV'"; exit 1 ;;
+          esac
+          if [ -z "$SLACK_URL" ]; then
+            echo "ERROR: GitHub secret SLACK_WEBHOOK_URL_$(echo "$TARGET_ENV" | tr a-z A-Z) is not set on infra-platform"
+            exit 1
+          fi
+          echo "::add-mask::$SLACK_URL"
+          case "$SLACK_URL" in
+            https://hooks.slack.com/services/*) ;;
+            *) echo "ERROR: value is not a https://hooks.slack.com/services/ URL"; exit 1 ;;
+          esac
+
+          VAULT_ADDR="${VAULT_ADDR%/}"
+          BODY=$(SLACK_URL="$SLACK_URL" python3 -c 'import json,os; print(json.dumps({"data":{"slack_webhook_url":os.environ["SLACK_URL"]}}))')
+          CODE=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -X PATCH \
+            -H "X-Vault-Token: $VAULT_TOKEN" \
+            -H "Content-Type: application/merge-patch+json" \
+            -d "$BODY" \
+            "$VAULT_ADDR/v1/secret/data/ops-portal/$TARGET_ENV/incidents")
+          if [ "$CODE" != "200" ]; then
+            echo "ERROR: vault PATCH returned HTTP $CODE"
+            echo "  000 = vault unreachable; 403/405 = token policy lacks 'patch'; 404 = secret/ops-portal/$TARGET_ENV/incidents missing (run seed-ops-portal-vault.yml first)"
+            exit 1
+          fi
+
+          # Confirm by field NAMES only — never print values.
+          curl -sf --max-time 20 -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/ops-portal/$TARGET_ENV/incidents" \
+            | python3 -c 'import json,sys; print("fields now:", sorted(json.load(sys.stdin)["data"]["data"].keys()))'
