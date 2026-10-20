@@ -234,6 +234,7 @@ jobs:
           TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_cores:          ${{ (inputs.environment || 'dev') == 'prod' && '4' || '2' }}
           TF_VAR_memory:         ${{ (inputs.environment || 'dev') == 'prod' && '8192' || '4096' }}
+          TF_VAR_rootfs_size:    ${{ (inputs.environment || 'dev') == 'prod' && '60G' || '30G' }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/monitoring init -input=false
@@ -254,6 +255,7 @@ jobs:
           TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_cores:          ${{ (inputs.environment || 'dev') == 'prod' && '4' || '2' }}
           TF_VAR_memory:         ${{ (inputs.environment || 'dev') == 'prod' && '8192' || '4096' }}
+          TF_VAR_rootfs_size:    ${{ (inputs.environment || 'dev') == 'prod' && '60G' || '30G' }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
@@ -283,6 +285,7 @@ jobs:
           TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_cores:          ${{ (inputs.environment || 'dev') == 'prod' && '4' || '2' }}
           TF_VAR_memory:         ${{ (inputs.environment || 'dev') == 'prod' && '8192' || '4096' }}
+          TF_VAR_rootfs_size:    ${{ (inputs.environment || 'dev') == 'prod' && '60G' || '30G' }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/monitoring apply \
@@ -415,6 +418,7 @@ jobs:
           TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_cores:          ${{ (inputs.environment || 'dev') == 'prod' && '4' || '2' }}
           TF_VAR_memory:         ${{ (inputs.environment || 'dev') == 'prod' && '8192' || '4096' }}
+          TF_VAR_rootfs_size:    ${{ (inputs.environment || 'dev') == 'prod' && '60G' || '30G' }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/monitoring init -input=false
@@ -435,6 +439,7 @@ jobs:
           TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_cores:          ${{ (inputs.environment || 'dev') == 'prod' && '4' || '2' }}
           TF_VAR_memory:         ${{ (inputs.environment || 'dev') == 'prod' && '8192' || '4096' }}
+          TF_VAR_rootfs_size:    ${{ (inputs.environment || 'dev') == 'prod' && '60G' || '30G' }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
@@ -503,6 +508,7 @@ jobs:
           TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_cores:          ${{ (inputs.environment || 'dev') == 'prod' && '4' || '2' }}
           TF_VAR_memory:         ${{ (inputs.environment || 'dev') == 'prod' && '8192' || '4096' }}
+          TF_VAR_rootfs_size:    ${{ (inputs.environment || 'dev') == 'prod' && '60G' || '30G' }}
         run: |
           cd /app/infra-platform
           ./scripts/run-terraform.sh -chdir terraform/monitoring init -input=false
@@ -523,6 +529,7 @@ jobs:
           TF_VAR_gateway:        ${{ needs.resolve-slots.outputs.gateway }}
           TF_VAR_cores:          ${{ (inputs.environment || 'dev') == 'prod' && '4' || '2' }}
           TF_VAR_memory:         ${{ (inputs.environment || 'dev') == 'prod' && '8192' || '4096' }}
+          TF_VAR_rootfs_size:    ${{ (inputs.environment || 'dev') == 'prod' && '60G' || '30G' }}
           PVE_API:  ${{ needs.resolve-slots.outputs.pve_api_url }}
           PVE_USER: ${{ secrets.PVE_USER }}
         run: |
