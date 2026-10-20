@@ -72,3 +72,14 @@ variable "memory" {
   type        = number
   default     = 4096
 }
+
+variable "rootfs_size" {
+  description = "Root filesystem size for the CT (e.g. 30G). Prod runs SigNoz ClickHouse (30d metrics) + Prometheus (30d) and needs more than dev/qa."
+  type        = string
+  default     = "30G"
+
+  validation {
+    condition     = can(regex("^[0-9]+[GMT]$", var.rootfs_size))
+    error_message = "rootfs_size must look like 60G (digits plus G, M or T)."
+  }
+}

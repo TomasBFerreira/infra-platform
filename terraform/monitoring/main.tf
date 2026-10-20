@@ -12,7 +12,7 @@ resource "proxmox_lxc" "monitoring" {
 
   rootfs {
     storage = "local-lvm"
-    size    = "30G"
+    size    = var.rootfs_size
   }
 
   network {
