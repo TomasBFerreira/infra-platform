@@ -1,0 +1,247 @@
+---
+# Stalwart mail server — docker-compose-in-LXC, modeled on ansible/monitoring.
+#
+# MVP scope (Project A1): outbound submission + smarthost relay (Brevo) + DKIM
+# signing, so Authentik can send account-recovery / verification email branded
+# as @databaes.net. IMAP mailboxes / JMAP / webmail are Project A2.
+#
+# IMPORTANT — Stalwart config schema drifts between releases. The templated
+# config.toml below targets the pinned image tag (var stalwart_image_tag) and
+# follows the documented structure, but MUST be validated on first deploy:
+# `docker logs stalwart-mail` will report unknown keys. The web admin UI
+# (bound to the internal interface, port 8080) is the fallback for any setting
+# the file gets wrong. Once validated against the running version, pin the tag.
+- name: Stalwart Mail Server LXC Setup
+  hosts: all
+  gather_facts: true
+  become: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    LC_ALL: C.UTF-8
+    LANG: C.UTF-8
+
+  vars:
+    mail_dir: /opt/stalwart-mail
+    deploy_env: "{{ mail_env | default('dev') }}"
+    mail_domain: databaes.net
+    # Public-facing mail hostname (used in EHLO / HELO + the web admin + certs).
+    mail_hostname: "{{ 'mail-dev.databaes.net' if deploy_env == 'dev' else ('mail-qa.databaes.net' if deploy_env == 'qa' else 'mail.databaes.net') }}"
+    stalwart_image_tag: "latest"   # TODO: pin to the validated stable tag after first deploy
+
+  tasks:
+    # ── System prerequisites ─────────────────────────────────────────────────
+    - name: Install system prerequisites
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - git
+          - rsync          # used by deploy sync over SSH
+          - sudo           # required for become_user tasks
+        state: present
+        update_cache: yes
+
+    # ── Standard users (rule #11) ────────────────────────────────────────────
+    - name: Ensure appadm user exists
+      user:
+        name: appadm
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure tomas user exists
+      user:
+        name: tomas
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo
+        append: yes
+        state: present
+
+    # ── Docker ───────────────────────────────────────────────────────────────
+    - name: Add Docker GPG key
+      shell: |
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Add Docker apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Enable and start Docker
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: Add appadm to docker group
+      user:
+        name: appadm
+        groups: docker
+        append: yes
+
+    # ── Directory structure ──────────────────────────────────────────────────
+    - name: Create Stalwart base + data directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: appadm
+        group: appadm
+        mode: '0750'
+      loop:
+        - "{{ mail_dir }}"
+        - "{{ mail_dir }}/etc"
+        - "{{ mail_dir }}/data"
+        - "{{ mail_dir }}/logs"
+
+    # ── Secrets from vault (env-specific vault) ──────────────────────────────
+    # secret/mail/<env> fields:
+    #   relay_host, relay_port, relay_user, relay_pass   (Brevo smarthost)
+    #   admin_pass                                        (Stalwart web admin)
+    #   noreply_pass                                      (submission account Authentik uses)
+    #   dkim_selector                                     (e.g. "stalwart")
+    # The DKIM private key is generated below if absent and stored back to vault.
+    - name: Read mail secrets from env Vault
+      delegate_to: localhost
+      become: no
+      shell: |
+        get() { vault kv get -field="$1" secret/mail/{{ deploy_env }} 2>/dev/null || true; }
+        echo "relay_host=$(get relay_host)"
+        echo "relay_port=$(get relay_port)"
+        echo "relay_user=$(get relay_user)"
+        echo "relay_pass=$(get relay_pass)"
+        echo "admin_pass=$(get admin_pass)"
+        echo "noreply_pass=$(get noreply_pass)"
+        echo "dkim_selector=$(get dkim_selector)"
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') }}"
+      register: mail_secrets_raw
+      changed_when: false
+      no_log: true
+
+    - name: Parse mail secret facts
+      set_fact:
+        _relay_host: "{{ (mail_secrets_raw.stdout | regex_search('relay_host=(.*)', '\\1') or ['']) | first }}"
+        _relay_port: "{{ (mail_secrets_raw.stdout | regex_search('relay_port=(.*)', '\\1') or ['587']) | first }}"
+        _relay_user: "{{ (mail_secrets_raw.stdout | regex_search('relay_user=(.*)', '\\1') or ['']) | first }}"
+        _relay_pass: "{{ (mail_secrets_raw.stdout | regex_search('relay_pass=(.*)', '\\1') or ['']) | first }}"
+        _admin_pass: "{{ (mail_secrets_raw.stdout | regex_search('admin_pass=(.*)', '\\1') or ['']) | first }}"
+        _noreply_pass: "{{ (mail_secrets_raw.stdout | regex_search('noreply_pass=(.*)', '\\1') or ['']) | first }}"
+        _dkim_selector: "{{ (mail_secrets_raw.stdout | regex_search('dkim_selector=(.*)', '\\1') or ['stalwart']) | first }}"
+      no_log: true
+
+    - name: Fail early if the Brevo relay secret is missing
+      fail:
+        msg: >-
+          secret/mail/{{ deploy_env }} is missing relay_host/relay_user/relay_pass.
+          Seed it from the Brevo SMTP credentials before deploying (see
+          /app/issues/self-service-accounts-2026-06-02.md). Outbound mail cannot
+          be delivered without the smarthost relay.
+      when: _relay_host == '' or _relay_user == '' or _relay_pass == ''
+
+    # ── DKIM key (generate once, persist to vault) ───────────────────────────
+    - name: Generate DKIM RSA private key if absent
+      delegate_to: localhost
+      become: no
+      shell: |
+        EXISTING=$(vault kv get -field=dkim_private_key secret/mail/{{ deploy_env }} 2>/dev/null || true)
+        if [ -z "$EXISTING" ]; then
+          KEY=$(openssl genrsa 2048 2>/dev/null)
+          vault kv patch secret/mail/{{ deploy_env }} dkim_private_key="$KEY" >/dev/null 2>&1 \
+            || vault kv put secret/mail/{{ deploy_env }} dkim_private_key="$KEY" >/dev/null 2>&1
+        fi
+        vault kv get -field=dkim_private_key secret/mail/{{ deploy_env }}
+      environment:
+        VAULT_ADDR: "{{ lookup('env', 'VAULT_ADDR') }}"
+        VAULT_TOKEN: "{{ lookup('env', 'VAULT_TOKEN') }}"
+      register: dkim_key_raw
+      changed_when: false
+      no_log: true
+
+    - name: Write DKIM private key to the CT
+      copy:
+        dest: "{{ mail_dir }}/etc/dkim-private.key"
+        content: "{{ dkim_key_raw.stdout }}\n"
+        owner: appadm
+        group: appadm
+        mode: '0400'
+      no_log: true
+
+    # ── Config + compose ─────────────────────────────────────────────────────
+    - name: Template Stalwart config.toml
+      template:
+        src: config.toml.j2
+        dest: "{{ mail_dir }}/etc/config.toml"
+        owner: appadm
+        group: appadm
+        mode: '0640'
+      no_log: true
+
+    - name: Template docker-compose.yml
+      template:
+        src: docker-compose.yml.j2
+        dest: "{{ mail_dir }}/docker-compose.yml"
+        owner: appadm
+        group: appadm
+        mode: '0640'
+
+    - name: Pull Stalwart image
+      shell: docker compose pull
+      args:
+        chdir: "{{ mail_dir }}"
+      become_user: appadm
+      environment:
+        HOME: /home/appadm
+
+    - name: Start Stalwart
+      shell: docker compose up -d
+      args:
+        chdir: "{{ mail_dir }}"
+      become_user: appadm
+      environment:
+        HOME: /home/appadm
+
+    - name: Wait for Stalwart management port to answer
+      wait_for:
+        host: 127.0.0.1
+        port: 8080
+        timeout: 60
+      ignore_errors: yes
+
+    # The DKIM *public* record to publish in DNS is derived from the private key;
+    # surface it in the play recap so the operator can confirm it matches the
+    # value seeded into the mail-dns workflow.
+    - name: Compute DKIM public record (for DNS cross-check)
+      delegate_to: localhost
+      become: no
+      shell: |
+        P=$(openssl rsa -in /dev/stdin -pubout 2>/dev/null <<'EOF'
+        {{ dkim_key_raw.stdout }}
+        EOF
+        ) ; echo "$P" | grep -v '^-----' | tr -d '\n'
+      register: dkim_pub
+      changed_when: false
+      no_log: true
+
+    - name: Show DKIM TXT value to publish
+      debug:
+        msg: >-
+          DKIM TXT for {{ _dkim_selector }}._domainkey.{{ mail_domain }} =>
+          v=DKIM1; k=rsa; p={{ dkim_pub.stdout }}
