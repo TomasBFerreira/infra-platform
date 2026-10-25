@@ -76,6 +76,7 @@ Runner state (singletons, no slot rotation):
 | `secret/sso/prod/active-slot` | `slot, vmid, ip` | SSO pipeline |
 | `secret/wedding-site/<env>/postgres` | `password` | `seed-wedding-site-secrets.yml` (generated once, never rotated by re-runs — the PVC keeps the old one); consumed by wedding-site's `deploy.yml` |
 | `secret/wedding-site/<env>/mail` | `api_key` | `seed-wedding-site-secrets.yml` (copied from the `BREVO_API_KEY` Actions secret) — Brevo HTTPS API key used to email login codes |
+| `secret/wedding-site/<env>/translate` | `key` | `seed-wedding-site-secrets.yml` (copied from the `DEEPL_API_KEY` Actions secret; optional) — DeepL Free key for the excursion editor's auto-translate. One key serves every env; master copy is the prod env vault at `secret/wedding-site/dev/translate`. Rotate: update the prod vault copy and the Actions secret, then re-run the seed workflow per env |
 
 ## Env Vault — Secrets Inventory
 
