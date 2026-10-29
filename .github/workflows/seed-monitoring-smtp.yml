@@ -1,0 +1,47 @@
+name: Seed monitoring SMTP
+
+# otel-monitoring's deploy.yml reads Grafana's SMTP relay settings from the
+# bootstrap vault (secret/monitoring/<env>/smtp: host, port, user, password,
+# from) and wires GF_SMTP_* for storage-alert email. Copied from the same
+# BREVO_RELAY_* Actions secrets the SSO pipeline uses for Authentik. Re-run
+# whenever the Brevo relay credentials are rotated.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment to seed
+        type: choice
+        options: [dev, qa, prod]
+        required: true
+
+jobs:
+  seed:
+    runs-on: [self-hosted, management]
+    steps:
+      - name: Write SMTP settings to vault
+        env:
+          VAULT_ADDR:       ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN:      ${{ secrets.VAULT_DEV_TOKEN }}
+          BREVO_RELAY_USER: ${{ secrets.BREVO_RELAY_USER }}
+          BREVO_RELAY_PASS: ${{ secrets.BREVO_RELAY_PASS }}
+          TARGET_ENV:       ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          test -n "$BREVO_RELAY_USER" && test -n "$BREVO_RELAY_PASS" \
+            || { echo "::error::BREVO_RELAY_USER / BREVO_RELAY_PASS Actions secrets are empty"; exit 1; }
+          echo "::add-mask::${BREVO_RELAY_PASS}"
+          vault kv put "secret/monitoring/${TARGET_ENV}/smtp" \
+            host="smtp-relay.brevo.com" port="587" \
+            user="$BREVO_RELAY_USER" password="$BREVO_RELAY_PASS" \
+            from="noreply@databaes.net" >/dev/null
+          echo "Wrote secret/monitoring/${TARGET_ENV}/smtp."
+
+      - name: Confirm field names (no values)
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          TARGET_ENV:  ${{ inputs.env }}
+        run: |
+          vault kv get -format=json "secret/monitoring/${TARGET_ENV}/smtp" \
+            | python3 -c 'import json,sys; print(sorted(json.load(sys.stdin)["data"]["data"]))'
