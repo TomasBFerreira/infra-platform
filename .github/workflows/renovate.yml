@@ -129,7 +129,7 @@ jobs:
           query="is:pr is:open author:app/renovate-tbf created:>=${since}${repo_qualifiers}"
           echo "Search query: ${query}"
 
-          results=$(gh api search/issues -f q="${query}" -f per_page=50)
+          results=$(gh api -X GET search/issues -f q="${query}" -f per_page=50)
 
           items="[]"
           while IFS= read -r pr; do
