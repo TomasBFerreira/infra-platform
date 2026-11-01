@@ -112,15 +112,22 @@ jobs:
           # The list endpoint can return bare {id} entries with no `expires`,
           # so read each key individually. all=true includes keys made by
           # other users (e.g. the API key this job authenticates with).
-          if list=$(ts_get "${api}/keys?all=true"); then
+          if list=$(ts_get "${api}/keys?all=true") && jq -e '.keys' >/dev/null 2>&1 <<<"$list"; then
             listed=$(echo "$list" | jq '.keys | length')
-            ids=$(echo "$list" | jq -r '[.keys[]?.id][:100][]')
+            ids=$(echo "$list" | jq -r '[.keys[]?.id | select(. != null)][:100][]')
             now_epoch=$(date -u +%s)
             details="[]"
             unreadable=0
             total=0
+            deadline=$((SECONDS + 300))
             for id in $ids; do
               total=$((total + 1))
+              # Bound the loop so a slow API can't hit the job timeout and
+              # lose the whole sweep; unvisited keys count as unreadable.
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                unreadable=$((unreadable + 1))
+                continue
+              fi
               if d=$(ts_get "${api}/keys/${id}") && jq -e . >/dev/null 2>&1 <<<"$d"; then
                 details=$(jq -c --argjson d "$d" '. + [$d]' <<<"$details")
               else
@@ -130,7 +137,7 @@ jobs:
             echo "Tailscale keys listed: ${listed}, checked: ${total}, readable: $((total - unreadable)), with expires: $(jq '[.[] | select(.expires != null)] | length' <<<"$details")"
             # Skip revoked/invalid keys and ones already past expiry: they are
             # dead, and flagging them would alert forever.
-            findings=$(jq -c --arg now "$now_epoch" --arg warn_days "$warn_days" --arg unreadable "$unreadable" --arg skipped "$((listed - total))" '
+            findings=$(jq -c --arg now "$now_epoch" --arg warn_days "$warn_days" --arg unreadable "$unreadable" --arg skipped "$((listed > 100 ? listed - 100 : 0))" '
               [.[] | select(.expires != null and (.revoked // false | not) and (.invalid // false | not)) |
                 (.expires | fromdateiso8601) as $exp |
                 (($exp - ($now | tonumber)) / 86400 | floor) as $days_left |
