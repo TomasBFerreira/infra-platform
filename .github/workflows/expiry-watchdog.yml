@@ -227,7 +227,9 @@ jobs:
   email-digest:
     needs: sweep
     if: needs.sweep.outputs.items_json != '[]' || inputs.force_email == true
-    runs-on: ubuntu-latest
+    # Self-hosted, not ubuntu-latest: Brevo's authorised-IP list only allows the
+    # homelab egress IP, so a GitHub-hosted runner gets 401 "unrecognised IP".
+    runs-on: [self-hosted, management]
     timeout-minutes: 2
     steps:
       - name: Send expiry digest via Brevo
