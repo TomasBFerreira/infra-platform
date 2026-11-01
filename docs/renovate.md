@@ -94,8 +94,12 @@ curl -X POST \
 The orchestrator workflow authenticates with `secrets.VAULT_RENOVATE_TOKEN`,
 a scoped periodic token (`period=768h`) attached to the `renovate` vault
 policy. The policy allows read+list on `secret/data/renovate/*` and
-`secret/metadata/renovate/*` and nothing else. To rotate the token, on a
-host with bootstrap-vault root-token access:
+`secret/metadata/renovate/*`, plus `auth/token/lookup-self` and
+`auth/token/renew-self` (self-scoped; added 2026-11-01), and nothing else.
+Periodic tokens are **not** renewed by use — the daily `expiry-watchdog.yml`
+renews this one, which is why the policy needs those two self paths (a token
+with `no_default_policy` and without them can never renew and lapses after
+768h). To rotate the token, on a host with bootstrap-vault root-token access:
 
 ```bash
 ROOT=$(ssh root@192.168.50.4 'pct exec 200 -- jq -r .root_token /root/vault-init.json')

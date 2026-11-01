@@ -50,8 +50,9 @@ jobs:
       # Bootstrap vault (CT 200, 192.168.50.200), authenticated with a
       # scoped token that can only read `secret/data/renovate/*` and
       # `secret/metadata/renovate/*` — see vault policy `renovate` upserted
-      # 2026-05-19. Token is `period=768h` (auto-renews on each use, valid
-      # as long as Renovate keeps running at least every 32 days).
+      # 2026-05-19. Token is `period=768h`. Periodic tokens are NOT renewed
+      # by use; the expiry-watchdog renews this one daily (the `renovate`
+      # policy allows lookup-self + renew-self).
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       VAULT_TOKEN: ${{ secrets.VAULT_RENOVATE_TOKEN }}
     steps:
