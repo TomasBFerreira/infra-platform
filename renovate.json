@@ -7,7 +7,7 @@
   "prHourlyLimit": 1,
   "prConcurrentLimit": 1,
 
-  "_comment": "infra-platform is huge and NOT meant to be Renovate's general playground — this file exists solely to track the Authentik version pinned in ansible/sso/sso_setup.yml (COTS update tracking for the ops-portal Updates tab, see /app/issues/ for the design doc). enabledManagers below is the safety rail: without it, Renovate's default managers (terraform, ansible, docker, github-actions, npm, ...) would scan the whole repo and could open PRs across infrastructure this workflow was never meant to touch.",
+  "description": ["infra-platform is huge and NOT meant to be Renovate's general playground — this file exists solely to track the Authentik version pinned in ansible/sso/sso_setup.yml (COTS update tracking for the ops-portal Updates tab, see /app/issues/ for the design doc). enabledManagers below is the safety rail: without it, Renovate's default managers (terraform, ansible, docker, github-actions, npm, ...) would scan the whole repo and could open PRs across infrastructure this workflow was never meant to touch."],
   "enabledManagers": ["custom.regex"],
 
   "customManagers": [
