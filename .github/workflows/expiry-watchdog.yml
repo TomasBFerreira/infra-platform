@@ -116,7 +116,7 @@ jobs:
                 {name: ("tailscale key: " + (.description // .id)),
                  kind: "tailscale_key",
                  severity: (if $days_left < 3 then "critical" else "warn" end),
-                 detail: ($days_left | tostring) + " day(s) left"}
+                 detail: (($days_left | tostring) + " day(s) left")}
               ]')
           else
             findings='[{"name":"TAILSCALE_API_KEY","kind":"tailscale_key","severity":"critical","detail":"API call itself failed — key may already be dead, see workflow log"}]'
