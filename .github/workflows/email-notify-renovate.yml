@@ -51,7 +51,8 @@ jobs:
             exit 0
           fi
 
-          subject="[Updates] ${count} COTS update$( [ "${count}" -ne 1 ] && echo s ) available"
+          plural=s; [ "${count}" -eq 1 ] && plural=""
+          subject="[Updates] ${count} COTS update${plural} available"
 
           rows=$(echo "${ITEMS_JSON}" | jq -r '
             map("<li><b>" + .affected_ci + "</b> (" + .repo + "): <a href=\"" + .url + "\">" + (.title | @html) + "</a></li>")
