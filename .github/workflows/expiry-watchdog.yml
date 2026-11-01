@@ -11,7 +11,7 @@ name: Expiry watchdog
 #      VAULT_PROD_TOKEN silently expiring — see infra-platform CLAUDE.md
 #      gotchas and /app/reports/2026-05-30-grafana-recovery.md).
 #   2. Tailscale authkeys + the API key itself — real introspection via
-#      GET /api/v2/tailnet/{tailnet}/keys (`expires` field).
+#      GET /api/v2/tailnet/{tailnet}/keys?all=true, then GET .../keys/{id} per key (`expires` field).
 #   3. Everything else that has no expiry-read API at all (classic GH PAT,
 #      Brevo creds, the GLM key) — a CURATED list in expiry-watch.json,
 #      hand-maintained, date-math only. This is NOT the same quality of
@@ -113,24 +113,24 @@ jobs:
           # so read each key individually. all=true includes keys made by
           # other users (e.g. the API key this job authenticates with).
           if list=$(ts_get "${api}/keys?all=true"); then
-            ids=$(echo "$list" | jq -r '.keys[]?.id')
+            listed=$(echo "$list" | jq '.keys | length')
+            ids=$(echo "$list" | jq -r '[.keys[]?.id][:100][]')
             now_epoch=$(date -u +%s)
             details="[]"
             unreadable=0
             total=0
             for id in $ids; do
               total=$((total + 1))
-              [ "$total" -le 100 ] || break
-              if d=$(ts_get "${api}/keys/${id}"); then
+              if d=$(ts_get "${api}/keys/${id}") && jq -e . >/dev/null 2>&1 <<<"$d"; then
                 details=$(jq -c --argjson d "$d" '. + [$d]' <<<"$details")
               else
                 unreadable=$((unreadable + 1))
               fi
             done
-            echo "Tailscale keys listed: ${total}, readable: $((total - unreadable)), with expires: $(jq '[.[] | select(.expires != null)] | length' <<<"$details")"
+            echo "Tailscale keys listed: ${listed}, checked: ${total}, readable: $((total - unreadable)), with expires: $(jq '[.[] | select(.expires != null)] | length' <<<"$details")"
             # Skip revoked/invalid keys and ones already past expiry: they are
             # dead, and flagging them would alert forever.
-            findings=$(jq -c --arg now "$now_epoch" --arg warn_days "$warn_days" --arg unreadable "$unreadable" '
+            findings=$(jq -c --arg now "$now_epoch" --arg warn_days "$warn_days" --arg unreadable "$unreadable" --arg skipped "$((listed - total))" '
               [.[] | select(.expires != null and (.revoked // false | not) and (.invalid // false | not)) |
                 (.expires | fromdateiso8601) as $exp |
                 (($exp - ($now | tonumber)) / 86400 | floor) as $days_left |
@@ -142,6 +142,10 @@ jobs:
               ] + (if ($unreadable | tonumber) > 0 then
                 [{name: "tailscale key details", kind: "tailscale_key", severity: "warn",
                   detail: (($unreadable) + " key(s) could not be read — expiry unknown, see workflow log")}]
+                else [] end)
+              + (if ($skipped | tonumber) > 0 then
+                [{name: "tailscale key list truncated", kind: "tailscale_key", severity: "warn",
+                  detail: (($skipped) + " key(s) beyond the first 100 were not checked")}]
                 else [] end)' <<<"$details")
           else
             findings='[{"name":"TAILSCALE_API_KEY","kind":"tailscale_key","severity":"critical","detail":"API call itself failed — key may already be dead, see workflow log"}]'
@@ -170,12 +174,16 @@ jobs:
 
       - name: Aggregate
         id: aggregate
+        env:
+          VAULT_FINDINGS: ${{ steps.vault_check.outputs.vault_findings }}
+          TS_FINDINGS: ${{ steps.ts_check.outputs.ts_findings }}
+          CURATED_FINDINGS: ${{ steps.curated_check.outputs.curated_findings }}
         run: |
           set -euo pipefail
           items=$(jq -c -n \
-            --argjson a '${{ steps.vault_check.outputs.vault_findings }}' \
-            --argjson b '${{ steps.ts_check.outputs.ts_findings }}' \
-            --argjson c '${{ steps.curated_check.outputs.curated_findings }}' \
+            --argjson a "$VAULT_FINDINGS" \
+            --argjson b "$TS_FINDINGS" \
+            --argjson c "$CURATED_FINDINGS" \
             '$a + $b + $c')
           echo "Findings: $(echo "$items" | jq 'length')"
           echo "$items" | jq .
@@ -202,7 +210,7 @@ jobs:
           subject="[Expiry watchdog] ${count} credential(s) need attention"
 
           rows=$(echo "${ITEMS_JSON}" | jq -r '
-            map("<li><b>" + (.severity | ascii_upcase) + "</b> " + .name + " — " + (.detail | @html) + "</li>")
+            map("<li><b>" + (.severity | ascii_upcase) + "</b> " + (.name | @html) + " — " + (.detail | @html) + "</li>")
             | join("")
           ')
           html="<p>Expiry watchdog found ${count} credential(s) inside their warning window:</p><ul>${rows}</ul><p>Vault-token and Tailscale-key findings are real introspection. Anything labelled MANUALLY TRACKED comes from expiry-watch.json's hand-maintained rotation dates, not a live API — treat it as a reminder to check, not a certainty.</p>"
