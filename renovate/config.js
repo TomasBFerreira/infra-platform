@@ -14,7 +14,7 @@
 module.exports = {
   platform: 'github',
   endpoint: 'https://api.github.com/',
-  username: 'renovate[bot]',
+  username: 'renovate-tbf[bot]',
   gitAuthor: 'Renovate Bot <noreply@databaes.net>',
 
   // We pre-provide renovate.json in each managed repo, so skip the auto
