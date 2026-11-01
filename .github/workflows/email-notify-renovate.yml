@@ -33,7 +33,9 @@ on:
 
 jobs:
   notify:
-    runs-on: ubuntu-latest
+    # Self-hosted: Brevo only accepts the homelab egress IP (GitHub-hosted runners
+    # get 401 "unrecognised IP address").
+    runs-on: [self-hosted, management]
     timeout-minutes: 2
     steps:
       - name: Send digest email via Brevo
