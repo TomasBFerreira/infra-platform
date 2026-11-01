@@ -71,8 +71,8 @@ jobs:
             [ -n "$token" ] || { echo "skip ${label}: no token secret set"; return; }
             local out
             if ! out=$(VAULT_ADDR="$addr" VAULT_TOKEN="$token" vault token lookup -format=json 2>&1); then
-              findings=$(echo "$findings" | jq -c --arg label "$label" \
-                '. + [{name: $label, kind: "vault_token", severity: "critical", detail: "lookup failed — token may already be dead: see workflow log"}]')
+              findings=$(echo "$findings" | jq -c --arg name "$label" \
+                '. + [{name: $name, kind: "vault_token", severity: "critical", detail: "lookup failed — token may already be dead: see workflow log"}]')
               echo "::warning::Vault token lookup failed for ${label}"
               return
             fi
@@ -81,8 +81,8 @@ jobs:
             period=$(echo "$out" | jq -r '.data.period // 0')
             if [ "$period" != "0" ] && [ "$ttl" -lt "$((warn_hours * 3600))" ]; then
               local hours_left=$((ttl / 3600))
-              findings=$(echo "$findings" | jq -c --arg label "$label" --arg hrs "$hours_left" \
-                '. + [{name: $label, kind: "vault_token", severity: "warn", detail: ("periodic token, " + $hrs + "h left in current TTL window — needs a renewing use soon")}]')
+              findings=$(echo "$findings" | jq -c --arg name "$label" --arg hrs "$hours_left" \
+                '. + [{name: $name, kind: "vault_token", severity: "warn", detail: ("periodic token, " + $hrs + "h left in current TTL window — needs a renewing use soon")}]')
             fi
           }
 
@@ -116,7 +116,7 @@ jobs:
                 {name: ("tailscale key: " + (.description // .id)),
                  kind: "tailscale_key",
                  severity: (if $days_left < 3 then "critical" else "warn" end),
-                 detail: ($days_left | tostring) + " day(s) left"}
+                 detail: (($days_left | tostring) + " day(s) left")}
               ]')
           else
             findings='[{"name":"TAILSCALE_API_KEY","kind":"tailscale_key","severity":"critical","detail":"API call itself failed — key may already be dead, see workflow log"}]'
