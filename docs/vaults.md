@@ -18,6 +18,20 @@ Prod env vault (192.168.10.45 or .46, whichever is active)
     Credentials: VAULT_PROD_ADDR / VAULT_PROD_TOKEN GitHub secrets.
 ```
 
+### CI token lifetime (periodic tokens do not renew on use)
+
+The `VAULT_*TOKEN` CI secrets are **periodic** tokens (`reseed-*-vault-ci-token.yml`, ~30-day period).
+A periodic token's TTL is reset **only by an explicit `renew-self`** — reading or writing secrets with it
+does *not* renew it (verified 2026-11-01: TTL unchanged after a successful read). Earlier docs said
+"renews on every use"; that was wrong, and is why these tokens lapsed on a schedule.
+
+The daily `expiry-watchdog.yml` is what keeps them alive: it calls `renew-self` on every periodic,
+renewable token it can reach (`VAULT_DEV_TOKEN`, `VAULT_TOKEN`, `VAULT_QA_TOKEN`, `VAULT_PROD_TOKEN`,
+`VAULT_RENOVATE_TOKEN`), and reports instead of renewing when it can't. Any policy attached to such a
+token **must** allow `auth/token/lookup-self` (read) and `auth/token/renew-self` (update) — a token minted
+with `no_default_policy` has neither, and can never renew itself. QA's vault is not reachable from the
+management runner, so the watchdog reports that token as "unreachable" (warn), not as checked or renewed.
+
 Active slot for each env vault is tracked in the bootstrap vault:
 - `secret/vault-ct/dev/active-slot` → `{slot, vmid, ip}`
 - `secret/vault-ct/prod/active-slot` → `{slot, vmid, ip}`

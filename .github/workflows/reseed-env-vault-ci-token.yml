@@ -13,7 +13,7 @@ name: Reseed env vault CI token
 #
 # This installs a least-privilege `env-ci` policy in the chosen env vault using
 # that env's ROOT token (root tokens don't expire), mints a **periodic** token
-# (renews on every use; no absolute expiry while used at least once per period),
+# (no absolute expiry while renewed within each period; use alone does NOT renew — the daily expiry-watchdog calls renew-self),
 # verifies it can do what the pipelines need, and only then overwrites the
 # env's VAULT_*TOKEN GitHub secret.
 #
@@ -31,7 +31,7 @@ on:
       period_hours:
         description: 'Token period in hours (renew window)'
         required: false
-        default: '720'    # 30 days; pipelines run far more often, so it self-renews
+        default: '720'    # 30 days; expiry-watchdog renews daily (use alone does not renew)
         type: string
 
 jobs:
@@ -144,4 +144,4 @@ jobs:
 
       - name: Summary
         run: |
-          echo "::notice::Env vault CI token rotated for ${ENVIRONMENT}. Policy 'env-ci' installed (KV + autodetect + lookup/renew-self + token mgmt). New token is periodic (renews on use; no absolute expiry). Re-dispatch per env if one ever lapses."
+          echo "::notice::Env vault CI token rotated for ${ENVIRONMENT}. Policy 'env-ci' installed (KV + autodetect + lookup/renew-self + token mgmt). New token is periodic (renewed daily by expiry-watchdog renew-self; use alone does not renew). Re-dispatch per env if one ever lapses."

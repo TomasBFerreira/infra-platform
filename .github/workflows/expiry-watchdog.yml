@@ -56,41 +56,64 @@ jobs:
           VAULT_RENOVATE_TOKEN: ${{ secrets.VAULT_RENOVATE_TOKEN }}
         run: |
           set -euo pipefail
-          # Warn once a periodic token's current TTL window has less than
-          # this many hours left. Periodic tokens renew to their full
-          # `period` on every use, so a low TTL here really means "nothing
-          # has used/renewed this token recently, not that it's inherently
-          # about to die forever" — but that's exactly the failure mode
-          # that bit VAULT_DEV_TOKEN/VAULT_PROD_TOKEN before, so it's the
-          # right thing to flag.
+          # Periodic tokens are NOT renewed by use: only an explicit renew-self
+          # resets the TTL (verified 2026-11-01 — TTL unchanged after a read).
+          # Nothing else renews these CI tokens, so this daily sweep does it:
+          # every periodic, renewable token it can reach is renewed here, far
+          # inside its period. A token that can't be renewed, or is non-periodic
+          # and close to expiry, is reported instead.
           warn_hours=48
           findings="[]"
 
+          fmt_ttl () {  # seconds -> "45min" / "30h"
+            if [ "$1" -lt 7200 ]; then echo "$(( $1 / 60 ))min"; else echo "$(( $1 / 3600 ))h"; fi
+          }
+
+          add_finding () {  # name severity detail
+            findings=$(echo "$findings" | jq -c --arg name "$1" --arg sev "$2" --arg detail "$3" \
+              '. + [{name: $name, kind: "vault_token", severity: $sev, detail: $detail}]')
+          }
+
           check_token () {
-            local label="$1" addr="$2" token="$3"
+            local label="$1" addr="$2" token="$3" remint="$4"
             [ -n "$token" ] || { echo "skip ${label}: no token secret set"; return; }
             local out
             if ! out=$(VAULT_ADDR="$addr" VAULT_TOKEN="$token" vault token lookup -format=json 2>&1); then
-              findings=$(echo "$findings" | jq -c --arg name "$label" \
-                '. + [{name: $name, kind: "vault_token", severity: "critical", detail: "lookup failed — token may already be dead: see workflow log"}]')
-              echo "::warning::Vault token lookup failed for ${label}: $(echo "$out" | head -n 3 | tr '\n' ' ' | cut -c1-300)"
+              # Vault's error carries the URL and HTTP status, never the token.
+              local reason
+              reason=$(echo "$out" | grep -v '^[[:space:]]*$' | head -n 6 | tr '\n' ' ' | cut -c1-400 || true)
+              echo "::warning::Vault token lookup failed for ${label}: ${reason}"
+              if echo "$out" | grep -q -i -E 'no route to host|connection refused|i/o timeout|no such host|network is unreachable|context deadline exceeded'; then
+                add_finding "$label" warn "could not reach this Vault from the runner — token state unknown (see workflow log)"
+              else
+                add_finding "$label" critical "lookup failed — token rejected or expired; re-mint with ${remint} (see workflow log)"
+              fi
               return
             fi
-            local ttl period
+            local ttl period renewable
             ttl=$(echo "$out" | jq -r '.data.ttl // 0')
             period=$(echo "$out" | jq -r '.data.period // 0')
-            if [ "$period" != "0" ] && [ "$ttl" -lt "$((warn_hours * 3600))" ]; then
-              local hours_left=$((ttl / 3600))
-              findings=$(echo "$findings" | jq -c --arg name "$label" --arg hrs "$hours_left" \
-                '. + [{name: $name, kind: "vault_token", severity: "warn", detail: ("periodic token, " + $hrs + "h left in current TTL window — needs a renewing use soon")}]')
+            renewable=$(echo "$out" | jq -r '.data.renewable // false')
+            if [ "$period" != "0" ] && [ "$renewable" = "true" ]; then
+              local rout
+              if rout=$(VAULT_ADDR="$addr" VAULT_TOKEN="$token" vault token renew -format=json 2>&1); then
+                echo "renewed ${label}: ttl was $(fmt_ttl "$ttl"), now $(fmt_ttl "$(echo "$rout" | jq -r '.auth.lease_duration // 0')")"
+              else
+                echo "::warning::Vault token renew failed for ${label}: $(echo "$rout" | grep -v '^[[:space:]]*$' | head -n 4 | tr '\n' ' ' | cut -c1-300)"
+                add_finding "$label" warn "periodic token could not be renewed (policy may lack auth/token/renew-self); $(fmt_ttl "$ttl") left — re-mint with ${remint}"
+              fi
+            elif [ "$ttl" != "0" ] && [ "$ttl" -lt "$((warn_hours * 3600))" ]; then
+              local kind="non-periodic token"
+              [ "$period" != "0" ] && kind="periodic token that Vault reports as non-renewable"
+              add_finding "$label" warn "${kind}, $(fmt_ttl "$ttl") left and it cannot be renewed — re-mint with ${remint}"
             fi
           }
 
-          check_token "VAULT_DEV_TOKEN (bootstrap-ci)" "$VAULT_BOOTSTRAP_ADDR" "$VAULT_DEV_TOKEN"
-          check_token "VAULT_TOKEN (dev env-ci)" "$VAULT_ADDR_DEV" "$VAULT_TOKEN_DEV"
-          check_token "VAULT_QA_TOKEN (qa env-ci)" "$VAULT_ADDR_QA" "$VAULT_TOKEN_QA"
-          check_token "VAULT_PROD_TOKEN (prod env-ci)" "$VAULT_ADDR_PROD" "$VAULT_TOKEN_PROD"
-          check_token "VAULT_RENOVATE_TOKEN (bootstrap, renovate policy)" "$VAULT_BOOTSTRAP_ADDR" "$VAULT_RENOVATE_TOKEN"
+          check_token "VAULT_DEV_TOKEN (bootstrap-ci)" "$VAULT_BOOTSTRAP_ADDR" "$VAULT_DEV_TOKEN" "reseed-bootstrap-vault-ci-token.yml"
+          check_token "VAULT_TOKEN (dev env-ci)" "$VAULT_ADDR_DEV" "$VAULT_TOKEN_DEV" "reseed-env-vault-ci-token.yml -f environment=dev"
+          check_token "VAULT_QA_TOKEN (qa env-ci)" "$VAULT_ADDR_QA" "$VAULT_TOKEN_QA" "reseed-env-vault-ci-token.yml -f environment=qa"
+          check_token "VAULT_PROD_TOKEN (prod env-ci)" "$VAULT_ADDR_PROD" "$VAULT_TOKEN_PROD" "reseed-env-vault-ci-token.yml -f environment=prod"
+          check_token "VAULT_RENOVATE_TOKEN (bootstrap, renovate policy)" "$VAULT_BOOTSTRAP_ADDR" "$VAULT_RENOVATE_TOKEN" "the rotation recipe in docs/renovate.md"
 
           echo "vault_findings=$(echo "$findings" | jq -c .)" >> "$GITHUB_OUTPUT"
 

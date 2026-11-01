@@ -11,8 +11,9 @@ name: Reseed bootstrap vault CI token
 # and `/app/reports/2026-05-30-grafana-recovery.md` (2026-05-30 incident).
 #
 # This workflow installs a real least-privilege `bootstrap-ci` policy
-# in the bootstrap vault, mints a **periodic** token (renews on every
-# use; no absolute expiry as long as it's used at least once per period),
+# in the bootstrap vault, mints a **periodic** token (no absolute expiry as
+# long as it is renewed within each period — NOTE: use does not renew it; the
+# daily expiry-watchdog calls renew-self),
 # verifies the token can do everything the pipelines need, and only then
 # overwrites the VAULT_DEV_TOKEN GitHub secret.
 #
@@ -27,7 +28,7 @@ on:
       period_hours:
         description: 'Token period in hours (renew window)'
         required: false
-        default: '720'    # 30 days; pipelines run more often than this so it self-renews
+        default: '720'    # 30 days; expiry-watchdog renews daily (use alone does not renew)
         type: string
 
 jobs:
@@ -155,4 +156,4 @@ jobs:
 
       - name: Summary
         run: |
-          echo "::notice::Bootstrap vault CI token rotated. Policy 'bootstrap-ci' installed with KV+lookup-self+autodetect. New token is periodic (renews on use); no absolute expiry. PRs #274/#275/#276/#283 workarounds can now be reverted if least-privilege is desired (separate PR)."
+          echo "::notice::Bootstrap vault CI token rotated. Policy 'bootstrap-ci' installed with KV+lookup-self+autodetect. New token is periodic (renewed daily by expiry-watchdog renew-self; use alone does not renew). PRs #274/#275/#276/#283 workarounds can now be reverted if least-privilege is desired (separate PR)."
