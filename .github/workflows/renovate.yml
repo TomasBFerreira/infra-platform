@@ -211,13 +211,15 @@ jobs:
 
           TOKEN=$(mint_svc_jwt "renovate-orchestrator" "updates" "$SIGNING_SECRET")
 
+          # ssh -n below: without it ssh drains this loop's stdin and every item
+          # after the first is silently dropped.
           echo "$ITEMS_JSON" | jq -c '.[]' | while IFS= read -r item; do
             PAYLOAD=$(echo "$item" | jq -c '{
               ci: .affected_ci, repo: .repo, pr_title: .title, pr_url: .url,
               status: "open", critical: .critical
             }')
             PAYLOAD_B64=$(printf '%s' "$PAYLOAD" | base64 -w0)
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${UPDATES_HOP_HOST} \
+            ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@${UPDATES_HOP_HOST} \
               "echo '$PAYLOAD_B64' | base64 -d | curl -s -o /dev/null -w 'HTTP %{http_code} '  -X POST '${UPDATES_BASE}/svc/updates/renovate-event' -H 'X-Service-Token: ${TOKEN}' -H 'Content-Type: application/json' --data-binary @-" \
               || echo "(ingest call failed for $(echo "$item" | jq -r .url) — service may not be deployed yet)"
             echo "ingested: $(echo "$item" | jq -r .url)"
