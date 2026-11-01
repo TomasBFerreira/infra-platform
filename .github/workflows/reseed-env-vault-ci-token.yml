@@ -144,4 +144,4 @@ jobs:
 
       - name: Summary
         run: |
-          echo "::notice::Env vault CI token rotated for ${ENVIRONMENT}. Policy 'env-ci' installed (KV + autodetect + lookup/renew-self + token mgmt). New token is periodic (renews on use; no absolute expiry). Re-dispatch per env if one ever lapses."
+          echo "::notice::Env vault CI token rotated for ${ENVIRONMENT}. Policy 'env-ci' installed (KV + autodetect + lookup/renew-self + token mgmt). New token is periodic (renewed daily by expiry-watchdog renew-self; use alone does not renew). Re-dispatch per env if one ever lapses."

@@ -156,4 +156,4 @@ jobs:
 
       - name: Summary
         run: |
-          echo "::notice::Bootstrap vault CI token rotated. Policy 'bootstrap-ci' installed with KV+lookup-self+autodetect. New token is periodic (renews on use); no absolute expiry. PRs #274/#275/#276/#283 workarounds can now be reverted if least-privilege is desired (separate PR)."
+          echo "::notice::Bootstrap vault CI token rotated. Policy 'bootstrap-ci' installed with KV+lookup-self+autodetect. New token is periodic (renewed daily by expiry-watchdog renew-self; use alone does not renew). PRs #274/#275/#276/#283 workarounds can now be reverted if least-privilege is desired (separate PR)."

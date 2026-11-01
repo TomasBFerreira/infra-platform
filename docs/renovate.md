@@ -99,7 +99,19 @@ policy. The policy allows read+list on `secret/data/renovate/*` and
 Periodic tokens are **not** renewed by use — the daily `expiry-watchdog.yml`
 renews this one, which is why the policy needs those two self paths (a token
 with `no_default_policy` and without them can never renew and lapses after
-768h). To rotate the token, on a host with bootstrap-vault root-token access:
+768h). The policy lives only in the bootstrap vault (not in a workflow), so this is its
+full definition — re-apply it with the root token if it is ever lost:
+
+```bash
+ROOT=$(ssh root@192.168.50.4 'pct exec 200 -- jq -r .root_token /root/vault-init.json')
+curl -sS -X PUT -H "X-Vault-Token: $ROOT" http://192.168.50.200:8200/v1/sys/policies/acl/renovate \
+  -d "$(jq -n --arg p 'path "secret/data/renovate/*"     { capabilities = ["read", "list"] }
+path "secret/metadata/renovate/*" { capabilities = ["read", "list"] }
+path "auth/token/lookup-self"     { capabilities = ["read"] }
+path "auth/token/renew-self"      { capabilities = ["update"] }' '{policy:$p}')"
+```
+
+To rotate the token, on a host with bootstrap-vault root-token access:
 
 ```bash
 ROOT=$(ssh root@192.168.50.4 'pct exec 200 -- jq -r .root_token /root/vault-init.json')
