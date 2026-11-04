@@ -1,0 +1,8 @@
+[Unit]
+Description=QA gateway TCP forward to the Ollama host (self-healing)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ollama-forward-sync
