@@ -824,11 +824,12 @@ Same script with `QA_TUNNEL=6eff4426-87b1-4866-b2d7-05b63a7e4f6b.cfargotunnel.co
 - Keep qa Authentik users in sync with prod for at least the operators / on-call rotation.
 - If qa is intentionally a "static maintenance page" only, build that page now and make sure qa-traefik-lxc-qa can serve it without any upstream dep.
 
-## QA pods reaching the Ollama host (gateway TCP forward)
+## QA and dev pods reaching the Ollama host (gateway TCP forward)
 The QA incident-remediation experiment (`/app/issues/local-llm-remediation-qwen-2026-11-04.md`) calls `qwen3.5:9b` on Ollama, which runs on a personal Windows PC (`tomer`, tailnet `100.113.78.67:11434`). Pods can't route to tailnet IPs, so the **QA gateway** (network-vm, `192.168.30.56`) forwards `192.168.30.56:11434 → 100.113.78.67:11434`.
 
 - **Defined in** `ansible/network-vm/roles/firewall/` — `ollama-forward-sync.sh` + `ollama-forward.{service,timer}` (re-asserts on boot + every 2 min, `flock`-serialized), config in `/etc/default/ollama-forward` from `vars/main.yml`.
-- **Scope:** acts only when the gateway VIP is in `192.168.30.x` (QA) and only for sources in `192.168.30.0/24`. Dev/prod gateways install the files but the script is a no-op there (and removes stale rules).
+- **Scope:** acts only when the gateway VIP is in the env's allowed subnet (`ollama_forward_allowed_subnet`, keyed by `deploy_env`: QA `192.168.30`, dev `192.168.20`) and only for sources in that /24. Prod installs the files but the script is a no-op there (and removes stale rules).
+- **Dev:** gateway CT 256, `192.168.20.56`; from a dev pod use `http://192.168.20.56:11434` (used by `ai-dev`, `LLM_BASE_URL`). Hand-applied 2026-11-04, same reason as QA (pipeline is a full blue/green flip). If you run `network-vm_setup.yml` by hand, pass `-e deploy_env=dev|qa`: without it the subnet renders empty and the sync script removes the forward.
 - **From a QA pod:** `http://192.168.30.56:11434` (use the IP — no DNS name).
 - **Verify:** on CT 356 `iptables -t nat -S | grep ollama-forward` (expect exactly 1 PREROUTING DNAT + 1 POSTROUTING MASQUERADE); `journalctl -t ollama-forward -n5`; from a QA pod `wget -qO- http://192.168.30.56:11434/api/version`.
 - **If it stops working:** (1) Ollama host asleep/offline or Windows Firewall blocking TCP 11434 on the Tailscale interface — `tailscale ping 100.113.78.67` from CT 356; (2) Tailscale logged out on the gateway; (3) rules missing → `systemctl start ollama-forward.service`. Consumers must treat this endpoint as best-effort and degrade to "escalate".

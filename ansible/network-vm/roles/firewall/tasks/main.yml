@@ -59,9 +59,10 @@
   command: /usr/local/bin/dns-forward-dnat-sync
   changed_when: false
 
-# ── QA-only TCP forward to the Ollama host ──────────────────────────────────
-# QA pods can't route to tailnet IPs; this gateway can. Self-healing like the
-# DNS forward above. The script is a no-op outside the QA subnet. See
+# ── QA + dev TCP forward to the Ollama host ─────────────────────────────────
+# QA/dev pods can't route to tailnet IPs; this gateway can. Self-healing like the
+# DNS forward above. The script is a no-op unless the gateway's LAN prefix equals
+# ollama_forward_allowed_subnet (keyed by deploy_env; empty on prod). See
 # /app/issues/local-llm-remediation-qwen-2026-11-04.md.
 - name: Write ollama-forward config
   copy:

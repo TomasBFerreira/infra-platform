@@ -7,9 +7,11 @@ firewall_allowed_ports:
   - 41641   # Tailscale UDP (direct WireGuard connections — falls back to DERP relay if blocked)
   - 51820
 
-# Ollama host (personal Windows PC, tailnet IP) that QA pods reach via a TCP forward on
-# this gateway. The sync script only acts on the QA subnet (see ollama-forward-sync.sh);
-# dev/prod gateways install the files but stay inert.
+# Ollama host (personal Windows PC, tailnet IP) that QA and dev pods reach via a TCP
+# forward on their gateway. The sync script only acts when the gateway's LAN prefix equals
+# the allowed subnet (see ollama-forward-sync.sh); prod installs the files but stays inert.
 ollama_forward_upstream: "100.113.78.67"
 ollama_forward_port: 11434
-ollama_forward_allowed_subnet: "192.168.30"
+# Keyed by deploy_env (passed by the network-vm pipeline). Unknown/prod/unset -> empty,
+# which the script treats as "not enabled" and removes any managed rules.
+ollama_forward_allowed_subnet: "{{ {'qa': '192.168.30', 'dev': '192.168.20'}[deploy_env | default('')] | default('') }}"

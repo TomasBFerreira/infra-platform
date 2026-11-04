@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
-# Maintain a TCP forward so QA k3s pods can reach the Ollama host (a personal
+# Maintain a TCP forward so QA and dev k3s pods can reach the Ollama host (a personal
 # Windows PC on the tailnet) through this gateway's LAN VIP.
 #
 # WHY THIS EXISTS
-# QA pods have no route to tailnet addresses (100.x). This gateway is on the
+# Pods have no route to tailnet addresses (100.x). This gateway is on the
 # tailnet, so it DNATs  <GW_VIP>:11434  ->  <OLLAMA_UPSTREAM>  and MASQUERADEs
 # out of tailscale0. Used by the Qwen incident-remediation experiment, see
 # /app/issues/local-llm-remediation-qwen-2026-11-04.md.
 #
 # SCOPE (deliberately tight)
-#  - QA ONLY: acts only when this host's LAN VIP is in 192.168.30.0/24.
-#    On dev/prod gateways the script is a no-op (and removes any stale rule).
-#  - Only the QA worker subnet may use it (-s 192.168.30.0/24).
+#  - Acts only when this host's LAN VIP is in OLLAMA_ALLOWED_SUBNET (QA 192.168.30,
+#    dev 192.168.20, set per env by ansible). Elsewhere (prod) it is a no-op and
+#    removes any stale rule.
+#  - Only that worker subnet may use it (-s <subnet>.0/24).
 #  - One destination host:port, nothing else.
 # Idempotent, creds-free; re-asserted on boot + every 2 min by the timer, like
 # dns-forward-dnat (a runtime-only iptables rule is lost on reboot).
 #
 # Config: /etc/default/ollama-forward  (written by ansible)
 #   OLLAMA_UPSTREAM=100.113.78.67   OLLAMA_PORT=11434   OLLAMA_ALLOWED_SUBNET=192.168.30
+#   (an empty OLLAMA_ALLOWED_SUBNET, as on prod, disables the forward)
 set -euo pipefail
 
 # Serialize runs: the timer tick, a boot run and a manual/ansible run can overlap, and
