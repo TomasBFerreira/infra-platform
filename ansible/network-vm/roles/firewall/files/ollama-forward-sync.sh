@@ -19,6 +19,7 @@
 #
 # Config: /etc/default/ollama-forward  (written by ansible)
 #   OLLAMA_UPSTREAM=100.113.78.67   OLLAMA_PORT=11434   OLLAMA_ALLOWED_SUBNET=192.168.30
+#   (an empty OLLAMA_ALLOWED_SUBNET, as on prod, disables the forward)
 set -euo pipefail
 
 # Serialize runs: the timer tick, a boot run and a manual/ansible run can overlap, and
