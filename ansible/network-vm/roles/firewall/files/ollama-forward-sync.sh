@@ -66,10 +66,22 @@ if ! [[ "$OLLAMA_UPSTREAM" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || ! [[ "$OLLAMA_
   exit 1
 fi
 
+DNAT_SPEC=(-s "${PREFIX}.0/24" -d "${GW_IP}/32" -p tcp --dport "$OLLAMA_PORT"
+  -m comment --comment ollama-forward -j DNAT --to-destination "${OLLAMA_UPSTREAM}:${OLLAMA_PORT}")
+MASQ_SPEC=(-s "${PREFIX}.0/24" -d "${OLLAMA_UPSTREAM}/32" -o tailscale0 -p tcp --dport "$OLLAMA_PORT"
+  -m comment --comment ollama-forward -j MASQUERADE)
+
+# Only rewrite when the live rules differ from the desired state. Delete-then-add on every
+# 2-min tick would open a brief window where new connections to the forward are refused.
+if [ "$(iptables -t nat -S PREROUTING  | grep -c -- '--comment ollama-forward')" = 1 ] \
+   && [ "$(iptables -t nat -S POSTROUTING | grep -c -- '--comment ollama-forward')" = 1 ] \
+   && iptables -t nat -C PREROUTING  "${DNAT_SPEC[@]}" 2>/dev/null \
+   && iptables -t nat -C POSTROUTING "${MASQ_SPEC[@]}" 2>/dev/null; then
+  exit 0
+fi
+
 remove_managed
-iptables -t nat -A PREROUTING  -s "${PREFIX}.0/24" -d "${GW_IP}/32" -p tcp --dport "$OLLAMA_PORT" \
-  -m comment --comment ollama-forward -j DNAT --to-destination "${OLLAMA_UPSTREAM}:${OLLAMA_PORT}"
-iptables -t nat -A POSTROUTING -s "${PREFIX}.0/24" -d "${OLLAMA_UPSTREAM}/32" -o tailscale0 -p tcp --dport "$OLLAMA_PORT" \
-  -m comment --comment ollama-forward -j MASQUERADE
+iptables -t nat -A PREROUTING  "${DNAT_SPEC[@]}"
+iptables -t nat -A POSTROUTING "${MASQ_SPEC[@]}"
 
 logger -t ollama-forward "asserted ${GW_IP}:${OLLAMA_PORT} -> ${OLLAMA_UPSTREAM}:${OLLAMA_PORT} (src ${PREFIX}.0/24)"
