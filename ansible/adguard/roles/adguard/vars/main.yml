@@ -29,6 +29,7 @@ adguard_env_tailscale_ips:
 # Tailscale peers using AdGuard as their nameserver will resolve these internally
 # without them ever appearing in public Cloudflare DNS.
 adguard_dev_rewrites:
+  - domain: ai-dev.databaes.net
   - domain: auth-dev.databaes.net
   - domain: grafana-dev.databaes.net
   - domain: signoz-dev.databaes.net

@@ -486,3 +486,13 @@ scale_sets:
     name: wedding-site-qa
     min_runners: 0
     max_runners: 2
+
+  # ── ai-dev dev (2026-11-04) ─────────────────────────────────────────────
+  # Self-hosted AI chat service. Build runs on ubuntu-latest; the deploy job
+  # runs here and imports the image into the dev worker. Dev only for now.
+  - repo: TomasBFerreira/ai-dev
+    env: dev
+    label: dev
+    name: ai-dev-dev
+    min_runners: 0
+    max_runners: 2
