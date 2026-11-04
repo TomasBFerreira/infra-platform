@@ -823,3 +823,14 @@ Same script with `QA_TUNNEL=6eff4426-87b1-4866-b2d7-05b63a7e4f6b.cfargotunnel.co
 - Periodically `curl` a few qa hostnames from outside Tailscale (after a one-off CNAME flip + revert) to confirm the path works.
 - Keep qa Authentik users in sync with prod for at least the operators / on-call rotation.
 - If qa is intentionally a "static maintenance page" only, build that page now and make sure qa-traefik-lxc-qa can serve it without any upstream dep.
+
+## QA pods reaching the Ollama host (gateway TCP forward)
+The QA incident-remediation experiment (`/app/issues/local-llm-remediation-qwen-2026-11-04.md`) calls `qwen3.5:9b` on Ollama, which runs on a personal Windows PC (`tomer`, tailnet `100.113.78.67:11434`). Pods can't route to tailnet IPs, so the **QA gateway** (network-vm, `192.168.30.56`) forwards `192.168.30.56:11434 → 100.113.78.67:11434`.
+
+- **Defined in** `ansible/network-vm/roles/firewall/` — `ollama-forward-sync.sh` + `ollama-forward.{service,timer}` (re-asserts on boot + every 2 min, `flock`-serialized), config in `/etc/default/ollama-forward` from `vars/main.yml`.
+- **Scope:** acts only when the gateway VIP is in `192.168.30.x` (QA) and only for sources in `192.168.30.0/24`. Dev/prod gateways install the files but the script is a no-op there (and removes stale rules).
+- **From a QA pod:** `http://192.168.30.56:11434` (use the IP — no DNS name).
+- **Verify:** on CT 356 `iptables -t nat -S | grep ollama-forward` (expect exactly 1 PREROUTING DNAT + 1 POSTROUTING MASQUERADE); `journalctl -t ollama-forward -n5`; from a QA pod `wget -qO- http://192.168.30.56:11434/api/version`.
+- **If it stops working:** (1) Ollama host asleep/offline or Windows Firewall blocking TCP 11434 on the Tailscale interface — `tailscale ping 100.113.78.67` from CT 356; (2) Tailscale logged out on the gateway; (3) rules missing → `systemctl start ollama-forward.service`. Consumers must treat this endpoint as best-effort and degrade to "escalate".
+- **Remove:** `systemctl disable --now ollama-forward.timer`, then delete rules tagged `--comment ollama-forward` (or run the script with `OLLAMA_UPSTREAM=` emptied).
+- **First applied by hand** to CT 356 on 2026-11-04 (the network-vm pipeline is a full blue/green flip and QA workers hardcode `.56`, so it was not re-run just for this); the next pipeline run reproduces the same state from the repo.

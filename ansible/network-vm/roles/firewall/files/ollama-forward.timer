@@ -1,0 +1,11 @@
+[Unit]
+Description=Re-assert the QA gateway Ollama forward periodically
+
+[Timer]
+# Shortly after boot (survives gateway reboots), then every 2 min.
+OnBootSec=30
+OnUnitActiveSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

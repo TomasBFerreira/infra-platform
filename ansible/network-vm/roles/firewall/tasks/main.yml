@@ -58,3 +58,46 @@
 - name: Assert the DNS-forward DNAT now (don't wait for the first timer tick)
   command: /usr/local/bin/dns-forward-dnat-sync
   changed_when: false
+
+# ── QA-only TCP forward to the Ollama host ──────────────────────────────────
+# QA pods can't route to tailnet IPs; this gateway can. Self-healing like the
+# DNS forward above. The script is a no-op outside the QA subnet. See
+# /app/issues/local-llm-remediation-qwen-2026-11-04.md.
+- name: Write ollama-forward config
+  copy:
+    dest: /etc/default/ollama-forward
+    content: |
+      OLLAMA_UPSTREAM={{ ollama_forward_upstream }}
+      OLLAMA_PORT={{ ollama_forward_port }}
+      OLLAMA_ALLOWED_SUBNET={{ ollama_forward_allowed_subnet }}
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Install ollama-forward sync script
+  copy:
+    src: ollama-forward-sync.sh
+    dest: /usr/local/bin/ollama-forward-sync
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Install ollama-forward systemd service + timer
+  copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop:
+    - ollama-forward.service
+    - ollama-forward.timer
+
+- name: Enable + start ollama-forward timer
+  systemd:
+    name: ollama-forward.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Assert the Ollama forward now (don't wait for the first timer tick)
+  command: /usr/local/bin/ollama-forward-sync
+  changed_when: false
