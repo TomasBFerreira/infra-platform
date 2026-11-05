@@ -20,7 +20,8 @@
       "incidentPreference": "PER_POLICY"
     },
     "conditionDefaults": {
-      "runbookUrl": "https://wikijs.databaes.net/operations/runbooks"
+      "runbookUrl": "https://wikijs.databaes.net/operations/runbooks",
+      "violationTimeLimitSeconds": 86400
     }
   },
   "monitors": [
