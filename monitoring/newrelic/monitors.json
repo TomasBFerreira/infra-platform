@@ -157,7 +157,7 @@
       "name": "ops-dev.databaes.net",
       "mode": "probe-endpoint",
       "enabled": true,
-      "alert": true,
+      "alert": false,
       "url": "https://ops-dev.databaes.net/health",
       "notes": "Dev ops shell with a dedicated Traefik-exempt /health endpoint."
     },
@@ -167,7 +167,7 @@
       "name": "ops identity",
       "mode": "probe-endpoint",
       "enabled": true,
-      "alert": true,
+      "alert": false,
       "url": "https://ops-dev.databaes.net/synthetic/identity/healthz",
       "notes": "Dev synthetic-only path rewritten by Traefik to the identity service's /healthz endpoint."
     },
@@ -177,7 +177,7 @@
       "name": "ops cmdb",
       "mode": "probe-endpoint",
       "enabled": true,
-      "alert": true,
+      "alert": false,
       "url": "https://ops-dev.databaes.net/synthetic/cmdb/healthz",
       "notes": "Dev synthetic-only path rewritten by Traefik to the CMDB service's /healthz endpoint."
     },
@@ -187,7 +187,7 @@
       "name": "ops audit",
       "mode": "probe-endpoint",
       "enabled": true,
-      "alert": true,
+      "alert": false,
       "url": "https://ops-dev.databaes.net/synthetic/audit/healthz",
       "notes": "Dev synthetic-only path rewritten by Traefik to the audit service's /healthz endpoint."
     },
@@ -197,7 +197,7 @@
       "name": "ops domain",
       "mode": "probe-endpoint",
       "enabled": true,
-      "alert": true,
+      "alert": false,
       "url": "https://ops-dev.databaes.net/synthetic/domain/healthz",
       "notes": "Dev synthetic-only path rewritten by Traefik to the domain service's /healthz endpoint."
     },
@@ -207,7 +207,7 @@
       "name": "ops incidents",
       "mode": "probe-endpoint",
       "enabled": true,
-      "alert": true,
+      "alert": false,
       "url": "https://ops-dev.databaes.net/synthetic/incidents/healthz",
       "notes": "Dev synthetic-only path rewritten by Traefik to the incidents service's /healthz endpoint."
     },
@@ -217,7 +217,7 @@
       "name": "ops infrastructure",
       "mode": "probe-endpoint",
       "enabled": true,
-      "alert": true,
+      "alert": false,
       "url": "https://ops-dev.databaes.net/synthetic/infrastructure/healthz",
       "notes": "Dev synthetic-only path rewritten by Traefik to the infrastructure service's /healthz endpoint."
     },
@@ -227,7 +227,7 @@
       "name": "ops deployments",
       "mode": "probe-endpoint",
       "enabled": true,
-      "alert": true,
+      "alert": false,
       "url": "https://ops-dev.databaes.net/synthetic/deployments/healthz",
       "notes": "Dev synthetic-only path rewritten by Traefik to the deployments service's /healthz endpoint."
     },

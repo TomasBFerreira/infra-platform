@@ -22,6 +22,12 @@ That means a failing check can generate a New Relic incident instead of only exi
 
 Conditions use `conditionDefaults.violationTimeLimitSeconds` = `86400` (24 h, the maximum the location-failure API allows). New Relic force-closes a still-failing violation at this limit and opens a fresh one, which re-notifies. At the old 3600 default, one long outage re-paged about hourly per monitor (2026-11-01..05: ~200 notifications/day from nine DEV monitors).
 
+## Per-monitor `alert` flag
+
+Each monitor entry can set `"alert": false` to keep the synthetic running (data stays in New Relic) but stop creating an alert condition for it. The eight `DEV | ops …` monitors (`ops-dev.databaes.net` and the per-service checks) are set this way: `*-dev.databaes.net` is Tailscale-only by design (see `docs/network.md` § Cloudflare Tunnels), so a public synthetic against it cannot pass unless a Cloudflare route is created by hand, and it only produced noise (2026-11-05). `DEV | dev.tomajflix.app` still alerts because it has a permanent public route.
+
+**Caveat:** setting `alert: false` does not delete a condition that already exists. The sync only deletes conditions with `--allow-delete` (workflow `prune=true`), and `managed_prefixes()` only covers the default `PROD | ` and legacy `Homelab | ` prefixes, so existing `DEV | … down` conditions are never pruned by the script. Delete them in New Relic (or via the alerts API) after merging.
+
 ## What is intentionally deferred
 
 Apps behind Authentik SSO are listed in `monitors.json` with `mode: "probe-endpoint"` and `enabled: false`.
