@@ -20,6 +20,8 @@ and one location-failure alert condition per enabled simple monitor.
 
 That means a failing check can generate a New Relic incident instead of only existing as a red monitor.
 
+Conditions use `conditionDefaults.violationTimeLimitSeconds` = `86400` (24 h, the maximum the location-failure API allows). New Relic force-closes a still-failing violation at this limit and opens a fresh one, which re-notifies. At the old 3600 default, one long outage re-paged about hourly per monitor (2026-11-01..05: ~200 notifications/day from nine DEV monitors).
+
 ## What is intentionally deferred
 
 Apps behind Authentik SSO are listed in `monitors.json` with `mode: "probe-endpoint"` and `enabled: false`.

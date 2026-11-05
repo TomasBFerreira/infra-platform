@@ -342,6 +342,13 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
                 "PER_POLICY, PER_CONDITION, PER_CONDITION_AND_TARGET"
             )
 
+    vtl = alerts_config.get("conditionDefaults", {}).get("violationTimeLimitSeconds")
+    if vtl is not None and vtl not in {3600, 7200, 14400, 28800, 43200, 86400}:
+        errors.append(
+            "alerts.conditionDefaults.violationTimeLimitSeconds must be one of "
+            "3600, 7200, 14400, 28800, 43200, 86400"
+        )
+
     seen_slugs = set()
     seen_names = set()
     for entry in config.get("monitors", []):
