@@ -702,7 +702,8 @@ The dev CMDB is the source of truth; events propagate to prod CMDB through the n
 
 **Detect (read-only, on the PVE host):**
 ```bash
-lvs --units g -o lv_name,lv_size,data_percent,metadata_percent pve   # data% and meta% should be < 85
+lvs --units g -o lv_name,lv_attr,lv_size,pool_lv,data_percent,metadata_percent    # data%/meta% and which thin LVs sit in which pool
+# overcommit = sum(thin LV + snapshot sizes) / pool size; > 1 means the pool CAN run out. data% alone is only dangerous when overcommitted (or meta% / snapshots)
 journalctl --since "30 days ago" | grep -E "dmeventd.*Thin pool .* is now [0-9.]+% full|thin: .*(low water mark|out-of-data-space)|EXT4-fs error|Aborting journal|Journal has aborted|I/O error"   # dmeventd line is the earliest signal; widen --since to cover the suspected window (the 2026-10-21 event was 16 days old)
 dmesg | grep -E "EXT4-fs \(dm-[0-9]+\): error count since last fsck"   # nonzero = a guest FS saw errors
 ```
@@ -712,7 +713,7 @@ Map `dm-N` in the kernel messages to a guest: `cat /sys/block/dm-N/dm/name` (`pv
 
 **Postgres with a lost `pg_control` (dev only):** `pg_resetwal` can leave an inconsistent database — for dev, prefer: scale the app + StatefulSet to 0, **move** (don't delete) the data dir aside (on the backing NFS export / PVC path on the storage host; the precedent used `qm guest exec` from the PVE host to reach the worker without an SSH key), scale Postgres back up (fresh initdb), re-run the service's `deploy.yml env=dev` so the migration Job recreates the schema, then restart the app if it started before the migration finished. Prod: stop and escalate; restore from PBS.
 
-**Guardrail status:** there is **no alert** on thin-pool `data%`/`metadata%` yet (CMDB problem "No alert on LVM thin-pool usage"). Until one exists, run the `lvs` check above after any unexplained disk/I-O weirdness on a PVE node. Note dev monitoring (CT 296) has been stopped since 2026-11-04, so a dev-hosted alert would not fire.
+**Guardrail:** `scripts/pve-thinpool-metrics` (installed by hand on benedict, heaton, betsy) exports `lvm_thinpool_{data,metadata}_percent`, `lvm_thinpool_overcommit_ratio`, `lvm_thinpool_count` and a last-success timestamp. Grafana rules in `otel-monitoring` (*Disk and PVC Capacity*): **Thin Pool Above 85%** and **Above 95%** fire on metadata%, or on data% only when the pool is overcommitted (> 1.05x; a pool at 1.00x such as betsy `nfs-nvme-pool_data` sits at 80-100% harmlessly between weekly `fstrim` runs), **Nearly Full** warns when data stays > 99% for 1h regardless of ratio (benign on a 1.00x pool: check the weekly `fstrim`); **Overcommitted** warns at > 1.25x (the benedict 2026-10-21 root cause was 1.35x); **Metrics Stale** catches a dead or outdated collector. Caveats: dev monitoring (CT 296) has been stopped since 2026-11-04, so benedict's pool is only watched once dev monitoring is back or another Prometheus scrapes it; the stale rule's host list (`benedict|heaton|betsy`) is hardcoded in `rules.yml`.
 
 ## Proxmox Backup Server (PBS) is down / not backing up
 
