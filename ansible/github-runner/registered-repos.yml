@@ -20,23 +20,14 @@
 #   2. Optionally SSH to the runner LXC and delete /opt/github-runners/<slug>.
 
 dev:
+  # 2026-11-06 trim: only repos with a `[self-hosted, dev]` job remain; the rest run on ARC `<repo>-dev` scale sets.
   - TomasBFerreira/infra-platform
-  - TomasBFerreira/databaes-status-api
-  - TomasBFerreira/devops-portal
   - TomasBFerreira/landing-page
-  - TomasBFerreira/media-stack
   - TomasBFerreira/nextcloud
-  - TomasBFerreira/ops-portal-audit
-  - TomasBFerreira/ops-portal-cmdb
-  - TomasBFerreira/ops-portal-deployments
-  - TomasBFerreira/ops-portal-domain
-  - TomasBFerreira/ops-portal-identity
   - TomasBFerreira/ops-portal-incidents
   - TomasBFerreira/ops-portal-infrastructure
   - TomasBFerreira/ops-portal-pipelines
-  - TomasBFerreira/ops-portal-shell
   - TomasBFerreira/otel-monitoring
-  - TomasBFerreira/streambox
   - TomasBFerreira/traefik-gitops
   - TomasBFerreira/wikijs
 
@@ -56,22 +47,19 @@ qa:
   # Every ops-portal-* service has a qa deploy target (workflow has env=qa option).
 
 prod:
-  - TomasBFerreira/databaes-status-api
+  - TomasBFerreira/chess-coach
   - TomasBFerreira/infra-platform
   - TomasBFerreira/landing-page
   - TomasBFerreira/media-stack
   - TomasBFerreira/nextcloud
-  - TomasBFerreira/ops-portal-audit
-  - TomasBFerreira/ops-portal-cmdb
-  - TomasBFerreira/ops-portal-deployments
-  - TomasBFerreira/ops-portal-domain
-  - TomasBFerreira/ops-portal-identity
   - TomasBFerreira/ops-portal-incidents
   - TomasBFerreira/ops-portal-infrastructure
   - TomasBFerreira/ops-portal-pipelines
-  - TomasBFerreira/ops-portal-shell
-  - TomasBFerreira/streambox
+  - TomasBFerreira/otel-monitoring
   - TomasBFerreira/traefik-gitops
   - TomasBFerreira/wikijs
-  # Every repo with a `prod` deploy option in its workflow. otel-monitoring
-  # has no prod deploy (runs on a single docker-compose LXC) so is omitted.
+  # Only repos that can still land on the prod LXC runner (2026-11-06 trim):
+  # media-stack/nextcloud/wikijs call the `[self-hosted, prod]` reusable
+  # cmdb-notify-renovate workflow; chess-coach uses [self-hosted, prod];
+  # the rest have LXC-pinned prod/diag workflows. Repos with a `<repo>-prod`
+  # ARC scale set and no LXC-labelled jobs were dropped.
