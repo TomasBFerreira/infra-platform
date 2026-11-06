@@ -16,9 +16,15 @@ on:
         options: [dev, prod, qa]
         default: dev
 
+concurrency:
+  group: update-adguard-rewrites-${{ inputs.environment }}
+  cancel-in-progress: false
+
 jobs:
   update-rewrites:
-    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    # Management runner (CT 200), not the env runner: this is needed to add DNS
+    # for new hostnames and must work even if an env runner is down.
+    runs-on: [self-hosted, management]
     env:
       ENV: ${{ inputs.environment }}
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
@@ -76,6 +82,11 @@ jobs:
 
   update-tailscale-dns:
     needs: update-rewrites
+    # Global (all-env) Tailscale split-DNS write: serialize across envs, since
+    # the workflow-level group is per-environment only.
+    concurrency:
+      group: update-tailscale-split-dns
+      cancel-in-progress: false
     # Use the management runner so we can read the active-slot source of truth
     # from bootstrap Vault and publish only the current AdGuard resolvers.
     runs-on: [self-hosted, management]
