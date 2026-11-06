@@ -448,6 +448,8 @@ Re-run the same workflow. The Ansible playbook is idempotent — it de-registers
 
 ## Migrating from LXC runners to ARC (ephemeral runner pods)
 
+> **LXC runner registration trim (2026-11-06).** Each registration is one idle `Runner.Listener` (~65-105 MB RSS), so 20 per CT cost ~1-2 GB. Repos whose workflows route only to ARC scale sets (`<repo>-dev` / `<repo>-prod`) and have no `[self-hosted, <env>]` or bare `self-hosted` job were dropped from `ansible/github-runner/registered-repos.yml` and their systemd units stopped + disabled on CT 201 (dev, 20 -> 9) and CT 101 (prod, now 11 listed; live count before the trim may have included unlisted hand-registered repos). Directories under `/opt/github-runners/` and the GitHub-side runner entries were left in place for a soak; to restore one, `systemctl enable --now actions.runner.TomasBFerreira-<repo>.github-runner-<env>.service` on the CT. Before dropping a repo, check (a) `grep -rn "self-hosted" <repo>/.github/workflows`, (b) whether it calls `infra-platform`'s `cmdb-notify-renovate.yml` (runs on `[self-hosted, prod]`), and (c) job history: `gh api repos/<org>/<repo>/actions/runs/<id>/jobs` -> `runner_name`. CT memory was lowered to 2048 MB (dev) / 3072 MB (prod) live; `terraform/github-runner` pins 2048 for all envs, so prod's 3072 will be reset to 2048 on the next terraform apply unless the tfvars are updated (follow-up).
+
 The LXC-runner pattern above is being replaced by GitHub's Actions Runner Controller (ARC), which spawns one runner pod per job in the env's k3s cluster and tears it down after — zero idle footprint, no state bleed between jobs. Migration is in `feat/arc-migration-phase-0` and proceeds env by env.
 
 ### One-time bootstrap (before first `arc-deploy.yml` run)
