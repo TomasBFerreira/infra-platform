@@ -696,6 +696,24 @@ The workflow runs on `[self-hosted, management]` (CT 200) and hops via SSH to be
 
 The dev CMDB is the source of truth; events propagate to prod CMDB through the normal sync path.
 
+## Proxmox LVM thin pool (`pve/data`) is full or filling
+
+**When:** guests throw ext4 I/O errors, a Postgres on a node-local or NFS-backed volume crash-loops with `could not find the database system` / missing `pg_control`, or `journalctl -k` shows `device-mapper: thin: ... out-of-data-space`. Precedent: benedict, **2026-10-21 04:10** — `pve/data` hit 100%, went into error-IO mode, ext4 journals aborted on several guests, and the dev `ops-portal-incidents` Postgres lost `pg_control`. Nothing paged; it was found ~16 days later ([`/app/reports/2026-11-06-incidents-postgres-thinpool.md`](../../reports/2026-11-06-incidents-postgres-thinpool.md)). **Pod age / restart count understate this** — check file mtimes in the data dir, not just `kubectl get pods`.
+
+**Detect (read-only, on the PVE host):**
+```bash
+lvs --units g -o lv_name,lv_size,data_percent,metadata_percent pve   # data% and meta% should be < 85
+journalctl --since "30 days ago" | grep -E "dmeventd.*Thin pool .* is now [0-9.]+% full|thin: .*(low water mark|out-of-data-space)|EXT4-fs error|Aborting journal|Journal has aborted|I/O error"   # dmeventd line is the earliest signal; widen --since to cover the suspected window (the 2026-10-21 event was 16 days old)
+dmesg | grep -E "EXT4-fs \(dm-[0-9]+\): error count since last fsck"   # nonzero = a guest FS saw errors
+```
+Map `dm-N` in the kernel messages to a guest: `cat /sys/block/dm-N/dm/name` (`pve-vm--296--disk--0` = CT/VM 296). `dm-N` numbers can change across host reboots, so map them before rebooting. The `dmesg` check only sees CT rootfs mounted on the host; VM filesystem errors (e.g. VM 245/285 in the precedent) are only visible from inside the guest.
+
+**Triage:** the pool can recover on its own (benedict dropped back to ~19%) while guests stay damaged. After any `out-of-data-space` event, for every guest on that pool: `fsck` the FS (CTs: `pct fsck <id>` with the CT stopped; VMs: stop and fsck inside the guest, e.g. a rescue boot, since the host cannot see their filesystems), and for databases check the data dir for a missing `global/pg_control`, a `core` file, and stale `postmaster.pid`.
+
+**Postgres with a lost `pg_control` (dev only):** `pg_resetwal` can leave an inconsistent database — for dev, prefer: scale the app + StatefulSet to 0, **move** (don't delete) the data dir aside (on the backing NFS export / PVC path on the storage host; the precedent used `qm guest exec` from the PVE host to reach the worker without an SSH key), scale Postgres back up (fresh initdb), re-run the service's `deploy.yml env=dev` so the migration Job recreates the schema, then restart the app if it started before the migration finished. Prod: stop and escalate; restore from PBS.
+
+**Guardrail status:** there is **no alert** on thin-pool `data%`/`metadata%` yet (CMDB problem "No alert on LVM thin-pool usage"). Until one exists, run the `lvs` check above after any unexplained disk/I-O weirdness on a PVE node. Note dev monitoring (CT 296) has been stopped since 2026-11-04, so a dev-hosted alert would not fire.
+
 ## Proxmox Backup Server (PBS) is down / not backing up
 
 PBS lives at CT 103 / `192.168.50.103` on betsy, with the datastore on the 10 TB HDD bind-mounted at `/backup-storage`. The pipeline is `pbs_pipeline.yml`.
