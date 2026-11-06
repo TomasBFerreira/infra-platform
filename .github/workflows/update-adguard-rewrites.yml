@@ -26,6 +26,11 @@ jobs:
     # for new hostnames and must work even if an env runner is down.
     runs-on: [self-hosted, management]
     env:
+      # CT 200 (management runner) has no default locale; ansible refuses to
+      # start without one (verified 2026-11-06: only C/C.utf8/POSIX exist). Per the
+      # workspace infra rules, Ansible always runs with LC_ALL/LANG=C.UTF-8.
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
       ENV: ${{ inputs.environment }}
       VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
       # Slot state lives under bootstrap vault; DEV_TOKEN is dev-scoped and
