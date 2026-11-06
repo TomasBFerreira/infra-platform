@@ -1,0 +1,10 @@
+[Unit]
+Description=Export LVM thin-pool usage for node_exporter textfile collector
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pve-thinpool-metrics.sh
+TimeoutStartSec=60
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
