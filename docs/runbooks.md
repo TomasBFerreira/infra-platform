@@ -715,6 +715,29 @@ Map `dm-N` in the kernel messages to a guest: `cat /sys/block/dm-N/dm/name` (`pv
 
 **Guardrail:** `scripts/pve-thinpool-metrics` (installed by hand on benedict, heaton, betsy) exports `lvm_thinpool_{data,metadata}_percent`, `lvm_thinpool_overcommit_ratio`, `lvm_thinpool_count` and a last-success timestamp. Grafana rules in `otel-monitoring` (*Disk and PVC Capacity*): **Thin Pool Above 85%** and **Above 95%** fire on metadata%, or on data% only when the pool is overcommitted (> 1.05x; a pool at 1.00x such as betsy `nfs-nvme-pool_data` sits at 80-100% harmlessly between weekly `fstrim` runs), **Nearly Full** warns when data stays > 99% for 1h regardless of ratio (benign on a 1.00x pool: check the weekly `fstrim`); **Overcommitted** warns at > 1.25x (the benedict 2026-10-21 root cause was 1.35x); **Metrics Stale** catches a dead or outdated collector. Caveats: dev monitoring (CT 296) has been stopped since 2026-11-04, so benedict's pool is only watched once dev monitoring is back or another Prometheus scrapes it; the stale rule's host list (`benedict|heaton|betsy`) is hardcoded in `rules.yml`.
 
+## Proxmox host pressure (memory / I/O / CPU stalls, swap)
+
+**When:** an alert `Proxmox Host Memory Pressure` (warning >5%, critical >20% "full" stall), `Proxmox Host I/O Pressure` (>25% for 15m), `Proxmox Host CPU Pressure` (>40% "some" for 15m) or `Proxmox Host Swap Above 80%` fires for `benedict`, `heaton` or `betsy` (otel-monitoring `Host Pressure` group; metrics are node_exporter `node_pressure_*` from `/proc/pressure/*`). Healthy baselines (2026-11-07): memory ~0%, I/O ~1-2%, CPU ~2-4%.
+
+**Detect (read-only, on the PVE host):**
+```bash
+head -3 /proc/pressure/{memory,io,cpu}            # "full" = every task stalled, "some" = at least one; avg10/avg60/avg300 in %
+free -m; vmstat 1 3                               # available memory, swap in/out (si/so), iowait (wa)
+# which guest? per-cgroup pressure (CTs), worst first
+for f in /sys/fs/cgroup/lxc/*/io.pressure /sys/fs/cgroup/lxc/*/memory.pressure; do echo "$(awk '/^full/{print $2}' $f) $f"; done | sort -t= -k2 -nr | head
+cat /sys/fs/cgroup/lxc/<ID>/io.stat               # run twice 10s apart: rbytes/rios delta = who is reading
+cat /sys/fs/cgroup/lxc/<ID>/memory.current /sys/fs/cgroup/lxc/<ID>/memory.max; grep workingset_refault_file /sys/fs/cgroup/lxc/<ID>/memory.stat   # refaults climbing fast = page cache too small for its working set
+```
+VMs are under `/sys/fs/cgroup/qemu.slice/`. Inside a CT: `pct exec <ID> -- bash -c 'ps -eo pid,state,pcpu,rss,comm --sort=-rss | head; vmstat 1 3'`.
+
+**Precedents:**
+- 2026-11-04 benedict (16 GB, structurally overcommitted): memory thrash; CT 296 (dev monitoring, 5 GB) stopped (`project_benedict_memory_thrash_2026-11-04`).
+- 2026-11-07 betsy: ~16% sustained I/O stall caused by ONE guest, CT 154 Pi-hole (512 MB RAM re-reading a 2.2 GB FTL query DB continuously, 13.6 TB read in 11 days). Fixed by `database.maxDBdays=7`, fresh DB, memory 1024 MB; stall fell to ~1.5%. Lesson: a host-level stall is usually one small guest; find it with per-cgroup `io.pressure` before touching the host.
+
+**Fix:** act on the offending guest (cap its memory, shrink its dataset, stop it), not the host. Raising a CT's memory is online (`pct set <ID> -memory N`) but benedict/betsy are overcommitted, so take memory from somewhere else. Record each change in the CMDB.
+
+**Guardrail:** the alert rules above in `otel-monitoring/config/grafana/provisioning/alerting/rules.yml`. Dev (benedict) is only covered while a Prometheus scrapes it (dev monitoring CT 296 is currently stopped).
+
 ## Proxmox Backup Server (PBS) is down / not backing up
 
 PBS lives at CT 103 / `192.168.50.103` on betsy, with the datastore on the 10 TB HDD bind-mounted at `/backup-storage`. The pipeline is `pbs_pipeline.yml`.
