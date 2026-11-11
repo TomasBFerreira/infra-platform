@@ -73,6 +73,7 @@ Runner state (singletons, no slot rotation):
 | `secret/authentik/prod/vault-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
 | `secret/authentik/dev/rancher-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
 | `secret/authentik/prod/rancher-oidc` | `client_id, client_secret, sso_ip, discovery_url` | SSO pipeline |
+| `secret/authentik/dev/users/testuser` | `username, password` | `reset-authentik-testuser.yml` (rotates on every run; bootstrap vault). Shared dev SSO test account for Claude-session UI checks; no admin rights by default |
 | `secret/rancher/dev/bootstrap` | `password` | Rancher pipeline (auto-generated on first run) |
 | `secret/rancher/prod/bootstrap` | `password` | Rancher pipeline (auto-generated on first run) |
 | `secret/vault-ct/dev/active-slot` | `slot, vmid, ip` | vault-ct pipeline |
