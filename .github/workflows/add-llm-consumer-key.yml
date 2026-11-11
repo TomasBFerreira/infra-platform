@@ -1,0 +1,132 @@
+name: Add an ops-portal-llm consumer key (dev)
+
+# Mints an API key for one consumer of the LLM gateway and delivers it without any session or log
+# ever seeing it:
+#   1. appends {name,key,priority,can_lease,allow_api} to secret/ops-portal-llm/dev/api-keys
+#      (field keys_json, bootstrap vault), refusing a duplicate name;
+#   2. keeps a copy at secret/ops-portal-llm/dev/consumers/<name> (field key) for rotation;
+#   3. optionally writes the key into a Kubernetes Secret on the dev cluster, over SSH stdin.
+# The gateway only reads keys_json at deploy time, so afterwards re-run ops-portal-llm's deploy.yml
+# (restarts the gateway: queue and lease are in memory, so do it when no lease is held).
+#
+# Mirrors the gateway's rule that gremlin*, bench*, llm-bench*, planner*, incident-planner* keys
+# can never have allow_api (keys.Parse refuses the config at startup, so a bad entry here would
+# crash-loop the gateway on its next deploy).
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Consumer name (lowercase letters, digits, hyphens), e.g. ai-dev'
+        required: true
+        type: string
+      priority:
+        description: 'Queue priority'
+        required: true
+        default: normal
+        type: choice
+        options: [high, normal, low]
+      can_lease:
+        description: 'May hold the exclusive run lease (Gremlin / benchmarks only)'
+        required: false
+        default: false
+        type: boolean
+      allow_api:
+        description: 'May fall back to the hosted API (never for gremlin*/bench*/planner* names)'
+        required: false
+        default: false
+        type: boolean
+      k8s_namespace:
+        description: 'Optional: dev-cluster namespace to deliver the key into (must exist)'
+        required: false
+        type: string
+      k8s_secret:
+        description: 'Optional: Secret name, e.g. ai-dev-llm'
+        required: false
+        type: string
+      k8s_key:
+        description: 'Optional: key inside the Secret, e.g. api-key'
+        required: false
+        type: string
+      worker_ip:
+        description: 'Dev worker node IP'
+        required: false
+        default: '192.168.20.11'
+        type: string
+
+jobs:
+  add:
+    runs-on: [self-hosted, management]
+    steps:
+      - name: Validate inputs
+        env:
+          NAME: ${{ inputs.name }}
+          NS: ${{ inputs.k8s_namespace }}
+          SECRET: ${{ inputs.k8s_secret }}
+          SKEY: ${{ inputs.k8s_key }}
+          WORKER_IP: ${{ inputs.worker_ip }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NAME" | grep -Eq '^[a-z][a-z0-9-]{1,30}$' || { echo "::error::name must match ^[a-z][a-z0-9-]{1,30}$"; exit 1; }
+          printf '%s' "$WORKER_IP" | grep -Eq '^192\.168\.20\.[0-9]{1,3}$' || { echo "::error::worker_ip must be a dev-subnet address"; exit 1; }
+          if [ -n "$NS$SECRET$SKEY" ]; then
+            for v in "$NS" "$SECRET"; do printf '%s' "$v" | grep -Eq '^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$' || { echo "::error::k8s namespace/secret must be DNS-1123 names (all three k8s_* inputs are required together)"; exit 1; }; done
+            printf '%s' "$SKEY" | grep -Eq '^[A-Za-z0-9._-]{1,63}$' || { echo "::error::k8s_key is invalid"; exit 1; }
+          fi
+
+      - name: Add the key to the vault (and the cluster Secret if asked)
+        env:
+          VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          NAME: ${{ inputs.name }}
+          PRIORITY: ${{ inputs.priority }}
+          CAN_LEASE: ${{ inputs.can_lease }}
+          ALLOW_API: ${{ inputs.allow_api }}
+          NS: ${{ inputs.k8s_namespace }}
+          SECRET: ${{ inputs.k8s_secret }}
+          SKEY: ${{ inputs.k8s_key }}
+          WORKER_IP: ${{ inputs.worker_ip }}
+        run: |
+          set -euo pipefail
+          umask 077
+          WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+          PATH_KEYS=ops-portal-llm/dev/api-keys
+
+          # Current secret; abort rather than clobber if it holds anything besides keys_json.
+          if vault kv get -format=json "secret/$PATH_KEYS" > "$WORK/cur.json" 2>/dev/null; then :; else echo '{"data":{"data":{}}}' > "$WORK/cur.json"; fi
+
+          python3 - "$WORK" <<'PY'
+          import json, os, re, secrets, sys
+          work = sys.argv[1]
+          cur = json.load(open(f"{work}/cur.json"))["data"]["data"]
+          extra = sorted(k for k in cur if k != "keys_json")
+          if extra:
+              sys.exit(f"::error::{os.environ.get('PATH_KEYS','api-keys')} has unexpected fields {extra}; refusing to overwrite")
+          entries = json.loads(cur.get("keys_json") or "[]")
+          name = os.environ["NAME"]
+          if any(e.get("name") == name for e in entries):
+              sys.exit(f"::error::a key named {name!r} already exists (existing names: {sorted(e.get('name') for e in entries)}); rotate by hand or pick another name")
+          allow_api = os.environ["ALLOW_API"] == "true"
+          if allow_api and re.match(r"^(gremlin|bench|llm-bench|planner|incident-planner)", name):
+              sys.exit(f"::error::{name!r} may never use the hosted API; set allow_api=false")
+          key = secrets.token_urlsafe(32)          # 43 chars, gateway minimum is 24
+          entries.append({"name": name, "key": key, "priority": os.environ["PRIORITY"],
+                          "can_lease": os.environ["CAN_LEASE"] == "true", "allow_api": allow_api})
+          open(f"{work}/keys_json", "w").write(json.dumps(entries))
+          open(f"{work}/key", "w").write(key)
+          PY
+
+          vault kv put "secret/$PATH_KEYS" keys_json=@"$WORK/keys_json" >/dev/null
+          vault kv put "secret/ops-portal-llm/dev/consumers/$NAME" key=@"$WORK/key" >/dev/null
+          echo "Added consumer '$NAME' to secret/$PATH_KEYS and secret/ops-portal-llm/dev/consumers/$NAME (priority=$PRIORITY can_lease=$CAN_LEASE allow_api=$ALLOW_API)"
+
+          if [ -n "$NS" ]; then
+            vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF > 0' > "$WORK/ssh"
+            chmod 600 "$WORK/ssh"
+            B64=$(base64 -w0 < "$WORK/key")
+            # The manifest goes over ssh stdin, so the key never appears on a command line.
+            printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  %s: %s\n' "$SECRET" "$NS" "$SKEY" "$B64" \
+              | ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$WORKER_IP" 'k3s kubectl apply -f -'
+            echo "Delivered to Secret $NS/$SECRET key $SKEY"
+          fi
+          echo "Next: re-run ops-portal-llm deploy.yml so the gateway loads the new key (restarts it; make sure no lease is held)."
