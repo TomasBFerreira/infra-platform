@@ -523,7 +523,9 @@ The pattern landing-page follows (build on GitHub-hosted runner, deploy job cran
 ### Steps (3 PRs + 1 dispatch)
 
 **1. Seed initial vault secrets on the new repo.**
-The `sync-bootstrap-vault-token.yml` workflow only updates *existing* secrets, so a brand-new repo needs bootstrapping. Mint a fresh orphan root token in CT 200, pipe straight into `gh secret set` so it never crosses your terminal:
+Preferred: `gh workflow run copy-bootstrap-secrets.yml --repo TomasBFerreira/infra-platform -f repo=<repo>` copies this repo's `VAULT_BOOTSTRAP_ADDR`, `VAULT_BOOTSTRAP_ROOT_TOKEN` and `GH_PAT` into the new (private) repo, after checking the token is still valid. Nobody sees the values, and the new repo shares the same token as every other repo.
+
+Fallback, if that workflow is unavailable: the `sync-bootstrap-vault-token.yml` workflow only updates *existing* secrets, so a brand-new repo can be bootstrapped by hand. Mint a fresh orphan root token in CT 200, pipe straight into `gh secret set` so it never crosses your terminal (this creates a new long-lived root token, so prefer the workflow):
 ```bash
 gh secret set VAULT_BOOTSTRAP_ADDR -R TomasBFerreira/<repo> \
   --body 'http://192.168.50.200:8200'
