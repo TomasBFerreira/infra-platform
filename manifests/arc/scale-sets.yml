@@ -502,3 +502,15 @@ scale_sets:
     name: ai-dev-dev
     min_runners: 0
     max_runners: 2
+
+  # ── ops-portal-llm dev (2026-11-11) ─────────────────────────────────────
+  # LLM gateway (GPU lease + queue). Single instance for all envs, so dev is
+  # the only scale set. Build runs on ubuntu-latest; the deploy job runs here
+  # and imports the image into the dev worker. max_runners 1: dev worker CPU
+  # requests were ~89% allocated on 2026-11-11, and deploys never overlap.
+  - repo: TomasBFerreira/ops-portal-llm
+    env: dev
+    label: dev
+    name: ops-portal-llm-dev
+    min_runners: 0
+    max_runners: 1
