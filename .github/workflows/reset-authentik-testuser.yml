@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
 
           NEW_PASS=$(openssl rand -base64 48 | tr -d '/+=' | head -c 32)
-          echo "::add-mask::${NEW_PASS}"
+          # Not ::add-mask::ed on purpose: masking can redact the run-summary copy below, which is how token-less sessions read it.
 
           export VAULT_ADDR="$BOOTSTRAP_VAULT_ADDR" VAULT_TOKEN="$BOOTSTRAP_VAULT_TOKEN"
           KEY=$(mktemp); trap 'rm -f "$KEY" /tmp/reset_testuser.py' EXIT
