@@ -6,7 +6,7 @@ name: Reset Authentik testuser password (dev)
 # Claude sessions use to drive SSO-gated dev UIs with a headless browser; it has no admin
 # rights anywhere by default.
 #
-# Sessions have no vault token, so the new password is ALSO shown once in the run summary
+# Sessions have no vault token, so the new password is ALSO shown in the job log
 # (private repo): a session that needs it runs this workflow and reads the summary. Every run
 # rotates the password, so the vault copy is always the latest. Dev only, one fixed username:
 # this is deliberately not a generic "reset any user" tool (see reset-authentik-user-password.yml).
@@ -52,6 +52,10 @@ jobs:
           vault kv put "secret/authentik/${TARGET_ENV}/users/${TARGET_USER}" \
             username="${TARGET_USER}" password="${NEW_PASS}" >/dev/null
           echo "Stored in bootstrap vault: secret/authentik/${TARGET_ENV}/users/${TARGET_USER}"
+
+          # The run summary has no REST endpoint, so sessions read it from the job log instead
+          # (dev-only test account, private repo; every run rotates it).
+          echo "NEW_PASSWORD=${NEW_PASS}"
 
           {
             echo "## Authentik testuser password rotated"
