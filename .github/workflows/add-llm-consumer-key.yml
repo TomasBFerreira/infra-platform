@@ -54,8 +54,15 @@ on:
         default: '192.168.20.11'
         type: string
 
+# Two simultaneous runs would race on the read-modify-write of keys_json.
+concurrency:
+  group: add-llm-consumer-key
+  cancel-in-progress: false
+
 jobs:
   add:
+    # The management runner reaches the dev worker (192.168.20.0/24) only by hopping through
+    # benedict, the same way cmdb-record.yml does; hence the ProxyCommand below.
     runs-on: [self-hosted, management]
     steps:
       - name: Validate inputs
@@ -93,7 +100,15 @@ jobs:
           PATH_KEYS=ops-portal-llm/dev/api-keys
 
           # Current secret; abort rather than clobber if it holds anything besides keys_json.
-          if vault kv get -format=json "secret/$PATH_KEYS" > "$WORK/cur.json" 2>/dev/null; then :; else echo '{"data":{"data":{}}}' > "$WORK/cur.json"; fi
+          # Only "no such secret" may start from an empty list. Any other failure (network, 5xx,
+          # token) must abort: treating it as empty would overwrite every existing consumer key.
+          if ! vault kv get -format=json "secret/$PATH_KEYS" > "$WORK/cur.json" 2> "$WORK/err"; then
+            if grep -q 'No value found at' "$WORK/err"; then
+              echo '{"data":{"data":{}}}' > "$WORK/cur.json"
+            else
+              echo "::error::could not read secret/$PATH_KEYS: $(head -c 300 "$WORK/err")"; exit 1
+            fi
+          fi
 
           python3 - "$WORK" <<'PY'
           import json, os, re, secrets, sys
@@ -126,7 +141,9 @@ jobs:
             B64=$(base64 -w0 < "$WORK/key")
             # The manifest goes over ssh stdin, so the key never appears on a command line.
             printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  %s: %s\n' "$SECRET" "$NS" "$SKEY" "$B64" \
-              | ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$WORKER_IP" 'k3s kubectl apply -f -'
+              | ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p root@192.168.50.4" \
+                  root@"$WORKER_IP" 'k3s kubectl apply -f -'
             echo "Delivered to Secret $NS/$SECRET key $SKEY"
           fi
           echo "Next: re-run ops-portal-llm deploy.yml so the gateway loads the new key (restarts it; make sure no lease is held)."
