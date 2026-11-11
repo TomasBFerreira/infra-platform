@@ -1,0 +1,63 @@
+name: Reset Authentik testuser password (dev)
+
+# Rotates the dev `testuser` account's password and stores it in the bootstrap vault at
+#   secret/authentik/dev/users/testuser   (fields: username, password)
+# so humans and workflows with a vault token can read it. `testuser` is the shared account
+# Claude sessions use to drive SSO-gated dev UIs with a headless browser; it has no admin
+# rights anywhere by default.
+#
+# Sessions have no vault token, so the new password is ALSO shown once in the run summary
+# (private repo): a session that needs it runs this workflow and reads the summary. Every run
+# rotates the password, so the vault copy is always the latest. Dev only, one fixed username:
+# this is deliberately not a generic "reset any user" tool (see reset-authentik-user-password.yml).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  reset:
+    runs-on: [self-hosted, linux, dev]
+    steps:
+      - name: Reset testuser and store the password
+        env:
+          BOOTSTRAP_VAULT_ADDR:  ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          BOOTSTRAP_VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          TARGET_USER: testuser
+          TARGET_ENV:  dev
+        run: |
+          set -euo pipefail
+
+          NEW_PASS=$(openssl rand -base64 48 | tr -d '/+=' | head -c 32)
+          # Not ::add-mask::ed on purpose: masking can redact the run-summary copy below, which is how token-less sessions read it.
+
+          export VAULT_ADDR="$BOOTSTRAP_VAULT_ADDR" VAULT_TOKEN="$BOOTSTRAP_VAULT_TOKEN"
+          KEY=$(mktemp); trap 'rm -f "$KEY" /tmp/reset_testuser.py' EXIT
+          vault kv get -field=private_key secret/ssh_keys/sso_worker | awk 'NF > 0' > "$KEY"
+          chmod 600 "$KEY"
+          SSO_IP=$(vault kv get -field=ip "secret/sso/${TARGET_ENV}/active-slot")
+          ssh-keygen -R "${SSO_IP}" || true
+
+          printf 'import os\nfrom authentik.core.models import User\nu = User.objects.get(username=os.environ["TARGET_USER"])\nu.set_password(os.environ["NEW_PASS"])\nu.save()\nprint("password_reset_ok:" + u.username)\n' > /tmp/reset_testuser.py
+          scp -i "$KEY" -o StrictHostKeyChecking=no /tmp/reset_testuser.py root@"${SSO_IP}":/tmp/reset_testuser.py
+
+          RESULT=$(ssh -i "$KEY" -o StrictHostKeyChecking=no root@"${SSO_IP}" \
+            "docker cp /tmp/reset_testuser.py authentik-server:/tmp/reset_testuser.py && \
+             docker exec -e NEW_PASS='${NEW_PASS}' -e TARGET_USER='${TARGET_USER}' authentik-server ak shell --command \"exec(open('/tmp/reset_testuser.py').read())\"; \
+             rm -f /tmp/reset_testuser.py")
+          ssh -i "$KEY" -o StrictHostKeyChecking=no root@"${SSO_IP}" "rm -f /tmp/reset_testuser.py" || true
+
+          echo "${RESULT}" | grep -q "password_reset_ok:" || { echo "::error::reset failed (user missing, or shell error)"; exit 1; }
+
+          # Only after Authentik accepted it, so the vault never holds a password that does not work.
+          vault kv put "secret/authentik/${TARGET_ENV}/users/${TARGET_USER}" \
+            username="${TARGET_USER}" password="${NEW_PASS}" >/dev/null
+          echo "Stored in bootstrap vault: secret/authentik/${TARGET_ENV}/users/${TARGET_USER}"
+
+          {
+            echo "## Authentik testuser password rotated"
+            echo ""
+            echo "- Env: \`${TARGET_ENV}\`  SSO: \`${SSO_IP}\`"
+            echo "- Vault: \`secret/authentik/${TARGET_ENV}/users/${TARGET_USER}\` (bootstrap vault)"
+            echo ""
+            echo "**Password:** \`${NEW_PASS}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
