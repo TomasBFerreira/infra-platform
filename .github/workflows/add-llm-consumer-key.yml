@@ -48,6 +48,11 @@ on:
         description: 'Optional: key inside the Secret, e.g. api-key'
         required: false
         type: string
+      rotate:
+        description: 'Replace the key of an EXISTING consumer (keeps its priority/can_lease/allow_api; those inputs are ignored). Without it an existing name is refused.'
+        required: false
+        default: false
+        type: boolean
       worker_ip:
         description: 'Dev worker node IP'
         required: false
@@ -89,6 +94,7 @@ jobs:
           PRIORITY: ${{ inputs.priority }}
           CAN_LEASE: ${{ inputs.can_lease }}
           ALLOW_API: ${{ inputs.allow_api }}
+          ROTATE: ${{ inputs.rotate }}
           NS: ${{ inputs.k8s_namespace }}
           SECRET: ${{ inputs.k8s_secret }}
           SKEY: ${{ inputs.k8s_key }}
@@ -119,21 +125,29 @@ jobs:
               sys.exit(f"::error::{os.environ.get('PATH_KEYS','api-keys')} has unexpected fields {extra}; refusing to overwrite")
           entries = json.loads(cur.get("keys_json") or "[]")
           name = os.environ["NAME"]
-          if any(e.get("name") == name for e in entries):
-              sys.exit(f"::error::a key named {name!r} already exists (existing names: {sorted(e.get('name') for e in entries)}); rotate by hand or pick another name")
-          allow_api = os.environ["ALLOW_API"] == "true"
-          if allow_api and re.match(r"^(gremlin|bench|llm-bench|planner|incident-planner)", name):
-              sys.exit(f"::error::{name!r} may never use the hosted API; set allow_api=false")
+          rotate = os.environ["ROTATE"] == "true"
+          existing = [e for e in entries if e.get("name") == name]
           key = secrets.token_urlsafe(32)          # 43 chars, gateway minimum is 24
-          entries.append({"name": name, "key": key, "priority": os.environ["PRIORITY"],
-                          "can_lease": os.environ["CAN_LEASE"] == "true", "allow_api": allow_api})
+          if rotate:
+              if len(existing) != 1:
+                  sys.exit(f"::error::rotate needs exactly one existing consumer named {name!r} (existing names: {sorted(e.get('name') for e in entries)})")
+              existing[0]["key"] = key             # priority/can_lease/allow_api stay as they are
+              print(f"rotating the key of {name!r}; flags unchanged")
+          else:
+              if existing:
+                  sys.exit(f"::error::a key named {name!r} already exists (existing names: {sorted(e.get('name') for e in entries)}); use rotate=true or pick another name")
+              allow_api = os.environ["ALLOW_API"] == "true"
+              if allow_api and re.match(r"^(gremlin|bench|llm-bench|planner|incident-planner)", name):
+                  sys.exit(f"::error::{name!r} may never use the hosted API; set allow_api=false")
+              entries.append({"name": name, "key": key, "priority": os.environ["PRIORITY"],
+                              "can_lease": os.environ["CAN_LEASE"] == "true", "allow_api": allow_api})
           open(f"{work}/keys_json", "w").write(json.dumps(entries))
           open(f"{work}/key", "w").write(key)
           PY
 
           vault kv put "secret/$PATH_KEYS" keys_json=@"$WORK/keys_json" >/dev/null
           vault kv put "secret/ops-portal-llm/dev/consumers/$NAME" key=@"$WORK/key" >/dev/null
-          echo "Added consumer '$NAME' to secret/$PATH_KEYS and secret/ops-portal-llm/dev/consumers/$NAME (priority=$PRIORITY can_lease=$CAN_LEASE allow_api=$ALLOW_API)"
+          echo "Wrote consumer '$NAME' (rotate=$ROTATE) to secret/$PATH_KEYS and secret/ops-portal-llm/dev/consumers/$NAME"
 
           if [ -n "$NS" ]; then
             vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF > 0' > "$WORK/ssh"
