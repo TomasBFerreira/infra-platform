@@ -184,25 +184,34 @@ jobs:
           #    newest llm.lease.* event decides (acquire = held unless older than MAX_LEASE_TOTAL, 4h).
           #    Audit lags the NATS publish by about a second; an unreadable trail counts as "held".
           HELD=unknown
+          sleep 3   # let a lease acquired a moment ago reach the audit service
           if wk 'k3s kubectl -n ops-portal-audit exec deploy/ops-portal-audit -- wget -qO- "http://127.0.0.1:8093/api/audit?service=llm&limit=200"' > "$WORK/audit.json" 2> "$WORK/err"; then
             HELD=$(python3 - "$WORK/audit.json" <<'PY'
-          import json, sys, datetime
+          import datetime, json, re, sys
+          # Fail closed: anything not clearly "no lease held" prints unknown/yes.
           try:
               entries = json.load(open(sys.argv[1]))["entries"]
+              latest = None
+              for e in sorted(entries, key=lambda e: e["timestamp"], reverse=True):
+                  if e.get("action", "").startswith("llm.lease."):
+                      latest = e
+                      break
+              if latest is None:
+                  # No lease event in view. Only "no" if the window held the whole history.
+                  print("no" if len(entries) < 200 else "unknown"); raise SystemExit
+              a = latest["action"]
+              if a in ("llm.lease.release", "llm.lease.force_release"):
+                  print("no"); raise SystemExit
+              if a != "llm.lease.acquire":
+                  print("unknown"); raise SystemExit
+              # Go timestamps carry nanoseconds; fromisoformat (python < 3.11) wants at most 6 digits.
+              ts = re.sub(r"(\.\d{6})\d+", r"\1", latest["timestamp"]).replace("Z", "+00:00")
+              age = datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(ts)
+              print("no" if age > datetime.timedelta(hours=4) else "yes")
+          except SystemExit:
+              raise
           except Exception:
-              print("unknown"); raise SystemExit
-          for e in sorted(entries, key=lambda e: e["timestamp"], reverse=True):
-              a = e.get("action", "")
-              if not a.startswith("llm.lease."):
-                  continue
-              if a == "llm.lease.acquire":
-                  t = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
-                  age = datetime.datetime.now(datetime.timezone.utc) - t
-                  print("no" if age > datetime.timedelta(hours=4) else "yes")
-              else:
-                  print("no")
-              raise SystemExit
-          print("no")
+              print("unknown")
           PY
             )
           else
@@ -219,6 +228,7 @@ jobs:
           if [ "$HELD" = "no" ]; then
             wk 'k3s kubectl -n ops-portal-llm rollout restart deploy/ops-portal-llm && k3s kubectl -n ops-portal-llm rollout status deploy/ops-portal-llm --timeout=180s'
             echo "Gateway restarted; key '$NAME' is live."
+            [ "$ROTATE" = "true" ] && echo "::warning::rotate: the old key is rejected now. Restart the consumer (it reads its key at pod start) or it will get 401 until it does."
           else
             echo "::warning::lease state is '$HELD' (yes = a lease is held, unknown = audit unreadable): gateway NOT restarted. The Secret is updated; key '$NAME' goes live on the next gateway restart: k3s kubectl -n ops-portal-llm rollout restart deploy/ops-portal-llm once the lease is released."
           fi
