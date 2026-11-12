@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Maintain a TCP forward so QA and dev k3s pods can reach the Ollama host (a personal
+# Maintain a TCP forward so dev k3s pods (QA's was disabled in the 2026-11 lockdown) can reach the Ollama host (a personal
 # Windows PC on the tailnet) through this gateway's LAN VIP.
 #
 # WHY THIS EXISTS
@@ -32,7 +32,7 @@ flock 9
 
 OLLAMA_UPSTREAM=""
 OLLAMA_PORT=11434
-OLLAMA_ALLOWED_SUBNET="192.168.30"
+OLLAMA_ALLOWED_SUBNET=""   # fail closed: no config = no forward
 OLLAMA_ALLOWED_SOURCE=""
 # shellcheck disable=SC1091
 [ -r /etc/default/ollama-forward ] && . /etc/default/ollama-forward
@@ -76,7 +76,21 @@ fi
 # smuggle iptables options; invalid = leave rules unchanged (fail safe, not fail open).
 SRC="${PREFIX}.0/24"
 if [ -n "$OLLAMA_ALLOWED_SOURCE" ]; then
-  if ! [[ "$OLLAMA_ALLOWED_SOURCE" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]]; then
+  # Strict: octets <= 255, mask <= 32, and the source must sit inside this gateway's LAN
+  # prefix. Anything else leaves the live rules untouched (checked BEFORE remove_managed).
+  ip_part=${OLLAMA_ALLOWED_SOURCE%%/*}
+  mask_part=""
+  [[ "$OLLAMA_ALLOWED_SOURCE" == */* ]] && mask_part=${OLLAMA_ALLOWED_SOURCE#*/}
+  ok=1
+  [[ "$ip_part" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || ok=0
+  if [ "$ok" = 1 ]; then
+    for o in "${BASH_REMATCH[@]:1}"; do [ "$o" -le 255 ] || ok=0; done
+    [[ "$ip_part" == "${PREFIX}."* ]] || ok=0
+  fi
+  if [ -n "$mask_part" ]; then
+    [[ "$mask_part" =~ ^[0-9]{1,2}$ ]] && [ "$mask_part" -le 32 ] || ok=0
+  fi
+  if [ "$ok" != 1 ]; then
     logger -t ollama-forward "invalid OLLAMA_ALLOWED_SOURCE; leaving rules unchanged"
     exit 1
   fi

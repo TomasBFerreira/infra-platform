@@ -18,5 +18,5 @@ ollama_forward_port: 11434
 # ops-portal-llm gateway). Dev stays on because the gateway's own upstream uses it.
 ollama_forward_allowed_subnet: "{{ {'dev': '192.168.20'}[deploy_env | default('')] | default('') }}"
 # Dev only: narrow the forward from the /24 to the single k3s worker node (pods are SNATed to
-# it). Empty = whole allowed subnet. The gateway pod runs on this node.
+# it). Empty = whole allowed subnet. UPDATE THIS if the worker IP changes or a node is added. The gateway pod runs on this node.
 ollama_forward_allowed_source: "{{ {'dev': '192.168.20.11/32'}[deploy_env | default('')] | default('') }}"
