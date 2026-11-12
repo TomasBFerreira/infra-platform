@@ -2,7 +2,8 @@ name: Tailscale ACL read (read-only)
 
 # Read-only look at the tailnet policy and device tags, for the Ollama lockdown (L1: restrict who
 # can reach tomer:11434). Only GETs: it cannot change the ACL, devices or keys. Output is printed
-# to the job log with email addresses masked; the API key is never echoed.
+# to the job log with email addresses masked on a best-effort basis (identity strings in other
+# forms may still appear; the repo is private); the API key is never echoed.
 # Needs the TAILSCALE_API_KEY to have ACL read + device read scope (403 = it does not; say so, do
 # not widen the key from here). See /app/issues/ollama-lockdown-2026-11-11.md.
 
@@ -24,56 +25,114 @@ permissions:
 jobs:
   read:
     runs-on: [self-hosted, management]
-    env:
-      TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
-      TAILSCALE_TAILNET: ${{ secrets.TAILSCALE_TAILNET }}
-      OLLAMA_HOST_NAME: ${{ inputs.ollama_host }}
-      OLLAMA_PORT: ${{ inputs.ollama_port }}
     steps:
       - name: Fetch ACL and devices (GET only)
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+          TAILSCALE_TAILNET: ${{ secrets.TAILSCALE_TAILNET }}
+          OLLAMA_HOST_NAME: ${{ inputs.ollama_host }}
+          OLLAMA_PORT: ${{ inputs.ollama_port }}
         run: |
           set +x
           python3 - <<'PY'
-          import json, os, re, sys, urllib.request, urllib.error
+          import ipaddress, json, os, re, sys, urllib.request, urllib.error
 
-          tailnet = os.environ["TAILSCALE_TAILNET"]
-          key = os.environ["TAILSCALE_API_KEY"]
+          tailnet = os.environ.get("TAILSCALE_TAILNET", "").strip()
+          key = os.environ.get("TAILSCALE_API_KEY", "").strip()
           host = os.environ["OLLAMA_HOST_NAME"].strip()
-          port = os.environ["OLLAMA_PORT"].strip()
-          if not re.fullmatch(r"[A-Za-z0-9._-]{1,63}", host) or not re.fullmatch(r"[0-9]{1,5}", port):
-              sys.exit("bad ollama_host/ollama_port input")
+          port_s = os.environ["OLLAMA_PORT"].strip()
+          if not tailnet or not key:
+              sys.exit("::error::TAILSCALE_TAILNET / TAILSCALE_API_KEY secret is empty or unset")
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}", host) or not re.fullmatch(r"[0-9]{1,5}", port_s) \
+                  or not 1 <= int(port_s) <= 65535:
+              sys.exit("::error::bad ollama_host / ollama_port input")
+          port = int(port_s)
           base = f"https://api.tailscale.com/api/v2/tailnet/{tailnet}"
+          mask = lambda s: re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+", "<email>", s)
 
-          def get(path, accept="application/json"):
+          def get(path):
               req = urllib.request.Request(base + path, method="GET",
-                                           headers={"Authorization": f"Bearer {key}", "Accept": accept})
+                                           headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
               try:
                   with urllib.request.urlopen(req, timeout=30) as r:
                       return r.status, r.read().decode(), r.headers.get("ETag")
               except urllib.error.HTTPError as e:
                   return e.code, e.read().decode()[:300], None
+              except (urllib.error.URLError, OSError) as e:
+                  return 0, f"network error: {type(e).__name__}", None
 
-          mask = lambda s: re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+", "<email>", s)
+          def fetch(path, what):
+              code, body, etag = get(path)
+              if code != 200:
+                  hint = " (403 = the API key lacks read scope for this)" if code == 403 else ""
+                  sys.exit(f"::error::GET {path.split('?')[0]} returned {code}{hint}. {mask(body)}")
+              try:
+                  return json.loads(body), etag
+              except ValueError:
+                  sys.exit(f"::error::GET {path.split('?')[0]} did not return JSON")
 
-          code, body, etag = get("/acl")
-          if code != 200:
-              print(f"::error::GET /acl returned {code}. 403 = the API key lacks ACL read scope. Body: {mask(body)}")
-              sys.exit(1)
-          acl = json.loads(body)
+          acl, etag = fetch("/acl", "acl")
           print(f"ACL fetched (ETag {etag}). Top-level keys: {sorted(acl)}")
+          devices = fetch("/devices?fields=default", "devices")[0].get("devices", [])
 
-          code, body, _ = get("/devices?fields=default")
-          if code != 200:
-              print(f"::error::GET /devices returned {code}: {mask(body)}")
-              sys.exit(1)
-          devices = json.loads(body).get("devices", [])
-          target = next((d for d in devices if d.get("hostname") == host or d.get("name", "").split(".")[0] == host), None)
+          matches = [d for d in devices if d.get("hostname") == host or d.get("name", "").split(".")[0] == host]
+          if len(matches) > 1:
+              print(f"::warning::{len(matches)} devices match {host!r}; using the one connected / most recently seen")
+          target = max(matches, key=lambda d: (bool(d.get("connectedToControl")), d.get("lastSeen") or ""), default=None)
           if not target:
               print(f"::warning::no device named {host!r} in the tailnet")
           t_addrs = target.get("addresses", []) if target else []
           t_tags = target.get("tags", []) if target else []
-          t_owner = "tagged" if t_tags else "user-owned (" + mask(str(target.get("user", "?"))) + ")" if target else "?"
+          if not target:
+              t_owner = "?"
+          elif t_tags:
+              t_owner = "tagged"
+          else:
+              t_owner = "user-owned"
           print(f"\n== {host}: addresses={t_addrs} tags={t_tags} owner={t_owner}")
+
+          hosts_map = acl.get("hosts", {})
+          t_nets = [ipaddress.ip_address(a) for a in t_addrs]
+
+          def alias_match(a):
+              """'yes' / 'no' / 'unknown' for whether destination alias `a` includes the target."""
+              if a in ("*", host, *t_addrs, *t_tags):
+                  return "yes"
+              if a == "autogroup:member":
+                  return "yes" if not t_tags else "no"
+              if a == "autogroup:tagged":
+                  return "yes" if t_tags else "no"
+              if a in hosts_map:
+                  return alias_match(hosts_map[a]) if hosts_map[a] != a else "no"
+              try:
+                  net = ipaddress.ip_network(a, strict=False)
+                  return "yes" if any(ip in net for ip in t_nets) else "no"
+              except ValueError:
+                  pass
+              if a.startswith("tag:") or a == "autogroup:internet":
+                  return "no"
+              # group:, user emails, autogroup:self, unknown names: depends on ownership/membership
+              return "unknown" if not t_tags else "no"
+
+          def port_match(p):
+              if p == "*":
+                  return True
+              for x in p.split(","):
+                  lo, _, hi = x.partition("-")
+                  if hi and lo.isdigit() and hi.isdigit() and int(lo) <= port <= int(hi):
+                      return True
+                  if not hi and x.isdigit() and int(x) == port:
+                      return True
+              return False
+
+          def verdict(dst):
+              d, _, p = dst.rpartition(":")
+              if not port_match(p):
+                  return "no"
+              return alias_match(d)
+
+          def flag(vs):
+              return "*" if "yes" in vs else "?" if "unknown" in vs else " "
 
           print("\n== tagOwners:")
           for tag, owners in sorted(acl.get("tagOwners", {}).items()):
@@ -81,30 +140,35 @@ jobs:
           print("\n== groups (members masked):")
           for g, members in sorted(acl.get("groups", {}).items()):
               print(f"  {g}: {len(members)} member(s)")
+          print(f"\n== hosts aliases: {mask(json.dumps(hosts_map))}")
 
-          def covers(dst):
-              """Heuristic: does a 'dst:port' entry include host:port? False negatives are possible
-              (e.g. nested groups, hosts aliases), so read the rules too."""
-              d, _, p = dst.rpartition(":")
-              port_ok = p == "*" or any(
-                  (lo.isdigit() and hi.isdigit() and int(lo) <= int(port) <= int(hi)) if "-" in x
-                  else x == port
-                  for x in p.split(",") for lo, _, hi in [x.partition("-")])
-              dst_ok = d in ("*", "autogroup:member", "autogroup:tagged", host, *t_addrs, *t_tags) \
-                  or (d == "autogroup:member" and not t_tags)
-              return dst_ok and port_ok
-
-          print(f"\n== acls ({len(acl.get('acls', []))}); [*] = heuristic says it reaches {host}:{port}")
-          for i, r in enumerate(acl.get("acls", [])):
-              flag = "*" if any(covers(x) for x in r.get("dst", [])) else " "
-              print(f" [{flag}] #{i} action={r.get('action')} src={mask(json.dumps(r.get('src')))} dst={mask(json.dumps(r.get('dst')))}")
+          acls = acl.get("acls", [])
           grants = acl.get("grants", [])
-          print(f"\n== grants ({len(grants)})")
+          print(f"\n== acls ({len(acls)}); [*] = reaches {host}:{port}, [?] = depends on group/user membership (unresolved)")
+          for i, r in enumerate(acls):
+              f = flag([verdict(x) for x in r.get("dst", [])])
+              print(f" [{f}] #{i} action={r.get('action')} src={mask(json.dumps(r.get('src')))} dst={mask(json.dumps(r.get('dst')))}")
+          print(f"\n== grants ({len(grants)}); same markers, ip entries checked against port {port}")
           for i, g in enumerate(grants):
-              print(f"  #{i} src={mask(json.dumps(g.get('src')))} dst={mask(json.dumps(g.get('dst')))} ip={json.dumps(g.get('ip'))} app={'yes' if g.get('app') else 'no'}")
+              ips = g.get("ip") or []
+              def ip_entry_ok(x):
+                  if x == "*":
+                      return True
+                  proto, _, pt = x.rpartition(":")      # "tcp:11434" | "11434" | "tcp:*"
+                  return proto in ("", "tcp", "*") and port_match(pt)
+              ip_ok = (not ips and not g.get("app")) or any(ip_entry_ok(x) for x in ips)
+              vs = [alias_match(d) if ip_ok else "no" for d in g.get("dst", [])]
+              print(f" [{flag(vs)}] #{i} src={mask(json.dumps(g.get('src')))} dst={mask(json.dumps(g.get('dst')))} ip={json.dumps(ips)} app={'yes' if g.get('app') else 'no'}")
+
           if "acls" not in acl and not grants:
-              print("  (no acls and no grants: Tailscale's default is allow-all)")
-          print(f"\nssh rules: {len(acl.get('ssh', []))}   tests: {len(acl.get('tests', []))}   nodeAttrs: {len(acl.get('nodeAttrs', []))}")
+              print("\nVERDICT: no 'acls' key and no grants -> Tailscale's default policy is ALLOW-ALL")
+          elif not acls and not grants:
+              print("\nVERDICT: 'acls' is present but empty and there are no grants -> DENY-ALL")
+          else:
+              print("\nVERDICT: read the flagged rules; [?] needs the group/user membership checked by hand. "
+                    "This matcher resolves *, names, addresses, CIDRs, hosts aliases, tags and autogroup:member/tagged; "
+                    "nested groups and Tailscale SSH are NOT evaluated.")
+          print(f"ssh rules: {len(acl.get('ssh', []))} (not evaluated)   tests: {len(acl.get('tests', []))}   nodeAttrs: {len(acl.get('nodeAttrs', []))}")
 
           print("\n== tagged devices (hostname, first address, tags)")
           for d in sorted(devices, key=lambda x: x.get("hostname", "")):
