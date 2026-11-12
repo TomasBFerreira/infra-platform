@@ -65,7 +65,7 @@ on:
         default: true
         type: boolean
       worker_ip:
-        description: 'Dev worker node IP'
+        description: 'Dev worker node IP: the gateway host (audit read, Secret patch, restart) and the target for dev consumer Secrets. Ignored for the consumer Secret when k8s_cluster=qa.'
         required: false
         default: '192.168.20.11'
         type: string
@@ -160,22 +160,39 @@ jobs:
           open(f"{work}/key", "w").write(key)
           PY
 
+          CONS="secret/ops-portal-llm/dev/consumers/$NAME"
+          B64=$(base64 -w0 < "$WORK/key")
+          if [ -n "$NS" ]; then
+            # Everything that can fail on the delivery side is checked BEFORE any vault write, so a bad hop or
+            # namespace cannot leave the vault holding a key no cluster has. Same Vault worker key for every
+            # env (see the ops-portal deploy workflows). Dev consumers: dev worker via benedict. QA consumers:
+            # the QA worker (VMID 311) via heaton.
+            vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF > 0' > "$WORK/ssh"
+            chmod 600 "$WORK/ssh"
+            if [ "$CLUSTER" = "qa" ]; then TARGET_IP=192.168.30.11; HOP=192.168.50.8; else TARGET_IP="$WORKER_IP"; HOP=192.168.50.4; fi
+            dk() { ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                     -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p root@$HOP" \
+                     root@"$TARGET_IP" "$@"; }
+            if [ "$ROTATE" = "true" ]; then
+              # A rotate must go to the cluster the consumer lives in, or the old key is rejected while the new
+              # one lands in a stray Secret. Consumers minted before this check have no recorded cluster: dev.
+              OLDC=$(vault kv get -field=cluster "$CONS" 2>/dev/null || true); OLDC=${OLDC:-dev}
+              [ "$OLDC" = "$CLUSTER" ] || { echo "::error::consumer '$NAME' lives in the $OLDC cluster; rotate with k8s_cluster=$OLDC"; exit 1; }
+            fi
+            dk "k3s kubectl get namespace $NS" >/dev/null || { echo "::error::cannot reach the $CLUSTER cluster ($TARGET_IP via $HOP) or namespace $NS does not exist; nothing was written"; exit 1; }
+          fi
+
           vault kv put "secret/$PATH_KEYS" keys_json=@"$WORK/keys_json" >/dev/null
-          vault kv put "secret/ops-portal-llm/dev/consumers/$NAME" key=@"$WORK/key" >/dev/null
+          # patch keeps the recorded cluster across no-delivery rotations; put creates the first copy.
+          if vault kv get "$CONS" >/dev/null 2>&1; then CV=patch; else CV=put; fi
+          if [ -n "$NS" ]; then vault kv "$CV" "$CONS" key=@"$WORK/key" cluster="$CLUSTER" >/dev/null
+          else vault kv "$CV" "$CONS" key=@"$WORK/key" >/dev/null; fi
           echo "Wrote consumer '$NAME' (rotate=$ROTATE) to secret/$PATH_KEYS and secret/ops-portal-llm/dev/consumers/$NAME"
 
           if [ -n "$NS" ]; then
-            vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF > 0' > "$WORK/ssh"
-            chmod 600 "$WORK/ssh"
-            B64=$(base64 -w0 < "$WORK/key")
             # The manifest goes over ssh stdin, so the key never appears on a command line.
-            # Dev consumers: the dev worker via benedict. QA consumers: the QA worker (VMID 311) via heaton.
-            # Same Vault worker key for every env (see the ops-portal deploy workflows).
-            if [ "$CLUSTER" = "qa" ]; then TARGET_IP=192.168.30.11; HOP=192.168.50.8; else TARGET_IP="$WORKER_IP"; HOP=192.168.50.4; fi
             printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  %s: %s\n' "$SECRET" "$NS" "$SKEY" "$B64" \
-              | ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p root@$HOP" \
-                  root@"$TARGET_IP" 'k3s kubectl apply -f -'
+              | dk 'k3s kubectl apply -f -'
             echo "Delivered to Secret $NS/$SECRET key $SKEY ($CLUSTER cluster)"
           fi
 
