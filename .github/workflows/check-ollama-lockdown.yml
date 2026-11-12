@@ -62,7 +62,10 @@ jobs:
       - name: Check
         id: check
         run: |
+          # GitHub runs this as `bash -e`. The probes below deliberately capture non-zero exit codes
+          # (124 = timed out = filtered, which is the PASS state) with `cmd; rc=$?`, so errexit must be off.
           set -uo pipefail
+          set +e
           WORK=$(mktemp -d -p "${RUNNER_TEMP:-/tmp}"); trap 'rm -rf "$WORK"' EXIT TERM INT
           USERSHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
           pve() { local host=$1; shift; timeout 90 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o LogLevel=ERROR -o BatchMode=yes "${USERSHORT}@${host}" "$@"; }
