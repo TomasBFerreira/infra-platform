@@ -161,6 +161,9 @@ jobs:
           PY
 
           CONS="secret/ops-portal-llm/dev/consumers/$NAME"
+          if [ -z "$NS" ] && [ "$CLUSTER" = "qa" ]; then
+            echo "::warning::k8s_cluster=qa has no effect without k8s_namespace/k8s_secret/k8s_key: the key is minted but delivered to no cluster."
+          fi
           # Cluster recorded on the consumer copy ("" = never delivered / minted before cluster was recorded).
           # Only "no such secret" may read as empty; any other failure aborts instead of guessing a cluster.
           OLDC=""
