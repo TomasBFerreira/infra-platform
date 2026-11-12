@@ -14,8 +14,8 @@ name: Check Ollama lockdown
 #       two managed rules, narrowed to the dev worker; prod CT 155 has none.
 #   L2 probe: from benedict (not the worker) the dev forward must refuse. A refused/timed-out connect
 #       only counts if tomer is awake (CT 256 can reach it), otherwise it is "inconclusive", never a pass.
-#   L3 (only when EXPECT_EGRESS_GUARD=true): every eligible dev namespace has `ollama-egress-guard`.
-#       Flip the default below in the PR that applies ops-portal-llm/cluster-bootstrap/ollama-egress-guard.
+#   L3 (required by default since the guard was applied 2026-11-12): every eligible dev namespace has
+#       `ollama-egress-guard`. A new namespace without it fails the check until render.sh is re-run.
 #   L1 (informational): the tailnet still lets tagged nodes reach tomer:11434. ACCEPTED GAP (user
 #       decision 2026-11-12: rewriting the grants needs tagging tomer; see the issue). Reported, never fails.
 # Fails the job (GitHub email) and posts to Slack on any violation.
@@ -41,8 +41,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Flip to "true" in the PR that applies the egress guard (ops-portal-llm#7).
-  EXPECT_EGRESS_GUARD_DEFAULT: "false"
+  # The egress guard (ops-portal-llm/cluster-bootstrap/ollama-egress-guard) was applied to dev on
+  # 2026-11-12, so the L3 check is required on every run. Set to "false" only while deliberately
+  # removing the guard (rollback), and say so in the PR.
+  EXPECT_EGRESS_GUARD_DEFAULT: "true"
   FORWARD_IP_DEV: 192.168.20.56
   DEV_WORKER: 192.168.20.11
   TOMER_TS: 100.113.78.67
@@ -159,7 +161,7 @@ jobs:
             else fail "cannot read dev NetworkPolicies: $(echo "$GUARD_REPORT" | tail -2)"; fi
             fi
           else
-            echo "  not required yet (EXPECT_EGRESS_GUARD=false): dev pods can still reach the forward directly until ops-portal-llm#7 is applied"
+            echo "  skipped (EXPECT_EGRESS_GUARD=false, set by hand): dev pods may reach the forward directly while the guard is absent"
           fi
 
           echo "== L1 tailnet (informational, ACCEPTED GAP)"
