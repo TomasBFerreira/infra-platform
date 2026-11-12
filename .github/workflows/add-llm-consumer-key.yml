@@ -48,6 +48,12 @@ on:
         description: 'Optional: key inside the Secret, e.g. api-key'
         required: false
         type: string
+      k8s_cluster:
+        description: 'Cluster the consumer Secret is delivered to (the gateway itself always runs in dev). qa hops through heaton to the QA worker (192.168.30.11); a QA pod reaches the gateway at http://192.168.20.11:30095.'
+        required: false
+        default: dev
+        type: choice
+        options: [dev, qa]
       rotate:
         description: 'Replace the key of an EXISTING consumer (keeps its priority/can_lease/allow_api; those inputs are ignored). Without it an existing name is refused.'
         required: false
@@ -81,9 +87,11 @@ jobs:
           NS: ${{ inputs.k8s_namespace }}
           SECRET: ${{ inputs.k8s_secret }}
           SKEY: ${{ inputs.k8s_key }}
+          CLUSTER: ${{ inputs.k8s_cluster }}
           WORKER_IP: ${{ inputs.worker_ip }}
         run: |
           set -euo pipefail
+          case "$CLUSTER" in dev|qa) ;; *) echo "::error::k8s_cluster must be dev or qa"; exit 1;; esac
           printf '%s' "$NAME" | grep -Eq '^[a-z][a-z0-9-]{1,30}$' || { echo "::error::name must match ^[a-z][a-z0-9-]{1,30}$"; exit 1; }
           printf '%s' "$WORKER_IP" | grep -Eq '^192\.168\.20\.[0-9]{1,3}$' || { echo "::error::worker_ip must be a dev-subnet address"; exit 1; }
           if [ -n "$NS$SECRET$SKEY" ]; then
@@ -103,6 +111,7 @@ jobs:
           NS: ${{ inputs.k8s_namespace }}
           SECRET: ${{ inputs.k8s_secret }}
           SKEY: ${{ inputs.k8s_key }}
+          CLUSTER: ${{ inputs.k8s_cluster }}
           RESTART: ${{ inputs.restart_gateway }}
           WORKER_IP: ${{ inputs.worker_ip }}
         run: |
@@ -160,11 +169,14 @@ jobs:
             chmod 600 "$WORK/ssh"
             B64=$(base64 -w0 < "$WORK/key")
             # The manifest goes over ssh stdin, so the key never appears on a command line.
+            # Dev consumers: the dev worker via benedict. QA consumers: the QA worker (VMID 311) via heaton.
+            # Same Vault worker key for every env (see the ops-portal deploy workflows).
+            if [ "$CLUSTER" = "qa" ]; then TARGET_IP=192.168.30.11; HOP=192.168.50.8; else TARGET_IP="$WORKER_IP"; HOP=192.168.50.4; fi
             printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  %s: %s\n' "$SECRET" "$NS" "$SKEY" "$B64" \
               | ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p root@192.168.50.4" \
-                  root@"$WORKER_IP" 'k3s kubectl apply -f -'
-            echo "Delivered to Secret $NS/$SECRET key $SKEY"
+                  -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p root@$HOP" \
+                  root@"$TARGET_IP" 'k3s kubectl apply -f -'
+            echo "Delivered to Secret $NS/$SECRET key $SKEY ($CLUSTER cluster)"
           fi
 
           # The gateway reads API_KEYS_JSON once at start, from its own Secret (written by its deploy.yml
@@ -228,7 +240,7 @@ jobs:
           if [ "$HELD" = "no" ]; then
             wk 'k3s kubectl -n ops-portal-llm rollout restart deploy/ops-portal-llm && k3s kubectl -n ops-portal-llm rollout status deploy/ops-portal-llm --timeout=180s'
             echo "Gateway restarted; key '$NAME' is live."
-            [ "$ROTATE" = "true" ] && echo "::warning::rotate: the old key is rejected now. Restart the consumer (it reads its key at pod start) or it will get 401 until it does."
+            [ "$ROTATE" = "true" ] && echo "::warning::rotate: the old key is rejected now. Restart the consumer in the $CLUSTER cluster (it reads its key at pod start) or it will get 401 until it does."
           else
             echo "::warning::lease state is '$HELD' (yes = a lease is held, unknown = audit unreadable): gateway NOT restarted. The Secret is updated; key '$NAME' goes live on the next gateway restart: k3s kubectl -n ops-portal-llm rollout restart deploy/ops-portal-llm once the lease is released."
           fi
