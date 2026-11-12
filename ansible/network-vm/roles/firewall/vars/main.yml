@@ -14,4 +14,9 @@ ollama_forward_upstream: "100.113.78.67"
 ollama_forward_port: 11434
 # Keyed by deploy_env (passed by the network-vm pipeline). Unknown/prod/unset -> empty,
 # which the script treats as "not enabled" and removes any managed rules.
-ollama_forward_allowed_subnet: "{{ {'qa': '192.168.30', 'dev': '192.168.20'}[deploy_env | default('')] | default('') }}"
+# QA is deliberately absent (forward disabled 2026-11: the incident planner goes through the
+# ops-portal-llm gateway). Dev stays on because the gateway's own upstream uses it.
+ollama_forward_allowed_subnet: "{{ {'dev': '192.168.20'}[deploy_env | default('')] | default('') }}"
+# Dev only: narrow the forward from the /24 to the single k3s worker node (pods are SNATed to
+# it). Empty = whole allowed subnet. The gateway pod runs on this node.
+ollama_forward_allowed_source: "{{ {'dev': '192.168.20.11/32'}[deploy_env | default('')] | default('') }}"

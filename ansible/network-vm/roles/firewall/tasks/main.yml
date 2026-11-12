@@ -71,6 +71,7 @@
       OLLAMA_UPSTREAM={{ ollama_forward_upstream }}
       OLLAMA_PORT={{ ollama_forward_port }}
       OLLAMA_ALLOWED_SUBNET={{ ollama_forward_allowed_subnet }}
+      OLLAMA_ALLOWED_SOURCE={{ ollama_forward_allowed_source }}
     mode: '0644'
     owner: root
     group: root
