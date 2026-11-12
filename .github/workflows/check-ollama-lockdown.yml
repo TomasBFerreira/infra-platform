@@ -14,8 +14,8 @@ name: Check Ollama lockdown
 #       two managed rules, narrowed to the dev worker; prod CT 155 has none.
 #   L2 probe: from benedict (not the worker) the dev forward must refuse. A refused/timed-out connect
 #       only counts if tomer is awake (CT 256 can reach it), otherwise it is "inconclusive", never a pass.
-#   L3 (only when EXPECT_EGRESS_GUARD=true): every eligible dev namespace has `ollama-egress-guard`.
-#       Flip the default below in the PR that applies ops-portal-llm/cluster-bootstrap/ollama-egress-guard.
+#   L3 (required by default since the guard was applied 2026-11-12): every eligible dev namespace has
+#       `ollama-egress-guard`. A new namespace without it fails the check until render.sh is re-run.
 #   L1 (informational): the tailnet still lets tagged nodes reach tomer:11434. ACCEPTED GAP (user
 #       decision 2026-11-12: rewriting the grants needs tagging tomer; see the issue). Reported, never fails.
 # Fails the job (GitHub email) and posts to Slack on any violation.
@@ -41,8 +41,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Flip to "true" in the PR that applies the egress guard (ops-portal-llm#7).
-  EXPECT_EGRESS_GUARD_DEFAULT: "false"
+  # The egress guard (ops-portal-llm/cluster-bootstrap/ollama-egress-guard) was applied to dev on
+  # 2026-11-12, so the L3 check is required on every run. Set to "false" only while deliberately
+  # removing the guard (rollback), and say so in the PR.
+  EXPECT_EGRESS_GUARD_DEFAULT: "true"
   FORWARD_IP_DEV: 192.168.20.56
   DEV_WORKER: 192.168.20.11
   TOMER_TS: 100.113.78.67
@@ -127,8 +129,8 @@ jobs:
           echo "== L3 egress guard (dev cluster)"
           GUARD_REPORT=""
           if [ "$EXPECT_GUARD" = "true" ]; then
-            vault kv get -field=private_key secret/ssh_keys/worker_node_worker 2>/dev/null | awk 'NF > 0' > "$WORK/ssh"; chmod 600 "$WORK/ssh"
-            if [ ! -s "$WORK/ssh" ]; then fail "L3: could not read the worker ssh key from Vault (expired VAULT_DEV_TOKEN?)"; else
+            ( umask 077; vault kv get -field=private_key secret/ssh_keys/worker_node_worker 2>"$WORK/verr" | awk 'NF > 0' > "$WORK/ssh" )
+            if [ ! -s "$WORK/ssh" ]; then fail "L3: could not read the worker ssh key from Vault (token expired, path/field missing or vault CLI error; see the run log)"; sed 's/^/    vault: /' "$WORK/verr" | head -3; else
             # Same eligibility rules as ops-portal-llm/cluster-bootstrap/ollama-egress-guard/render.sh
             # (EXCLUDE list + foreign-policy skip). Keep the `case` list below in sync with render.sh.
             if GUARD_REPORT=$(timeout 120 ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR \
@@ -143,8 +145,9 @@ jobs:
           guarded=$(echo "$pol" | awk '$2=="ollama-egress-guard"{print $1}' | sort -u)
           for n in $nss; do
             case "$n" in ops-portal-llm|kube-system|kube-public|kube-node-lease|egress-guard-test*) continue;; esac
-            if grep -qxF "$n" <<<"$foreign"; then echo "SKIP $n (foreign NetworkPolicy)"; continue; fi
-            if grep -qxF "$n" <<<"$guarded"; then echo "OK $n"; else echo "MISSING $n"; fi
+            if grep -qxF "$n" <<<"$guarded"; then echo "OK $n"
+            elif grep -qxF "$n" <<<"$foreign"; then echo "SKIP $n (foreign NetworkPolicy, no guard: needs a hand-written rule)"
+            else echo "MISSING $n"; fi
           done
           REMOTE
             ); then
@@ -153,13 +156,15 @@ jobs:
               miss=$(echo "$GUARD_REPORT" | grep -c '^MISSING' || true)
               skipped=$(echo "$GUARD_REPORT" | awk '/^SKIP/{printf "%s ", $2}')
               if [ "$seen" = 0 ]; then fail "L3 check produced no per-namespace result (cluster read failed?): $(echo "$GUARD_REPORT" | tail -2)"
-              elif [ "$miss" = 0 ]; then ok "every eligible dev namespace without a foreign policy has ollama-egress-guard"
+              elif [ "$(echo "$GUARD_REPORT" | grep -c '^OK ')" = 0 ]; then fail "L3: no namespace was verified as guarded (all skipped?)"
+              elif [ "$miss" = 0 ]; then ok "every eligible dev namespace that can carry the guard has ollama-egress-guard"
               else fail "$miss dev namespace(s) lack ollama-egress-guard: $(echo "$GUARD_REPORT" | awk '/^MISSING/{printf "%s ", $2}')"; fi
               [ -n "$skipped" ] && { echo "::warning::namespaces NOT guarded because they have another NetworkPolicy (need a hand-written rule): $skipped"; INCONCLUSIVE+=("unguarded (foreign policy): $skipped"); }
             else fail "cannot read dev NetworkPolicies: $(echo "$GUARD_REPORT" | tail -2)"; fi
             fi
           else
-            echo "  not required yet (EXPECT_EGRESS_GUARD=false): dev pods can still reach the forward directly until ops-portal-llm#7 is applied"
+            echo "  L3 check DISABLED (EXPECT_EGRESS_GUARD=false via the dispatch input or the file default)"
+            INCONCLUSIVE+=("L3 egress-guard check disabled: this run is not a full pass")
           fi
 
           echo "== L1 tailnet (informational, ACCEPTED GAP)"
@@ -183,7 +188,7 @@ jobs:
           FAILS: ${{ steps.check.outputs.fails }}
         run: |
           WEBHOOK=$(vault kv get -field=slack_webhook_url secret/ops-portal/prod/incidents 2>/dev/null || echo "")
-          if [ -z "$WEBHOOK" ]; then echo "::warning::No slack_webhook_url in Vault — skipping notification."; exit 0; fi
+          if [ -z "$WEBHOOK" ]; then echo "::error::No Slack webhook readable from Vault (expired VAULT_DEV_TOKEN?): the lockdown alert was NOT sent; the failed job email is the only notice."; exit 0; fi
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           TEXT=$(RUN_URL="$RUN_URL" python3 -c 'import json,os; f=os.environ.get("FAILS") or "check could not run (see the run log)"; print(json.dumps("Ollama lockdown check failed (<%s|run>)\n%s" % (os.environ["RUN_URL"], f[:1500])))')
           curl -sS -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d "{\"text\": $TEXT}"
