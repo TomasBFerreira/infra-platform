@@ -1,0 +1,156 @@
+name: Check Ollama lockdown
+
+# Guardrail for the Ollama lockdown (/app/issues/ollama-lockdown-2026-11-11.md): the ops-portal-llm
+# gateway must stay the only path to Ollama on `tomer`. This catches a regression (someone re-enables
+# a forward, a hand-added DNAT, a namespace without the egress guard) instead of finding out when the
+# queue is bypassed during a Gremlin run.
+#
+# READ-ONLY and connect-only: it reads iptables / NetworkPolicy state and opens a bare TCP connection
+# (no payload, no HTTP request, nothing the model sees), so it can run while Gremlin or a benchmark
+# holds the GPU. It never creates pods.
+#
+# Layers checked
+#   L2 (always): QA CT 356 has no ollama forward and no DNAT to tomer; dev CT 256 has exactly the
+#       two managed rules, narrowed to the dev worker; prod CT 155 has none.
+#   L2 probe: from benedict (not the worker) the dev forward must refuse. A refused/timed-out connect
+#       only counts if tomer is awake (CT 256 can reach it), otherwise it is "inconclusive", never a pass.
+#   L3 (only when EXPECT_EGRESS_GUARD=true): every eligible dev namespace has `ollama-egress-guard`.
+#       Flip the default below in the PR that applies ops-portal-llm/cluster-bootstrap/ollama-egress-guard.
+#   L1 (informational): the tailnet still lets tagged nodes reach tomer:11434. ACCEPTED GAP (user
+#       decision 2026-11-12: rewriting the grants needs tagging tomer; see the issue). Reported, never fails.
+# Fails the job (GitHub email) and posts to Slack on any violation.
+
+on:
+  schedule:
+    - cron: "40 7 * * *"   # daily 07:40 UTC, after check-tailscale-health
+  workflow_dispatch:
+    inputs:
+      expect_egress_guard:
+        description: 'Require the L3 egress guard in every eligible dev namespace (overrides the file default)'
+        required: false
+        type: choice
+        default: 'default'
+        options: ['default', 'true', 'false']
+
+permissions:
+  contents: read
+
+env:
+  # Flip to "true" in the PR that applies the egress guard (ops-portal-llm#7).
+  EXPECT_EGRESS_GUARD_DEFAULT: "false"
+  FORWARD_IP_DEV: 192.168.20.56
+  DEV_WORKER: 192.168.20.11
+  TOMER_TS: 100.113.78.67
+  OLLAMA_PORT: "11434"
+
+jobs:
+  check:
+    name: Ollama lockdown holds
+    runs-on: [self-hosted, management]
+    env:
+      PVE_USER: ${{ secrets.PVE_USER }}
+      VAULT_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+      VAULT_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+      EXPECT_INPUT: ${{ inputs.expect_egress_guard }}
+    steps:
+      - name: Check
+        id: check
+        run: |
+          set -uo pipefail
+          WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+          USERSHORT=$(echo "$PVE_USER" | cut -d'@' -f1)
+          pve() { local host=$1; shift; ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes "${USERSHORT}@${host}" "$@"; }
+          FAILS=(); INCONCLUSIVE=()
+          fail() { FAILS+=("$1"); echo "  FAIL: $1"; }
+          ok()   { echo "  ok:   $1"; }
+
+          EXPECT_GUARD=${EXPECT_INPUT:-default}
+          if [ "$EXPECT_GUARD" = "default" ]; then EXPECT_GUARD=$EXPECT_EGRESS_GUARD_DEFAULT; fi
+          echo "expect egress guard: $EXPECT_GUARD"
+
+          echo "== L2 rules"
+          # QA: no forward at all, and nothing NATing to tomer under any name.
+          if QA=$(pve 192.168.50.8 'pct exec 356 -- iptables -t nat -S' 2>&1); then
+            n=$(echo "$QA" | grep -c -E 'ollama-forward|100\.113\.78\.67' || true)
+            [ "$n" = 0 ] && ok "QA CT 356: no ollama/tomer NAT rules" || fail "QA CT 356 has $n NAT rule(s) touching ollama/tomer (forward re-enabled?)"
+          else fail "cannot read CT 356 iptables via heaton: $(echo "$QA" | tail -1)"; fi
+          # Prod: same.
+          if PR=$(pve 192.168.50.2 'pct exec 155 -- iptables -t nat -S' 2>&1); then
+            n=$(echo "$PR" | grep -c -E 'ollama-forward|100\.113\.78\.67' || true)
+            [ "$n" = 0 ] && ok "prod CT 155: no ollama/tomer NAT rules" || fail "prod CT 155 has $n NAT rule(s) touching ollama/tomer"
+          else fail "cannot read CT 155 iptables via betsy: $(echo "$PR" | tail -1)"; fi
+          # Dev: exactly the two managed rules, both narrowed to the worker, nothing else toward tomer.
+          if DV=$(pve 192.168.50.4 'pct exec 256 -- iptables -t nat -S' 2>&1); then
+            tot=$(echo "$DV" | grep -c -E '100\.113\.78\.67' || true)
+            managed=$(echo "$DV" | grep -c -E -- "--comment ollama-forward" || true)
+            narrow=$(echo "$DV" | grep -E -- "--comment ollama-forward" | grep -c -E -- "-s ${DEV_WORKER}/32 " || true)
+            if [ "$managed" = 2 ] && [ "$narrow" = 2 ] && [ "$tot" = 2 ]; then ok "dev CT 256: 2 managed rules, both -s ${DEV_WORKER}/32"
+            else fail "dev CT 256 forward drifted: managed=$managed narrowed-to-worker=$narrow rules-to-tomer=$tot (want 2/2/2)"; fi
+          else fail "cannot read CT 256 iptables via benedict: $(echo "$DV" | tail -1)"; fi
+
+          echo "== L2 connect probe (needs tomer awake)"
+          # tomer awake? connect from CT 256 straight to its tailnet address.
+          pve 192.168.50.4 "pct exec 256 -- timeout 6 bash -c 'exec 3<>/dev/tcp/${TOMER_TS}/${OLLAMA_PORT}'" >/dev/null 2>&1; AWAKE=$?
+          if [ "$AWAKE" = 0 ]; then
+            pve 192.168.50.4 "timeout 6 bash -c 'exec 3<>/dev/tcp/${FORWARD_IP_DEV}/${OLLAMA_PORT}'" >/dev/null 2>&1; rc=$?
+            if [ "$rc" = 0 ]; then fail "benedict can connect to ${FORWARD_IP_DEV}:${OLLAMA_PORT}: the dev forward admits sources beyond the worker"
+            elif [ "$rc" = 255 ]; then INCONCLUSIVE+=("benedict ssh failed"); echo "  inconclusive: ssh to benedict failed"
+            else ok "benedict is refused at ${FORWARD_IP_DEV}:${OLLAMA_PORT}"; fi
+          else
+            INCONCLUSIVE+=("tomer asleep/unreachable: connect probes skipped")
+            echo "  inconclusive: tomer is not reachable from CT 256 (asleep?), so a refused connect proves nothing; the rule checks above still apply"
+          fi
+
+          echo "== L3 egress guard (dev cluster)"
+          GUARD_REPORT=""
+          if [ "$EXPECT_GUARD" = "true" ]; then
+            vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF > 0' > "$WORK/ssh"; chmod 600 "$WORK/ssh"
+            wk() { ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
+                     -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p ${USERSHORT}@192.168.50.4" \
+                     root@"$DEV_WORKER" "$@"; }
+            # Same eligibility rules as ops-portal-llm/cluster-bootstrap/ollama-egress-guard/render.sh.
+            if GUARD_REPORT=$(wk bash -s <<'REMOTE' 2>&1
+          K="k3s kubectl"
+          pol=$($K get networkpolicy -A -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}')
+          foreign=$(echo "$pol" | awk 'NF && $2!="ollama-egress-guard"{print $1}' | sort -u)
+          guarded=$(echo "$pol" | awk '$2=="ollama-egress-guard"{print $1}' | sort -u)
+          for n in $($K get ns -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            case "$n" in ops-portal-llm|kube-system|kube-public|kube-node-lease|egress-guard-test*) continue;; esac
+            echo "$foreign" | grep -qxF "$n" && { echo "SKIP $n (foreign NetworkPolicy)"; continue; }
+            echo "$guarded" | grep -qxF "$n" && echo "OK $n" || echo "MISSING $n"
+          done
+          REMOTE
+            ); then
+              echo "$GUARD_REPORT" | sed 's/^/  /'
+              miss=$(echo "$GUARD_REPORT" | grep -c '^MISSING' || true)
+              [ "$miss" = 0 ] && ok "every eligible dev namespace has ollama-egress-guard" \
+                || fail "$miss dev namespace(s) lack ollama-egress-guard: $(echo "$GUARD_REPORT" | awk '/^MISSING/{printf "%s ", $2}')"
+            else fail "cannot read dev NetworkPolicies: $(echo "$GUARD_REPORT" | tail -2)"; fi
+          else
+            echo "  not required yet (EXPECT_EGRESS_GUARD=false): dev pods can still reach the forward directly until ops-portal-llm#7 is applied"
+          fi
+
+          echo "== L1 tailnet (informational, ACCEPTED GAP)"
+          if pve 192.168.50.8 "pct exec 356 -- timeout 6 bash -c 'exec 3<>/dev/tcp/${TOMER_TS}/${OLLAMA_PORT}'" >/dev/null 2>&1; then
+            echo "  QA CT 356 can still open ${TOMER_TS}:${OLLAMA_PORT} over the tailnet (grants are allow-all). Known, accepted 2026-11-12."
+          else echo "  QA CT 356 cannot open ${TOMER_TS}:${OLLAMA_PORT} (tomer asleep, or the tailnet now restricts it)"; fi
+
+          echo
+          if [ "${#FAILS[@]}" -gt 0 ]; then
+            printf '%s\n' "${FAILS[@]}" > "$WORK/fails"
+            { echo "fails<<EOF"; cat "$WORK/fails"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            echo "LOCKDOWN VIOLATED: ${#FAILS[@]} check(s) failed"; exit 1
+          fi
+          [ "${#INCONCLUSIVE[@]}" -gt 0 ] && echo "NOTE inconclusive: ${INCONCLUSIVE[*]}"
+          echo "Lockdown holds for the checks that could run."
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          FAILS: ${{ steps.check.outputs.fails }}
+        run: |
+          WEBHOOK=$(vault kv get -field=slack_webhook_url secret/ops-portal/prod/incidents 2>/dev/null || echo "")
+          if [ -z "$WEBHOOK" ]; then echo "::warning::No slack_webhook_url in Vault — skipping notification."; exit 0; fi
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT=$(RUN_URL="$RUN_URL" python3 -c 'import json,os; f=os.environ.get("FAILS") or "check could not run (see the run log)"; print(json.dumps("Ollama lockdown check failed (<%s|run>)\n%s" % (os.environ["RUN_URL"], f[:1500])))')
+          curl -sS -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d "{\"text\": $TEXT}"
