@@ -99,27 +99,38 @@ jobs:
           else fail "cannot read CT 256 iptables via benedict: $(echo "$DV" | tail -1)"; fi
 
           echo "== L2 connect probe (needs tomer awake)"
-          # tomer awake? connect from CT 256 straight to its tailnet address.
-          pve 192.168.50.4 "pct exec 256 -- timeout 6 bash -c 'exec 3<>/dev/tcp/${TOMER_TS}/${OLLAMA_PORT}'" >/dev/null 2>&1; AWAKE=$?
-          if [ "$AWAKE" = 255 ] || [ "$AWAKE" = 126 ] || [ "$AWAKE" = 127 ]; then
-            INCONCLUSIVE+=("awake check could not run (rc=$AWAKE)"); echo "  inconclusive: could not run the tomer-awake check (rc=$AWAKE), probe skipped"
-          elif [ "$AWAKE" = 0 ]; then
-            pve 192.168.50.4 "timeout 6 bash -c 'exec 3<>/dev/tcp/${FORWARD_IP_DEV}/${OLLAMA_PORT}'" >/dev/null 2>&1; rc=$?
-            case "$rc" in
-              0)     fail "benedict can connect to ${FORWARD_IP_DEV}:${OLLAMA_PORT}: the dev forward admits sources beyond the worker" ;;
-              1|124) ok "benedict is refused/filtered at ${FORWARD_IP_DEV}:${OLLAMA_PORT} (rc=$rc)" ;;
-              *)     INCONCLUSIVE+=("benedict probe rc=$rc"); echo "  inconclusive: probe could not run (rc=$rc: 255=ssh failed, 126/127=no bash)" ;;
-            esac
-          else
-            INCONCLUSIVE+=("tomer asleep/unreachable: connect probes skipped")
+          # tcp_probe <pve-host> <prefix> <ip>: prints "<rc>|<message>". The remote side echoes a PROBE_RC
+          # sentinel, so an ssh failure or the outer `timeout 90` (both also exit 124/255) can never be
+          # mistaken for the probe's own result: no sentinel = the probe did not run = rc "none".
+          tcp_probe() {
+            local out rc msg
+            out=$(pve "$1" "$2 timeout 6 bash -c 'exec 3<>/dev/tcp/$3/${OLLAMA_PORT}' 2>&1; echo PROBE_RC=\$?" 2>/dev/null)
+            rc=$(echo "$out" | sed -n 's/^PROBE_RC=//p' | tail -1)
+            msg=$(echo "$out" | grep -v '^PROBE_RC=' | tr '\n' ' ' | cut -c1-120)
+            echo "${rc:-none}|${msg}"
+          }
+          # Is the failure one a firewall/closed port/asleep host would produce (vs. bash or /dev/tcp itself broken)?
+          net_failure() { [ "$1" = 124 ] || { [ "$1" = 1 ] && echo "$2" | grep -q -i -E 'refused|unreachable|timed out|no route'; }; }
+          r=$(tcp_probe 192.168.50.4 "pct exec 256 --" "${TOMER_TS}"); AWAKE=${r%%|*}; amsg=${r#*|}
+          if [ "$AWAKE" = 0 ]; then
+            r=$(tcp_probe 192.168.50.4 "" "${FORWARD_IP_DEV}"); rc=${r%%|*}; pmsg=${r#*|}
+            if [ "$rc" = 0 ]; then fail "benedict can connect to ${FORWARD_IP_DEV}:${OLLAMA_PORT}: the dev forward admits sources beyond the worker"
+            elif net_failure "$rc" "$pmsg"; then ok "benedict is refused/filtered at ${FORWARD_IP_DEV}:${OLLAMA_PORT} (rc=$rc)"
+            else INCONCLUSIVE+=("benedict probe rc=$rc ${pmsg}"); echo "  inconclusive: the probe did not run cleanly (rc=$rc: ${pmsg})"; fi
+          elif net_failure "$AWAKE" "$amsg"; then
+            INCONCLUSIVE+=("tomer asleep/unreachable: connect probe skipped")
             echo "  inconclusive: tomer is not reachable from CT 256 (asleep?), so a refused connect proves nothing; the rule checks above still apply"
+          else
+            INCONCLUSIVE+=("awake check did not run cleanly (rc=$AWAKE ${amsg})"); echo "  inconclusive: could not run the tomer-awake check (rc=$AWAKE: ${amsg}), probe skipped"
           fi
 
           echo "== L3 egress guard (dev cluster)"
           GUARD_REPORT=""
           if [ "$EXPECT_GUARD" = "true" ]; then
-            vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF > 0' > "$WORK/ssh"; chmod 600 "$WORK/ssh"
-            # Same eligibility rules as ops-portal-llm/cluster-bootstrap/ollama-egress-guard/render.sh.
+            vault kv get -field=private_key secret/ssh_keys/worker_node_worker 2>/dev/null | awk 'NF > 0' > "$WORK/ssh"; chmod 600 "$WORK/ssh"
+            if [ ! -s "$WORK/ssh" ]; then fail "L3: could not read the worker ssh key from Vault (expired VAULT_DEV_TOKEN?)"; else
+            # Same eligibility rules as ops-portal-llm/cluster-bootstrap/ollama-egress-guard/render.sh
+            # (EXCLUDE list + foreign-policy skip). Keep the `case` list below in sync with render.sh.
             if GUARD_REPORT=$(timeout 120 ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR \
                      -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR -W %h:%p ${USERSHORT}@192.168.50.4" \
                      root@"$DEV_WORKER" bash -s <<'REMOTE' 2>&1
@@ -132,8 +143,8 @@ jobs:
           guarded=$(echo "$pol" | awk '$2=="ollama-egress-guard"{print $1}' | sort -u)
           for n in $nss; do
             case "$n" in ops-portal-llm|kube-system|kube-public|kube-node-lease|egress-guard-test*) continue;; esac
-            echo "$foreign" | grep -qxF "$n" && { echo "SKIP $n (foreign NetworkPolicy)"; continue; }
-            echo "$guarded" | grep -qxF "$n" && echo "OK $n" || echo "MISSING $n"
+            if grep -qxF "$n" <<<"$foreign"; then echo "SKIP $n (foreign NetworkPolicy)"; continue; fi
+            if grep -qxF "$n" <<<"$guarded"; then echo "OK $n"; else echo "MISSING $n"; fi
           done
           REMOTE
             ); then
@@ -146,6 +157,7 @@ jobs:
               else fail "$miss dev namespace(s) lack ollama-egress-guard: $(echo "$GUARD_REPORT" | awk '/^MISSING/{printf "%s ", $2}')"; fi
               [ -n "$skipped" ] && { echo "::warning::namespaces NOT guarded because they have another NetworkPolicy (need a hand-written rule): $skipped"; INCONCLUSIVE+=("unguarded (foreign policy): $skipped"); }
             else fail "cannot read dev NetworkPolicies: $(echo "$GUARD_REPORT" | tail -2)"; fi
+            fi
           else
             echo "  not required yet (EXPECT_EGRESS_GUARD=false): dev pods can still reach the forward directly until ops-portal-llm#7 is applied"
           fi
