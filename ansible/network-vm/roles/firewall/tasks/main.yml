@@ -59,7 +59,7 @@
   command: /usr/local/bin/dns-forward-dnat-sync
   changed_when: false
 
-# ── QA + dev TCP forward to the Ollama host ─────────────────────────────────
+# ── dev TCP forward to the Ollama host (QA's is disabled: empty subnet in vars) ─────────────────────────────────
 # QA/dev pods can't route to tailnet IPs; this gateway can. Self-healing like the
 # DNS forward above. The script is a no-op unless the gateway's LAN prefix equals
 # ollama_forward_allowed_subnet (keyed by deploy_env; empty on prod). See
@@ -71,6 +71,7 @@
       OLLAMA_UPSTREAM={{ ollama_forward_upstream }}
       OLLAMA_PORT={{ ollama_forward_port }}
       OLLAMA_ALLOWED_SUBNET={{ ollama_forward_allowed_subnet }}
+      OLLAMA_ALLOWED_SOURCE={{ ollama_forward_allowed_source }}
     mode: '0644'
     owner: root
     group: root
