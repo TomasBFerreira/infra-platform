@@ -871,7 +871,7 @@ Same script with `QA_TUNNEL=6eff4426-87b1-4866-b2d7-05b63a7e4f6b.cfargotunnel.co
 - If qa is intentionally a "static maintenance page" only, build that page now and make sure qa-traefik-lxc-qa can serve it without any upstream dep.
 
 ## Ollama host forward (dev gateway TCP forward; QA's removed in the 2026-11 lockdown)
-The QA incident-remediation experiment (`/app/issues/local-llm-remediation-qwen-2026-11-04.md`) calls `qwen3.5:9b` on Ollama, which runs on a personal Windows PC (`tomer`, tailnet `100.113.78.67:11434`). Pods can't route to tailnet IPs, so the **QA gateway** (network-vm, `192.168.30.56`) forwards `192.168.30.56:11434 → 100.113.78.67:11434`.
+The QA incident-remediation experiment (`/app/issues/local-llm-remediation-qwen-2026-11-04.md`) calls `qwen3.5:9b` on Ollama, which runs on a personal Windows PC (`tomer`, tailnet `100.113.78.67:11434`). Pods can't route to tailnet IPs, so the **QA gateway** (network-vm, `192.168.30.56`) forwarded (removed in the 2026-11 lockdown, see below) `192.168.30.56:11434 → 100.113.78.67:11434`.
 
 - **Defined in** `ansible/network-vm/roles/firewall/` — `ollama-forward-sync.sh` + `ollama-forward.{service,timer}` (re-asserts on boot + every 2 min, `flock`-serialized), config in `/etc/default/ollama-forward` from `vars/main.yml`.
 - **Scope:** acts only when the gateway VIP is in the env's allowed subnet (`ollama_forward_allowed_subnet`, keyed by `deploy_env`: dev `192.168.20` only) and only for the source in `ollama_forward_allowed_source` (dev: `192.168.20.11/32`, the single k3s worker; empty = the whole /24).
@@ -890,8 +890,8 @@ The gateway `ops-portal-llm` is the intended only path to Ollama on `tomer` (don
 - **New dev namespace fails the guardrail:** in `ops-portal-llm/cluster-bootstrap/ollama-egress-guard/` re-run `render.sh` and apply the policy (README there).
 - **New consumer:** needs a gateway key, minted with `add-llm-consumer-key.yml` (restarts the gateway unless a lease is held; the consumer pod must be restarted by hand). `can_lease` only for benchmarks; never `allow_api` without a decision.
 - **Break-glass (a consumer must reach Ollama directly, e.g. gateway down):**
-  - Dev: `kubectl delete networkpolicy -A -l app.kubernetes.io/managed-by=ollama-egress-guard`, and set the guardrail's required-by-default to false in the same PR, otherwise the guardrail alerts.
-  - QA: restore `/etc/default/ollama-forward.bak-lockdown` and `ollama-forward-sync.bak-lockdown` on CT 356 and `systemctl start ollama-forward.service`. Do NOT run the network-vm pipeline (full blue/green flip).
+  - Dev: `kubectl delete networkpolicy -A -l app.kubernetes.io/managed-by=ollama-egress-guard`, and set `EXPECT_EGRESS_GUARD_DEFAULT: "false"` in `.github/workflows/check-ollama-lockdown.yml` in the same PR (or dispatch with `expect_egress_guard=false`), otherwise the guardrail fails and alerts.
+  - QA: restore `/etc/default/ollama-forward.bak-lockdown` and `ollama-forward-sync.bak-lockdown` on CT 356 and `systemctl start ollama-forward.service`. Do NOT run the network-vm pipeline (full blue/green flip). `check-ollama-lockdown.yml` will fail on CT 356 (L2 requires no QA forward) until the lockdown is re-applied, so expect alerts and keep the window short.
   - Planner-only: kill switch `LOCAL_LLM_ENABLED=false` on QA incidents.
   - Record a CMDB change for any break-glass and revert it afterwards.
 - **Not routable any more:** `ctxbench.py` (`/api/generate`, `/api/ps` are not proxied by the gateway). It needs a route of its own before use.
