@@ -53,6 +53,11 @@ on:
         required: false
         default: false
         type: boolean
+      restart_gateway:
+        description: 'Load the key into the running gateway now: patch ops-portal-llm-secrets and restart the gateway (queue and lease are in memory, so a restart drops them). Skipped with a warning if a lease is held or lease state cannot be read. Without it the key is not live until the next gateway restart.'
+        required: false
+        default: true
+        type: boolean
       worker_ip:
         description: 'Dev worker node IP'
         required: false
@@ -98,6 +103,7 @@ jobs:
           NS: ${{ inputs.k8s_namespace }}
           SECRET: ${{ inputs.k8s_secret }}
           SKEY: ${{ inputs.k8s_key }}
+          RESTART: ${{ inputs.restart_gateway }}
           WORKER_IP: ${{ inputs.worker_ip }}
         run: |
           set -euo pipefail
@@ -160,4 +166,59 @@ jobs:
                   root@"$WORKER_IP" 'k3s kubectl apply -f -'
             echo "Delivered to Secret $NS/$SECRET key $SKEY"
           fi
-          echo "Next: re-run ops-portal-llm deploy.yml so the gateway loads the new key (restarts it; make sure no lease is held)."
+
+          # The gateway reads API_KEYS_JSON once at start, from its own Secret (written by its deploy.yml
+          # from this same vault path). An unchanged-image deploy does not roll the pod, so without this
+          # step a new or rotated key answers 401 until someone restarts the gateway by hand (CMDB PRB 102).
+          if [ "$RESTART" != "true" ]; then
+            echo "::warning::restart_gateway=false: the key is in the vault but NOT live; run ops-portal-llm deploy.yml and restart the gateway when no lease is held."
+            exit 0
+          fi
+          [ -s "$WORK/ssh" ] || { vault kv get -field=private_key secret/ssh_keys/worker_node_worker | awk 'NF > 0' > "$WORK/ssh"; chmod 600 "$WORK/ssh"; }
+          wk() { ssh -i "$WORK/ssh" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                   -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p root@192.168.50.4" \
+                   root@"$WORKER_IP" "$@"; }
+
+          # 1. Lease guard. A restart wipes the in-memory lease, which would kill a running Gremlin/bench
+          #    run. Lease state is not exposed without an Authentik session, so read the audit trail: the
+          #    newest llm.lease.* event decides (acquire = held unless older than MAX_LEASE_TOTAL, 4h).
+          #    Audit lags the NATS publish by about a second; an unreadable trail counts as "held".
+          HELD=unknown
+          if wk 'k3s kubectl -n ops-portal-audit exec deploy/ops-portal-audit -- wget -qO- "http://127.0.0.1:8093/api/audit?service=llm&limit=200"' > "$WORK/audit.json" 2> "$WORK/err"; then
+            HELD=$(python3 - "$WORK/audit.json" <<'PY'
+          import json, sys, datetime
+          try:
+              entries = json.load(open(sys.argv[1]))["entries"]
+          except Exception:
+              print("unknown"); raise SystemExit
+          for e in sorted(entries, key=lambda e: e["timestamp"], reverse=True):
+              a = e.get("action", "")
+              if not a.startswith("llm.lease."):
+                  continue
+              if a == "llm.lease.acquire":
+                  t = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
+                  age = datetime.datetime.now(datetime.timezone.utc) - t
+                  print("no" if age > datetime.timedelta(hours=4) else "yes")
+              else:
+                  print("no")
+              raise SystemExit
+          print("no")
+          PY
+            )
+          else
+            echo "audit read failed: $(head -c 200 "$WORK/err")"
+          fi
+
+          # 2. Update the gateway's own Secret (stdin, so the keys never hit a command line). Safe even if
+          #    the restart is skipped: the next restart then loads the new keys.
+          python3 -c 'import base64,json,sys; print(json.dumps({"data":{"API_KEYS_JSON":base64.b64encode(open(sys.argv[1],"rb").read()).decode()}}))' "$WORK/keys_json" \
+            | wk 'k3s kubectl -n ops-portal-llm patch secret ops-portal-llm-secrets --type merge --patch-file /dev/stdin'
+          echo "Updated Secret ops-portal-llm/ops-portal-llm-secrets API_KEYS_JSON"
+
+          # 3. Restart only if no lease is held.
+          if [ "$HELD" = "no" ]; then
+            wk 'k3s kubectl -n ops-portal-llm rollout restart deploy/ops-portal-llm && k3s kubectl -n ops-portal-llm rollout status deploy/ops-portal-llm --timeout=180s'
+            echo "Gateway restarted; key '$NAME' is live."
+          else
+            echo "::warning::lease state is '$HELD' (yes = a lease is held, unknown = audit unreadable): gateway NOT restarted. The Secret is updated; key '$NAME' goes live on the next gateway restart: k3s kubectl -n ops-portal-llm rollout restart deploy/ops-portal-llm once the lease is released."
+          fi
