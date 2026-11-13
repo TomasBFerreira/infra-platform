@@ -87,7 +87,7 @@ jobs:
         # All in one Python — bash assoc arrays don't survive a heredoc env.
         run: |
           python3 - <<'PYEOF'
-          import json, os, secrets, urllib.request
+          import json, os, secrets, urllib.error, urllib.request
           # 'updates' is the ops-portal-updates service itself. The other
           # three aren't deployed services — they're GitHub Actions workflow
           # identities (renovate.yml, expiry-watchdog.yml,
@@ -100,21 +100,41 @@ jobs:
           # entries in the trusted map (e.g. trusted['renovate-orchestrator'])
           # are simply unused — nothing calls a GH Actions workflow over
           # svc-jwt — which is harmless.
+          # 'apps' is ops-portal-apps (Developer area), a real deployed service.
+          # Unlike the others it is NOT trusted everywhere: see RESTRICTED below.
           SERVICES = ['incidents','infrastructure','domain','audit','cmdb','identity','deployments','shell',
-                      'updates','renovate-orchestrator','expiry-watchdog','glm-agent']
+                      'updates','renovate-orchestrator','expiry-watchdog','glm-agent','apps']
+          # Issuers that only SOME receivers may trust (least privilege). Receivers
+          # such as infrastructure and domain accept any trusted issuer on
+          # /svc/execute without an issuer allowlist, so trusting 'apps' there
+          # would let it run cluster and Traefik actions. Add a receiver to an
+          # issuer's list only when a slice actually needs that call, and say so
+          # in docs/vaults.md.
+          RESTRICTED = {'apps': ['identity']}
+
+          def issuers_for(receiver):
+              return [iss for iss in SERVICES
+                      if iss != receiver
+                      and (iss not in RESTRICTED or receiver in RESTRICTED[iss])]
+
           VAULT = os.environ['VAULT_ADDR']
           TOK = os.environ['VAULT_TOKEN']
           ENV = os.environ['ENV']
           FORCE = os.environ.get('FORCE') == 'true'
 
           def get(path):
+              # Only a 404 means "absent". Any other failure (5xx, timeout, 403,
+              # sealed) must abort: treating it as absent would regenerate and
+              # overwrite an existing signing key and break every deployed pod.
               req = urllib.request.Request(f"{VAULT}/v1/{path}",
                   headers={'X-Vault-Token': TOK})
               try:
                   with urllib.request.urlopen(req) as r:
                       return json.load(r)['data']['data']
-              except Exception:
-                  return None
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return None
+                  raise
 
           def put(path, data):
               req = urllib.request.Request(f"{VAULT}/v1/{path}",
@@ -133,11 +153,17 @@ jobs:
                   put(f"secret/data/ops-portal/{ENV}/svc-jwt/{svc}", {"signing_key": keys[svc]})
                   print(f"svc-jwt/{svc} — wrote new")
 
-          # Trusted map — receiver -> JSON map of {issuer: signing_key}
-          trusted = {receiver: json.dumps({iss: keys[iss] for iss in SERVICES if iss != receiver})
-                     for receiver in SERVICES}
+          # Trusted map — receiver -> JSON map of {issuer: signing_key}.
+          # KV v2 POST replaces the whole document, so start from the existing one
+          # and only overwrite the receivers we compute: fields written by hand or
+          # by another workflow (e.g. a receiver not in SERVICES) are preserved.
+          existing_trusted = get(f"secret/data/ops-portal/{ENV}/svc-jwt/trusted") or {}
+          trusted = dict(existing_trusted)
+          for receiver in SERVICES:
+              trusted[receiver] = json.dumps({iss: keys[iss] for iss in issuers_for(receiver)})
+          changed = [r for r in SERVICES if existing_trusted.get(r) != trusted[r]]
           put(f"secret/data/ops-portal/{ENV}/svc-jwt/trusted", trusted)
-          print(f"svc-jwt/trusted — wrote map for {len(SERVICES)} services")
+          print(f"svc-jwt/trusted — wrote map for {len(SERVICES)} services; receiver fields changed: {changed or 'none'}")
           PYEOF
 
       - name: Seed ops-portal/<env>/incidents if missing
