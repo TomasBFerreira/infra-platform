@@ -61,7 +61,7 @@ on:
         type: choice
         options: [keep, 'true', 'false']
       rotate:
-        description: 'Replace the key of an EXISTING consumer (keeps its priority/can_lease/allow_api; those inputs are ignored). Without it an existing name is refused.'
+        description: 'Replace the key of an EXISTING consumer (keeps its priority/can_lease; those inputs are ignored. allow_api is kept unless allow_api_on_rotate says otherwise). Without it an existing name is refused.'
         required: false
         default: false
         type: boolean
@@ -149,14 +149,18 @@ jobs:
           name = os.environ["NAME"]
           rotate = os.environ["ROTATE"] == "true"
           existing = [e for e in entries if e.get("name") == name]
+          NO_API = re.compile(r"^(gremlin|bench|llm-bench|planner|incident-planner)")
+          aor = os.environ.get("ALLOW_API_ON_ROTATE", "keep")
+          if aor != "keep" and not rotate:
+              sys.exit("::error::allow_api_on_rotate only applies with rotate=true; use allow_api when creating a new consumer")
           key = secrets.token_urlsafe(32)          # 43 chars, gateway minimum is 24
           if rotate:
               if len(existing) != 1:
                   sys.exit(f"::error::rotate needs exactly one existing consumer named {name!r} (existing names: {sorted(e.get('name') for e in entries)})")
               existing[0]["key"] = key             # priority/can_lease stay as they are
-              flag = os.environ.get("ALLOW_API_ON_ROTATE", "keep")
+              flag = aor
               if flag in ("true", "false"):
-                  if flag == "true" and re.match(r"^(gremlin|bench|llm-bench|planner|incident-planner)", name):
+                  if flag == "true" and NO_API.match(name):
                       sys.exit(f"::error::{name!r} may never use the hosted API; leave allow_api_on_rotate=keep or false")
                   existing[0]["allow_api"] = (flag == "true")
                   print(f"rotating the key of {name!r}; allow_api set to {flag}, other flags unchanged")
@@ -166,7 +170,7 @@ jobs:
               if existing:
                   sys.exit(f"::error::a key named {name!r} already exists (existing names: {sorted(e.get('name') for e in entries)}); use rotate=true or pick another name")
               allow_api = os.environ["ALLOW_API"] == "true"
-              if allow_api and re.match(r"^(gremlin|bench|llm-bench|planner|incident-planner)", name):
+              if allow_api and NO_API.match(name):
                   sys.exit(f"::error::{name!r} may never use the hosted API; set allow_api=false")
               entries.append({"name": name, "key": key, "priority": os.environ["PRIORITY"],
                               "can_lease": os.environ["CAN_LEASE"] == "true", "allow_api": allow_api})
