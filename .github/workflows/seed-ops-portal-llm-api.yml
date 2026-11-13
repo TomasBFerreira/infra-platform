@@ -34,6 +34,10 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: seed-ops-portal-llm-api
+  cancel-in-progress: false
+
 jobs:
   seed:
     runs-on: [self-hosted, management]
@@ -57,14 +61,19 @@ jobs:
           python3 -c "import sys; c,p,q=map(float,sys.argv[1:]); sys.exit(0 if 0<c<=50 and p>0 and q>0 else 1)" "$CAP" "$PP" "$PC" \
             || { echo "::error::need 0 < cap <= 50 and both prices > 0"; exit 1; }
 
-          B="${VAULT_BOOTSTRAP_ADDR%/}/v1/secret/data/ops-portal-llm/dev/api"
+          normalise() { [[ "$1" == http://* || "$1" == https://* ]] && echo "${1%/}" || echo "http://${1%/}"; }
+          VAULT_BOOTSTRAP_ADDR=$(normalise "$VAULT_BOOTSTRAP_ADDR")
+          VAULT_PROD_ADDR=$(normalise "$VAULT_PROD_ADDR")
+
+          B="${VAULT_BOOTSTRAP_ADDR}/v1/secret/data/ops-portal-llm/dev/api"
           if [ "$OVERWRITE" != "true" ]; then
             code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Vault-Token: ${VAULT_BOOTSTRAP_TOKEN}" "$B")
             [ "$code" = "404" ] || { echo "::error::secret/ops-portal-llm/dev/api already exists or is unreadable (HTTP $code); set overwrite=true to replace"; exit 1; }
           fi
 
-          KEY=$(curl -sf -H "X-Vault-Token: ${VAULT_PROD_TOKEN}" "${VAULT_PROD_ADDR%/}/v1/secret/data/AI/GLM" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ops-upd'])")
+          KEY=$(curl -sf -H "X-Vault-Token: ${VAULT_PROD_TOKEN}" "${VAULT_PROD_ADDR}/v1/secret/data/AI/GLM" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ops-upd'])") \
+            || { echo "::error::could not read secret/AI/GLM field ops-upd from the prod vault"; exit 1; }
           [ -n "$KEY" ] || { echo "::error::empty GLM key"; exit 1; }
           echo "::add-mask::${KEY}"
 
@@ -73,6 +82,7 @@ jobs:
           print(json.dumps({"data":{"key":os.environ["KEY"],"monthly_cap_usd":os.environ["CAP"],
             "price_prompt_per_mtok":os.environ["PP"],"price_completion_per_mtok":os.environ["PC"]}}))' \
             | curl -sf -X POST -H "X-Vault-Token: ${VAULT_BOOTSTRAP_TOKEN}" -H "Content-Type: application/json" \
-                --data-binary @- "$B" >/dev/null
+                --data-binary @- "$B" >/dev/null \
+            || { echo "::error::write to bootstrap vault failed"; exit 1; }
           echo "Seeded secret/ops-portal-llm/dev/api: cap=\$${CAP}/month, prices ${PP}/${PC} per Mtok (key copied, not printed)."
           echo "Next: re-run ops-portal-llm deploy.yml when no lease is held."
