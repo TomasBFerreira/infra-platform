@@ -110,7 +110,7 @@ jobs:
           # would let it run cluster and Traefik actions. Add a receiver to an
           # issuer's list only when a slice actually needs that call, and say so
           # in docs/vaults.md.
-          RESTRICTED = {'apps': ['identity']}
+          RESTRICTED = {'apps': ['identity', 'cmdb']}
 
           def issuers_for(receiver):
               return [iss for iss in SERVICES
