@@ -1,0 +1,78 @@
+name: Seed ops-portal-llm hosted-API fallback (GLM)
+
+# Copies the GLM key from the PROD vault (secret/AI/GLM, field "ops-upd", the same key the
+# glm-update-agent uses) into the bootstrap vault at secret/ops-portal-llm/dev/api, together with
+# the monthly cap and the two prices the gateway needs. The key is read into a masked variable,
+# written over stdin to the bootstrap vault, and never printed or written to disk.
+#
+# Afterwards re-run ops-portal-llm's deploy.yml (the gateway reads the path at deploy time and
+# restarts; do it when no lease is held). Only keys with allow_api=true can use the fallback;
+# gremlin*/bench*/planner*/incident-planner* keys can never (enforced in the gateway).
+#
+# Prices are inputs with no defaults on purpose: copy them from the live pricing page
+# (https://docs.z.ai/guides/overview/pricing) the day you run this.
+
+on:
+  workflow_dispatch:
+    inputs:
+      monthly_cap_usd:
+        description: 'Hard monthly cap in USD for hosted-API fallback (0 < cap <= 50)'
+        required: true
+        default: '5'
+        type: string
+      price_prompt_per_mtok:
+        description: 'USD per million INPUT tokens for the model (gateway API_MODEL, default glm-5.3)'
+        required: true
+        type: string
+      price_completion_per_mtok:
+        description: 'USD per million OUTPUT tokens'
+        required: true
+        type: string
+      overwrite:
+        description: 'Replace an existing secret/ops-portal-llm/dev/api (otherwise refuse)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  seed:
+    runs-on: [self-hosted, management]
+    steps:
+      - name: Copy key and write config
+        env:
+          VAULT_BOOTSTRAP_ADDR: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+          VAULT_BOOTSTRAP_TOKEN: ${{ secrets.VAULT_DEV_TOKEN }}
+          VAULT_PROD_ADDR: ${{ secrets.VAULT_PROD_ADDR }}
+          VAULT_PROD_TOKEN: ${{ secrets.VAULT_PROD_TOKEN }}
+          CAP: ${{ inputs.monthly_cap_usd }}
+          PP: ${{ inputs.price_prompt_per_mtok }}
+          PC: ${{ inputs.price_completion_per_mtok }}
+          OVERWRITE: ${{ inputs.overwrite }}
+        run: |
+          set -euo pipefail
+          num='^[0-9]+(\.[0-9]+)?$'
+          for v in "$CAP" "$PP" "$PC"; do
+            [[ "$v" =~ $num ]] || { echo "::error::inputs must be plain decimal numbers"; exit 1; }
+          done
+          python3 -c "import sys; c,p,q=map(float,sys.argv[1:]); sys.exit(0 if 0<c<=50 and p>0 and q>0 else 1)" "$CAP" "$PP" "$PC" \
+            || { echo "::error::need 0 < cap <= 50 and both prices > 0"; exit 1; }
+
+          B="${VAULT_BOOTSTRAP_ADDR%/}/v1/secret/data/ops-portal-llm/dev/api"
+          if [ "$OVERWRITE" != "true" ]; then
+            code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Vault-Token: ${VAULT_BOOTSTRAP_TOKEN}" "$B")
+            [ "$code" = "404" ] || { echo "::error::secret/ops-portal-llm/dev/api already exists or is unreadable (HTTP $code); set overwrite=true to replace"; exit 1; }
+          fi
+
+          KEY=$(curl -sf -H "X-Vault-Token: ${VAULT_PROD_TOKEN}" "${VAULT_PROD_ADDR%/}/v1/secret/data/AI/GLM" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ops-upd'])")
+          [ -n "$KEY" ] || { echo "::error::empty GLM key"; exit 1; }
+          echo "::add-mask::${KEY}"
+
+          KEY="$KEY" CAP="$CAP" PP="$PP" PC="$PC" python3 -c '
+          import json,os
+          print(json.dumps({"data":{"key":os.environ["KEY"],"monthly_cap_usd":os.environ["CAP"],
+            "price_prompt_per_mtok":os.environ["PP"],"price_completion_per_mtok":os.environ["PC"]}}))' \
+            | curl -sf -X POST -H "X-Vault-Token: ${VAULT_BOOTSTRAP_TOKEN}" -H "Content-Type: application/json" \
+                --data-binary @- "$B" >/dev/null
+          echo "Seeded secret/ops-portal-llm/dev/api: cap=\$${CAP}/month, prices ${PP}/${PC} per Mtok (key copied, not printed)."
+          echo "Next: re-run ops-portal-llm deploy.yml when no lease is held."
