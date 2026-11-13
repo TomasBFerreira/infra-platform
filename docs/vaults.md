@@ -186,3 +186,23 @@ This means the vault auto-unseals after a reboot but the unseal keys are on the 
 A workflow that assumes a path/field name can silently drift from the real secret if it was seeded by hand. Rather than `vault kv get`-ing the path directly (which prints every value), dispatch **`read-vault-secret-keys.yml`** with the target `environment` and `path` — it prints only `sorted(dict.keys())`, never a value, and masks the vault token it used. Use this instead of a manual `vault kv get` whenever you just need to confirm a field exists/is named correctly.
 
 Caught a real bug this way on 2026-09-19: `glm-update-agent.yml` had assumed `secret/AI/GLM/ops-upd` field `api_key` since it was authored, never verified — the real secret is at `secret/AI/GLM` field `ops-upd`. Every dispatch of that workflow had been crashing at the "Ask GLM" step on the wrong path (404). Fixed in the same PR that added this tool.
+
+## ops-portal service-to-service JWT keys (bootstrap vault)
+
+Written by `seed-ops-portal-vault.yml` (idempotent: existing keys are kept unless `force_rotate`).
+
+| Path | Fields | Used by |
+|---|---|---|
+| `secret/ops-portal/<env>/svc-jwt/<issuer>` | `signing_key` | the issuing service, to mint outgoing `X-Service-Token`s. Issuers: `incidents`, `infrastructure`, `domain`, `audit`, `cmdb`, `identity`, `deployments`, `shell`, `updates`, `apps`, plus the workflow identities `renovate-orchestrator`, `expiry-watchdog`, `glm-agent` |
+| `secret/ops-portal/<env>/svc-jwt/trusted` | one field per receiver (JSON map `{issuer: signing_key}`) | each receiver's deploy workflow injects its own field as `TRUSTED_SERVICE_KEYS`. Receivers must redeploy to pick up a new issuer |
+
+`apps` (ops-portal-apps, Developer area) was added 2026-11-13 and is deliberately **not trusted by every receiver**: `RESTRICTED` in the seed workflow limits it. Receivers like `infrastructure` and `domain` accept any trusted issuer on `/svc/execute` with no issuer allowlist, so trusting `apps` there would let it run cluster and Traefik actions. Current matrix:
+
+| Issuer | Trusted by (receivers) | Why |
+|---|---|---|
+| `apps` | `identity` | `/svc/identity/app-groups` (also enforces `iss=apps` itself) |
+
+Add a receiver to an issuer's list only in the slice that needs that call (planned: `infrastructure` for app namespaces/freeze, after an issuer allowlist exists there; `cmdb` for problem reports), and update this table. `apps` talks to the LLM gateway with an API key, not svcjwt.
+
+After running the seed, **redeploy each receiver whose trusted field changed** (the workflow logs `receiver fields changed: [...]`) to pick up the new map. The seed only reads Vault (a non-404 error aborts the run rather than regenerating keys) and preserves any other field already in `svc-jwt/trusted`.
+
