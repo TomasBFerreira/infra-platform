@@ -1,0 +1,406 @@
+name: App provision (Developer area)
+run-name: app-provision ${{ inputs.step }} ${{ inputs.slug }} ${{ inputs.environment }} ${{ inputs.request_id }}
+
+# One provisioning step for one Developer-area app. Dispatched by the apps
+# platform (ops-portal-apps), which holds only a token that can dispatch
+# workflows in this repo; every GitHub write and every cluster action happens
+# here, with this repo's existing credentials. Usable by hand too. Each step is
+# idempotent, so the platform can repeat it after a failure.
+#
+#   repo    create the private repo <owner>/app-<slug> (or confirm it is ours)
+#           and push the app's draft as site/. The draft comes from the apps
+#           service, fetched with a single-use export token.
+#   route   add (or remove) the app's router in traefik-gitops
+#           config/dynamic/apps.yml through scripts/apps_route.py, as a PR that
+#           is merged at once, then wait for that repo's deploy.
+#   deploy  build the static-site image from site/ (GitHub-hosted, no registry),
+#           import it into the env's worker and apply the fixed manifest into
+#           the namespace app-<slug> (which ops-portal-infrastructure created).
+#   health  check the pod answers on its NodePort and Traefik routes the host.
+#
+# DNS is its own workflow (app-dns.yml). Only dev is enabled
+# (scripts/app_platform.py ENABLED_ENVS); QA and prod are a later slice.
+#
+# The app repo holds nothing but the draft snapshot: no workflows, no
+# Dockerfile, no manifests. Developer content is only ever static files under
+# site/, so it cannot run code on a runner or shape the build or the deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: 'Provisioning step'
+        required: true
+        type: choice
+        options: [repo, route, deploy, health]
+      slug:
+        description: 'App slug (e.g. my-shop)'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment (only dev is enabled)'
+        required: true
+        type: choice
+        options: [dev, qa, prod]
+        default: dev
+      request_id:
+        description: 'Caller correlation id (appears in the run name)'
+        required: false
+        type: string
+        default: manual-0000
+      port:
+        description: 'NodePort 31000-31899 (route add, deploy, health)'
+        required: false
+        type: string
+        default: ''
+      sso:
+        description: 'route: put the host behind Authentik'
+        required: false
+        type: boolean
+        default: true
+      action:
+        description: 'route only: add or remove'
+        required: false
+        type: choice
+        options: [add, remove]
+        default: add
+      export_token:
+        description: 'repo: single-use draft export token from the apps service'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  SLUG: ${{ inputs.slug }}
+  TARGET_ENV: ${{ inputs.environment }}
+  REQUEST_ID: ${{ inputs.request_id }}
+  PORT: ${{ inputs.port }}
+  # Where app repos live. Set the repository variable APPS_GITHUB_OWNER to the
+  # developer org once it exists; until then they sit beside this repo.
+  APPS_OWNER: ${{ vars.APPS_GITHUB_OWNER || github.repository_owner }}
+
+jobs:
+  # ── repo ────────────────────────────────────────────────────────────────────
+  repo:
+    if: inputs.step == 'repo'
+    # In the dev cluster, so it can reach the apps service directly.
+    runs-on: arc-pilot-dev
+    concurrency:
+      group: app-provision-repo-${{ inputs.slug }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      EXPORT_TOKEN: ${{ inputs.export_token }}
+      APPS_URL: http://ops-portal-apps.ops-portal-apps.svc.cluster.local.:8100
+    steps:
+      - name: Mask the export token
+        run: |
+          [ -z "$EXPORT_TOKEN" ] || echo "::add-mask::$EXPORT_TOKEN"
+
+      - uses: actions/checkout@v4
+
+      - name: Check inputs
+        run: |
+          python3 scripts/test_app_platform.py
+          python3 scripts/app_platform.py check "$SLUG" "$TARGET_ENV" --request-id "$REQUEST_ID"
+          [ -n "$EXPORT_TOKEN" ] || { echo "::error::export_token is required for the repo step"; exit 1; }
+
+      - name: Fetch the draft
+        run: |
+          # The token is single-use and short-lived; the apps service returns
+          # the app's current draft files as a tar.gz.
+          curl -sS --fail-with-body --max-time 120 -o "$RUNNER_TEMP/draft.tar.gz" \
+            -H "X-Export-Token: $EXPORT_TOKEN" \
+            "$APPS_URL/svc/apps/$SLUG/draft/export"
+          python3 scripts/app_platform.py unpack "$RUNNER_TEMP/draft.tar.gz" "$RUNNER_TEMP/site"
+
+      - name: Create or confirm the repo
+        run: |
+          REPO="$APPS_OWNER/app-$SLUG"
+          MARK="Developer-area app $SLUG (managed by ops-portal-apps)"
+          if DESC=$(gh repo view "$REPO" --json description --jq .description 2>/dev/null); then
+            # Never adopt a repo this platform did not create.
+            if [ "$DESC" != "$MARK" ]; then
+              echo "::error::$REPO exists and is not a platform app repo; refusing to touch it"
+              exit 1
+            fi
+            echo "$REPO exists and is ours"
+          else
+            gh repo create "$REPO" --private --description "$MARK"
+            echo "created $REPO"
+          fi
+          echo "REPO=$REPO" >> "$GITHUB_ENV"
+
+      - name: Push the draft as site/
+        run: |
+          gh auth setup-git
+          WORK="$RUNNER_TEMP/app-repo"
+          git clone --quiet "https://github.com/$REPO.git" "$WORK"
+          cd "$WORK"
+          git checkout --quiet -B main
+          git config user.name  "ops-portal-apps[bot]"
+          git config user.email "noreply@databaes.net"
+          # The repo is a snapshot of the draft: everything is replaced.
+          git rm -r --quiet --ignore-unmatch . >/dev/null
+          cp -r "$RUNNER_TEMP/site" site
+          # git does not track empty directories; keep site/ present.
+          touch site/.keep
+          printf '%s\n' "# app-$SLUG" "" \
+            "Snapshot of the Developer-area app \`$SLUG\`, written by the ops portal." \
+            "Do not edit here: the portal overwrites this repository on every submit." \
+            "Everything deployable is under \`site/\` (static files)." > README.md
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No change since the last submit."
+          else
+            git commit --quiet -m "Draft snapshot (request $REQUEST_ID)"
+            git push --quiet origin main
+            echo "Pushed $(git rev-parse --short HEAD) to $REPO"
+          fi
+
+  # ── route ───────────────────────────────────────────────────────────────────
+  route:
+    if: inputs.step == 'route'
+    runs-on: ubuntu-latest
+    # One writer of apps.yml at a time.
+    concurrency:
+      group: app-provision-route
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      ACTION: ${{ inputs.action }}
+      SSO: ${{ inputs.sso }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check inputs
+        run: |
+          pip install --quiet 'PyYAML==6.0.2'
+          if [ "$ACTION" = "add" ]; then
+            python3 scripts/app_platform.py check "$SLUG" "$TARGET_ENV" --port "$PORT" --request-id "$REQUEST_ID"
+          else
+            python3 scripts/app_platform.py check "$SLUG" "$TARGET_ENV" --request-id "$REQUEST_ID"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/traefik-gitops
+          token: ${{ secrets.GH_PAT }}
+          path: traefik-gitops
+
+      - name: Edit apps.yml (PR, merged immediately)
+        working-directory: traefik-gitops
+        run: |
+          python3 scripts/test_apps_route.py
+          python3 scripts/test_validate_apps_routes.py
+          if [ "$ACTION" = "add" ]; then
+            SSO_FLAG=""
+            [ "$SSO" = "true" ] && SSO_FLAG="--sso"
+            RESULT=$(python3 scripts/apps_route.py add "$SLUG" "$TARGET_ENV" "$PORT" $SSO_FLAG)
+          else
+            RESULT=$(python3 scripts/apps_route.py remove "$SLUG" "$TARGET_ENV")
+          fi
+          echo "$RESULT"
+          python3 scripts/validate-apps-routes.py config/dynamic/apps.yml config/dynamic/services.yml
+          if [ "$(echo "$RESULT" | python3 -c 'import sys,json; print(json.load(sys.stdin)["changed"])')" != "True" ]; then
+            echo "No change needed (route already ${ACTION}ed)."
+            exit 0
+          fi
+          BRANCH="chore/app-route-${ACTION}-${SLUG}-${TARGET_ENV}-${GITHUB_RUN_ID}"
+          git config user.name  "ops-portal-apps[bot]"
+          git config user.email "noreply@databaes.net"
+          git checkout --quiet -b "$BRANCH"
+          git add config/dynamic/apps.yml
+          git commit --quiet -m "chore: ${ACTION} app route ${SLUG} (${TARGET_ENV})
+
+          Generated by infra-platform app-provision.yml run ${GITHUB_RUN_ID}."
+          git push --quiet origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: ${ACTION} app route ${SLUG} (${TARGET_ENV})" \
+            --body "Generated by infra-platform app-provision.yml (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Only touches the generated apps.yml, written by scripts/apps_route.py and validated before the commit."
+          gh pr merge "$BRANCH" --squash --delete-branch
+          SHA=$(gh api "repos/${GITHUB_REPOSITORY_OWNER}/traefik-gitops/commits/main" --jq .sha)
+          echo "MERGE_SHA=$SHA" >> "$GITHUB_ENV"
+
+      - name: Wait for the Traefik config deploy
+        if: env.MERGE_SHA != ''
+        run: |
+          TG="${GITHUB_REPOSITORY_OWNER}/traefik-gitops"
+          RUN=""
+          for _ in $(seq 1 30); do
+            sleep 4
+            RUN=$(gh run list --repo "$TG" --workflow deploy.yml --commit "$MERGE_SHA" --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$RUN" ] && break
+          done
+          [ -n "$RUN" ] || { echo "::error::no traefik-gitops deploy run found for $MERGE_SHA"; exit 1; }
+          echo "traefik-gitops deploy: run $RUN"
+          gh run watch "$RUN" --repo "$TG" --exit-status
+
+  # ── deploy ──────────────────────────────────────────────────────────────────
+  build:
+    if: inputs.step == 'deploy'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check inputs
+        run: |
+          pip install --quiet 'PyYAML==6.0.2'
+          python3 scripts/app_platform.py check "$SLUG" "$TARGET_ENV" --port "$PORT" --request-id "$REQUEST_ID"
+
+      - name: Fetch the app repo
+        run: |
+          REPO="$APPS_OWNER/app-$SLUG"
+          MARK="Developer-area app $SLUG (managed by ops-portal-apps)"
+          DESC=$(gh repo view "$REPO" --json description --jq .description)
+          [ "$DESC" = "$MARK" ] || { echo "::error::$REPO is not a platform app repo"; exit 1; }
+          gh auth setup-git
+          git clone --quiet --depth 1 "https://github.com/$REPO.git" "$RUNNER_TEMP/app-repo"
+          [ -d "$RUNNER_TEMP/app-repo/site" ] || { echo "::error::$REPO has no site/ directory"; exit 1; }
+
+      - name: Build the image
+        id: build
+        run: |
+          SHA=$(git -C "$RUNNER_TEMP/app-repo" rev-parse --short=12 HEAD)
+          IMAGE="platform.local/app-$SLUG:$SHA"
+          CTX="$RUNNER_TEMP/ctx"
+          mkdir -p "$CTX"
+          # Only site/ and this repo's Dockerfile + nginx.conf enter the build.
+          cp apps-platform/Dockerfile apps-platform/nginx.conf "$CTX/"
+          cp -r "$RUNNER_TEMP/app-repo/site" "$CTX/site"
+          rm -f "$CTX/site/.keep"
+          docker build --quiet -t "$IMAGE" "$CTX"
+          docker save "$IMAGE" | gzip > "$RUNNER_TEMP/image.tar.gz"
+          ls -l "$RUNNER_TEMP/image.tar.gz"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-image
+          path: ${{ runner.temp }}/image.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  deploy:
+    if: inputs.step == 'deploy'
+    needs: [build]
+    runs-on: arc-pilot-dev
+    concurrency:
+      group: app-provision-deploy-${{ inputs.slug }}
+      cancel-in-progress: false
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      VAULT_ADDR_RAW: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check inputs and render the manifest
+        run: |
+          python3 scripts/app_platform.py check "$SLUG" "$TARGET_ENV" --port "$PORT" --request-id "$REQUEST_ID"
+          python3 scripts/app_platform.py render "$SLUG" "$TARGET_ENV" "$PORT" "$IMAGE" > "$RUNNER_TEMP/app.yaml"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-image
+          path: ${{ runner.temp }}/image
+
+      - name: Worker access
+        run: |
+          VAULT_ADDR="${VAULT_ADDR_RAW%/}"
+          WORKER_IP=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/worker-node/$TARGET_ENV/active-slot" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ip'])")
+          mkdir -p "$RUNNER_TEMP/keys"
+          curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/ssh_keys/worker_node_worker" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['private_key'])" \
+            > "$RUNNER_TEMP/keys/worker_ssh"
+          chmod 600 "$RUNNER_TEMP/keys/worker_ssh"
+          echo "WORKER_IP=$WORKER_IP" >> "$GITHUB_ENV"
+
+      - name: Namespace must be the platform's
+        run: |
+          SSH="ssh -i $RUNNER_TEMP/keys/worker_ssh -o StrictHostKeyChecking=no -o BatchMode=yes root@$WORKER_IP"
+          OWNER=$($SSH "k3s kubectl get namespace app-$SLUG -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}'")
+          [ "$OWNER" = "ops-portal-apps" ] || { echo "::error::namespace app-$SLUG is missing or not managed by ops-portal-apps"; exit 1; }
+
+      - name: Import the image and apply
+        run: |
+          KEY="$RUNNER_TEMP/keys/worker_ssh"
+          SSH="ssh -i $KEY -o StrictHostKeyChecking=no -o BatchMode=yes root@$WORKER_IP"
+          REMOTE="/tmp/app-$SLUG-$GITHUB_RUN_ID.tar.gz"
+          scp -i "$KEY" -o StrictHostKeyChecking=no "$RUNNER_TEMP/image/image.tar.gz" "root@$WORKER_IP:$REMOTE"
+          $SSH "gunzip -c $REMOTE | k3s ctr images import - ; RC=\$?; rm -f $REMOTE; exit \$RC"
+          $SSH "k3s kubectl apply -f -" < "$RUNNER_TEMP/app.yaml"
+          $SSH "k3s kubectl -n app-$SLUG rollout status deployment/app --timeout=180s"
+          # Drop this app's older images so the node's disk does not fill up.
+          $SSH "k3s ctr images ls -q | grep -F 'platform.local/app-$SLUG:' | grep -vxF '$IMAGE' | xargs -r k3s ctr images rm" || true
+
+      - name: Remove the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"
+
+  # ── health ──────────────────────────────────────────────────────────────────
+  health:
+    if: inputs.step == 'health'
+    runs-on: arc-pilot-dev
+    env:
+      VAULT_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_ROOT_TOKEN }}
+      VAULT_ADDR_RAW: ${{ secrets.VAULT_BOOTSTRAP_ADDR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check inputs
+        run: python3 scripts/app_platform.py check "$SLUG" "$TARGET_ENV" --port "$PORT" --request-id "$REQUEST_ID"
+
+      - name: Pod answers on its NodePort
+        run: |
+          VAULT_ADDR="${VAULT_ADDR_RAW%/}"
+          WORKER_IP=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/worker-node/$TARGET_ENV/active-slot" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ip'])")
+          mkdir -p "$RUNNER_TEMP/keys"
+          curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/ssh_keys/worker_node_worker" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['private_key'])" \
+            > "$RUNNER_TEMP/keys/worker_ssh"
+          chmod 600 "$RUNNER_TEMP/keys/worker_ssh"
+          SSH="ssh -i $RUNNER_TEMP/keys/worker_ssh -o StrictHostKeyChecking=no -o BatchMode=yes root@$WORKER_IP"
+          CODE=000
+          for _ in $(seq 1 12); do
+            CODE=$($SSH "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://$WORKER_IP:$PORT/healthz" || true)
+            [ "$CODE" = "200" ] && break
+            sleep 5
+          done
+          echo "NodePort $PORT /healthz -> $CODE"
+          [ "$CODE" = "200" ] || { echo "::error::app does not answer on NodePort $PORT"; exit 1; }
+          echo "TRAEFIK_IP=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+            "$VAULT_ADDR/v1/secret/data/traefik/$TARGET_ENV/active-slot" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['data']['ip'])")" >> "$GITHUB_ENV"
+
+      - name: Traefik routes the hostname
+        run: |
+          HOST="$SLUG-$TARGET_ENV.databaes.net"
+          CODE=000
+          for _ in $(seq 1 12); do
+            CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 \
+              --resolve "$HOST:443:$TRAEFIK_IP" "https://$HOST/healthz" || true)
+            # 200 = served; 302 = Authentik login in front of it. Both mean the
+            # route exists. 404 = Traefik has no router for the host.
+            { [ "$CODE" = "200" ] || [ "$CODE" = "302" ]; } && break
+            sleep 5
+          done
+          echo "https://$HOST/healthz via Traefik $TRAEFIK_IP -> $CODE"
+          { [ "$CODE" = "200" ] || [ "$CODE" = "302" ]; } || { echo "::error::Traefik does not route $HOST (HTTP $CODE)"; exit 1; }
+
+      - name: Remove the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"

@@ -895,3 +895,19 @@ The gateway `ops-portal-llm` is the intended only path to Ollama on `tomer` (don
   - Planner-only: kill switch `LOCAL_LLM_ENABLED` in the QA overlay of `ops-portal-incidents` (`manifests/overlays/qa/kustomization.yaml`; set to `"false"`), shipped through that repo's normal branch/PR/deploy flow (owned by whichever session works there, so ask first).
   - Record a CMDB change for any break-glass and revert it afterwards.
 - **Not routable any more:** `ctxbench.py` (`/api/generate`, `/api/ps` are not proxied by the gateway). It needs a route of its own before use.
+
+## Developer-area app provisioning (`app-provision.yml`, `app-dns.yml`)
+
+The ops portal's apps service (`ops-portal-apps`) provisions a developer's app by dispatching these two workflows, one step at a time. It holds only a token that can dispatch workflows in this repo; the GitHub writes and cluster actions run here with this repo's own secrets (`GH_PAT`, bootstrap vault). Both can be run by hand, and every step can be repeated safely.
+
+| Step | Workflow | What it does |
+|---|---|---|
+| `repo` | `app-provision.yml` | Creates the private repo `<owner>/app-<slug>` (owner = repository variable `APPS_GITHUB_OWNER`, default this repo's owner) and pushes the draft as `site/`. Needs a single-use `export_token` from the apps service, so by hand it only works with a token the service just issued. Refuses a repo whose description is not the platform marker. |
+| `route` | `app-provision.yml` | `action=add\|remove` the router in `traefik-gitops/config/dynamic/apps.yml` via that repo's `scripts/apps_route.py` (PR, merged at once), then waits for the traefik-gitops deploy. |
+| dns | `app-dns.yml` | AdGuard rewrite for the dev/QA hostname. |
+| `deploy` | `app-provision.yml` | Builds the static-site image from `site/` with `apps-platform/Dockerfile` on a GitHub-hosted runner, hands it over as an artifact, imports it into the worker's containerd (no registry) and applies `apps-platform/manifest.tpl.yaml` into `app-<slug>`. Refuses a namespace not labelled `app.kubernetes.io/managed-by=ops-portal-apps`. |
+| `health` | `app-provision.yml` | `/healthz` on the NodePort, then the hostname through the env's Traefik (200, or 302 when SSO is on). |
+
+Only `dev` is enabled (`scripts/app_platform.py` `ENABLED_ENVS`). The app repo contains no workflows, Dockerfile or manifests: developer content is only static files under `site/` (`scripts/app_platform.py unpack` refuses links, `..`, absolute paths, `.git`, `.github`). Tests: `python3 scripts/test_app_platform.py`.
+
+Removing an app by hand: `app-provision.yml -f step=route -f action=remove`, `app-dns.yml -f action=remove`, delete the namespace `app-<slug>`, and archive or delete the repo.
