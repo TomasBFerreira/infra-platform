@@ -5,3 +5,6 @@
 # entry here: they resolve through Cloudflare (traefik-gitops sync-dns.yml).
 adguard_apps_dev_rewrites: []
 adguard_apps_qa_rewrites: []
+# Removed app hostnames: the role deletes any rewrite still present for these.
+adguard_apps_removed:
+  - zzdnstest-dev.databaes.net
