@@ -202,8 +202,9 @@ Written by `seed-ops-portal-vault.yml` (idempotent: existing keys are kept unles
 |---|---|---|
 | `apps` | `identity` | `/svc/identity/app-groups` (also enforces `iss=apps` itself) |
 | `apps` | `cmdb` | `/svc/cmdb/problems` (also enforces `iss=apps` itself; problem reports) |
+| `apps` | `infrastructure` | `/svc/apps/{slug}/{namespace,freeze,unfreeze}` (enforces `iss=apps` itself; `/svc/execute` refuses `apps` in code) |
 
-Add a receiver to an issuer's list only in the slice that needs that call (planned: `infrastructure` for app namespaces/freeze, after an issuer allowlist exists there), and update this table. `apps` talks to the LLM gateway with an API key, not svcjwt.
+Add a receiver to an issuer's list only in the slice that needs that call (`infrastructure` was added for app namespaces/freeze once it refused `apps` on `/svc/execute`), and update this table. `apps` talks to the LLM gateway with an API key, not svcjwt.
 
 After running the seed, **redeploy each receiver whose trusted field changed** (the workflow logs `receiver fields changed: [...]`) to pick up the new map. The seed only reads Vault (a non-404 error aborts the run rather than regenerating keys) and preserves any other field already in `svc-jwt/trusted`.
 

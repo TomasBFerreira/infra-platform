@@ -109,8 +109,9 @@ jobs:
           # /svc/execute without an issuer allowlist, so trusting 'apps' there
           # would let it run cluster and Traefik actions. Add a receiver to an
           # issuer's list only when a slice actually needs that call, and say so
-          # in docs/vaults.md.
-          RESTRICTED = {'apps': ['identity', 'cmdb']}
+          # in docs/vaults.md. (infrastructure: /svc/apps namespace guardrails + freeze;
+          # that service refuses issuer 'apps' on /svc/execute itself.)
+          RESTRICTED = {'apps': ['identity', 'cmdb', 'infrastructure']}
           # A typo here would silently leave an issuer trusted everywhere.
           for _iss, _recv in RESTRICTED.items():
               assert _iss in SERVICES, f"RESTRICTED issuer {_iss!r} is not in SERVICES"
