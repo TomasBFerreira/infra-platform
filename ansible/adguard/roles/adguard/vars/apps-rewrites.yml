@@ -3,5 +3,6 @@
 # adguard_dev_rewrites / adguard_qa_rewrites, so they follow the same rules:
 # every AdGuard answers for every env's hostnames. Prod app hostnames need no
 # entry here: they resolve through Cloudflare (traefik-gitops sync-dns.yml).
-adguard_apps_dev_rewrites: []
+adguard_apps_dev_rewrites:
+  - domain: zzdnstest-dev.databaes.net
 adguard_apps_qa_rewrites: []
