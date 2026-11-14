@@ -18,7 +18,9 @@ class T(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self.apps = os.path.join(self.d, "apps.yml")
-        shutil.copy(os.path.join(VARS, "apps-rewrites.yml"), self.apps)
+        # Fixed empty seed: the live file holds real app hostnames.
+        with open(self.apps, "w") as f:
+            f.write(m.render({"adguard_apps_dev_rewrites": [], "adguard_apps_qa_rewrites": []}))
         self.main = os.path.join(VARS, "main.yml")
 
     def tearDown(self):
