@@ -1,4 +1,5 @@
 name: App DNS (Developer area)
+run-name: app-dns ${{ inputs.action }} ${{ inputs.slug }} ${{ inputs.environment }} ${{ inputs.request_id }}
 
 # Adds or removes the DNS for one Developer-area app in one env. Dispatched by
 # the apps platform when it provisions or tears down an app (and usable by
@@ -34,6 +35,11 @@ on:
         type: choice
         options: [add, remove]
         default: add
+      request_id:
+        description: 'Caller correlation id (appears in the run name)'
+        required: false
+        type: string
+        default: manual-0000
 
 concurrency:
   group: app-dns
