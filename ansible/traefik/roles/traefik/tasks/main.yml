@@ -74,6 +74,15 @@
     dest: /opt/traefik/config/dynamic/services.yml
     mode: '0644'
 
+- name: Copy platform-generated app routes (apps.yml) from traefik-gitops
+  # Developer-area app routes live in their own file (traefik-gitops slice 11).
+  # Without this a rebuilt Traefik CT would come up without them until the next
+  # traefik-gitops deploy.
+  copy:
+    src: "{{ traefik_gitops_path }}/config/dynamic/apps.yml"
+    dest: /opt/traefik/config/dynamic/apps.yml
+    mode: '0644'
+
 - name: Copy docker-compose.yml
   copy:
     src: docker-compose.yml
