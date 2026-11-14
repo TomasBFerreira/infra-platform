@@ -92,6 +92,17 @@
     adguard_rewrite_answer_ip:    "{{ ts_ipv4.stdout_lines[0] }}"
     adguard_rewrite_answer_ip_v6: "{{ ts_ipv6.stdout_lines[0] }}"
 
+- name: Load platform-generated app rewrites (Developer area)
+  # vars/apps-rewrites.yml is written by .github/workflows/app-dns.yml.
+  include_vars:
+    file: apps-rewrites.yml
+
+- name: Merge hand-maintained and app rewrites
+  set_fact:
+    adguard_dev_all: "{{ adguard_dev_rewrites + (adguard_apps_dev_rewrites | default([])) }}"
+    adguard_qa_all: "{{ adguard_qa_rewrites + (adguard_apps_qa_rewrites | default([])) }}"
+    adguard_prod_all: "{{ adguard_prod_rewrites }}"
+
 - name: Fetch current AdGuard rewrites
   uri:
     url: "http://127.0.0.1:{{ adguard_port }}/control/rewrite/list"
@@ -113,7 +124,7 @@
   # answer regardless of which resolver wins.
   set_fact:
     adguard_managed_domains: >-
-      {{ (adguard_dev_rewrites + adguard_qa_rewrites + adguard_prod_rewrites)
+      {{ (adguard_dev_all + adguard_qa_all + adguard_prod_all)
          | map(attribute='domain') | list }}
 
 - name: Delete stale AdGuard rewrites for managed domains (clears duplicates + old LAN-IP entries)
@@ -136,9 +147,9 @@
   set_fact:
     adguard_cross_env_upserts: >-
       {{
-        (adguard_dev_rewrites  | map('combine', {'answer': adguard_env_tailscale_ips.dev})  | list)
-        + (adguard_qa_rewrites   | map('combine', {'answer': adguard_env_tailscale_ips.qa})   | list)
-        + (adguard_prod_rewrites | map('combine', {'answer': adguard_env_tailscale_ips.prod}) | list)
+        (adguard_dev_all  | map('combine', {'answer': adguard_env_tailscale_ips.dev})  | list)
+        + (adguard_qa_all   | map('combine', {'answer': adguard_env_tailscale_ips.qa})   | list)
+        + (adguard_prod_all | map('combine', {'answer': adguard_env_tailscale_ips.prod}) | list)
       }}
 
 - name: Upsert AdGuard DNS A rewrites for ALL envs' hostnames
@@ -178,9 +189,9 @@
     force_basic_auth: yes
     status_code: [200, 409]
   loop: >-
-    {{ adguard_dev_rewrites  if deploy_env == 'dev'
-       else (adguard_qa_rewrites   if deploy_env == 'qa'
-       else (adguard_prod_rewrites if deploy_env == 'prod'
+    {{ adguard_dev_all  if deploy_env == 'dev'
+       else (adguard_qa_all   if deploy_env == 'qa'
+       else (adguard_prod_all if deploy_env == 'prod'
        else [])) }}
   when: adguard_username != '' and adguard_password != ''
   no_log: true
@@ -218,9 +229,9 @@
       ADGUARD_URL=http://127.0.0.1:{{ adguard_port }}
       ADGUARD_USER={{ adguard_username }}
       ADGUARD_PASS={{ adguard_password }}
-      DEV_DOMAINS="{{ adguard_dev_rewrites | map(attribute='domain') | join(' ') }}"
-      QA_DOMAINS="{{ adguard_qa_rewrites | map(attribute='domain') | join(' ') }}"
-      PROD_DOMAINS="{{ adguard_prod_rewrites | map(attribute='domain') | join(' ') }}"
+      DEV_DOMAINS="{{ adguard_dev_all | map(attribute='domain') | join(' ') }}"
+      QA_DOMAINS="{{ adguard_qa_all | map(attribute='domain') | join(' ') }}"
+      PROD_DOMAINS="{{ adguard_prod_all | map(attribute='domain') | join(' ') }}"
       DEV_HOSTNAME_RE=^dev-traefik-lxc-
       QA_HOSTNAME_RE=^qa-traefik-lxc-
       PROD_HOSTNAME_RE=^prod-traefik-lxc-
