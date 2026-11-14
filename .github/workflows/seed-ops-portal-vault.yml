@@ -110,7 +110,11 @@ jobs:
           # would let it run cluster and Traefik actions. Add a receiver to an
           # issuer's list only when a slice actually needs that call, and say so
           # in docs/vaults.md.
-          RESTRICTED = {'apps': ['identity']}
+          RESTRICTED = {'apps': ['identity', 'cmdb']}
+          # A typo here would silently leave an issuer trusted everywhere.
+          for _iss, _recv in RESTRICTED.items():
+              assert _iss in SERVICES, f"RESTRICTED issuer {_iss!r} is not in SERVICES"
+              assert all(r in SERVICES for r in _recv), f"RESTRICTED receivers {_recv!r} for {_iss!r} not all in SERVICES"
 
           def issuers_for(receiver):
               return [iss for iss in SERVICES
