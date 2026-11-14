@@ -20,7 +20,7 @@ class T(unittest.TestCase):
         self.apps = os.path.join(self.d, "apps.yml")
         # Fixed empty seed: the live file holds real app hostnames.
         with open(self.apps, "w") as f:
-            f.write(m.render({"adguard_apps_dev_rewrites": [], "adguard_apps_qa_rewrites": []}))
+            f.write(m.render({"adguard_apps_dev_rewrites": [], "adguard_apps_qa_rewrites": [], "adguard_apps_removed": []}))
         self.main = os.path.join(VARS, "main.yml")
 
     def tearDown(self):
@@ -40,8 +40,24 @@ class T(unittest.TestCase):
     def test_remove_and_noop(self):
         self.run_("add", "shop", "qa")
         self.assertTrue(self.run_("remove", "shop", "qa")["changed"])
-        self.assertIn("adguard_apps_qa_rewrites: []", open(self.apps).read())
+        text = open(self.apps).read()
+        self.assertIn("adguard_apps_qa_rewrites: []", text)
+        # The removal is recorded so the role deletes the live rewrite.
+        self.assertEqual(m.load_apps(self.apps)["adguard_apps_removed"], ["shop-qa.databaes.net"])
         self.assertFalse(self.run_("remove", "shop", "qa")["changed"])
+        self.assertEqual(open(self.apps).read(), text)
+
+    def test_readd_clears_the_tombstone(self):
+        self.run_("add", "shop", "dev")
+        self.run_("remove", "shop", "dev")
+        self.assertTrue(self.run_("add", "shop", "dev")["changed"])
+        data = m.load_apps(self.apps)
+        self.assertEqual(data["adguard_apps_removed"], [])
+        self.assertEqual(data["adguard_apps_dev_rewrites"], ["shop-dev.databaes.net"])
+
+    def test_remove_of_unlisted_domain_still_tombstones_once(self):
+        self.assertTrue(self.run_("remove", "ghost", "dev")["changed"])
+        self.assertFalse(self.run_("remove", "ghost", "dev")["changed"])
 
     def test_envs_are_separate_and_sorted(self):
         self.run_("add", "zeta", "dev")

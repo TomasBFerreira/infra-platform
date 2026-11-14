@@ -116,6 +116,8 @@
   no_log: true
 
 - name: Set managed domains list (ALL envs, so upsert is comprehensive)
+  # Also includes adguard_apps_removed (app hostnames the platform removed):
+  # they are deleted below and, not being in the upsert batch, stay gone.
   # Every netvm's AdGuard registers every env's hostnames, not just its own.
   # Tailscale split-DNS for databaes.net fans queries out to every network-vm's
   # AdGuard in parallel and the first answer wins — if any resolver doesn't
@@ -124,8 +126,9 @@
   # answer regardless of which resolver wins.
   set_fact:
     adguard_managed_domains: >-
-      {{ (adguard_dev_all + adguard_qa_all + adguard_prod_all)
-         | map(attribute='domain') | list }}
+      {{ ((adguard_dev_all + adguard_qa_all + adguard_prod_all)
+         | map(attribute='domain') | list)
+         + (adguard_apps_removed | default([])) }}
 
 - name: Delete stale AdGuard rewrites for managed domains (clears duplicates + old LAN-IP entries)
   uri:
