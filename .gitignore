@@ -33,3 +33,4 @@ terraform.rc
 
 # Log files
 *.log
+__pycache__/
